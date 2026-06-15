@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ping-Pong Demo</title>
+</head>
+<body>
+    <h1>Ping-Ping Demo</h1>
+    <p id="status">Connecting...</p>
+    <button onclick="sendPing()">Send Ping</button>
+    <div id="log"></div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script> 
+        const statusEl = document.getElementById('status');
+        const logEl = document.getElementById('log');
+        const socket = io();
+        
+        socket.on('connect', () => {
+            statusEl.textContent = 'Connected: ' + socket.id;
+        });
+
+        socket.on('disconnect', () => {
+            statusEl.textContent = 'Disconnected';
+        });
+
+        socket.on('pong', (data) => {
+            logEl.textContent += JSON.stringify(data) + '\n';
+        });
+
+        function sendPing() {
+            socket.emit('ping', {timestamp: Date.now() });
+        }
+    </script>
+</body>
+</html>
