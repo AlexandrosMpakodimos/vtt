@@ -4,7 +4,7 @@ let transportPromise = null;
 
 // Transport selection, by env:
 //  - SMTP_HOST set        -> real SMTP (e.g. Gmail) for production/demo
-//  - MAIL_JSON=1          -> builds the message, sends nothing (offline/tests)
+//  - MAIL_JSON=1          -> jsonTransport: builds the message, sends nothing (offline/tests)
 //  - otherwise (default)  -> Ethereal: a free throwaway inbox with a preview URL (dev)
 async function getTransport() {
   if (transportPromise) return transportPromise;
@@ -48,4 +48,20 @@ async function sendVerificationEmail(to, link) {
   return info;
 }
 
-module.exports = { sendVerificationEmail };
+async function sendPasswordResetEmail(to, link) {
+  const transport = await getTransport();
+  const info = await transport.sendMail({
+    from: 'VTT <no-reply@vtt.local>',
+    to,
+    subject: 'Reset your VTT password',
+    text: `Someone requested a password reset for your VTT account. Reset it here (expires in 1 hour): ${link}\n\nIf this wasn't you, you can ignore this email.`,
+    html: `<p>Someone requested a password reset for your VTT account.</p><p><a href="${link}">Click here to reset your password</a> (expires in 1 hour).</p><p>If this wasn't you, you can safely ignore this email.</p>`,
+  });
+
+  const preview = nodemailer.getTestMessageUrl(info);
+  if (preview) console.log('Password reset email preview:', preview);
+  if (process.env.MAIL_JSON === '1') console.log('Password reset link (MAIL_JSON):', link);
+  return info;
+}
+
+module.exports = { sendVerificationEmail, sendPasswordResetEmail };

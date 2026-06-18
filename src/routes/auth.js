@@ -5,7 +5,7 @@ const passport = require('../config/passport');
 const knex = require('../db');
 const { validateEmail, validateUsername, validatePassword, normalizeEmail } = require('../services/validators');
 const { isPasswordBreached } = require('../services/breachedPassword');
-const { sendVerificationEmail } = require('../services/mailer');
+const { sendVerificationEmail, sendPasswordResetEmail } = require('../services/mailer');
 
 const router = express.Router();
 
@@ -40,6 +40,31 @@ async function issueVerificationEmail(user) {
   } catch (err) {
     console.error('Failed to send verification email:', err.message);
   }
+}
+
+async function issuePasswordResetEmail(user) {
+  // Invalidate any earlier reset tokens so only the newest link works.
+  await knex('password_reset_tokens').where({ user_id: user.id }).del();
+
+  const rawToken = crypto.randomBytes(32).toString('hex');
+  await knex('password_reset_tokens').insert({
+    user_id: user.id,
+    token_hash: sha256(rawToken),
+    expires_at: knex.raw("now() + interval '1 hour'"),
+  });
+
+  const base = process.env.BASE_URL || 'http://localhost:3000';
+  const link = `${base}/api/auth/reset-password?token=${rawToken}`;
+  try {
+    await sendPasswordResetEmail(user.email, link);
+  } catch (err) {
+    console.error('Failed to send password reset email:', err.message);
+  }
+}
+
+// Delete every session belonging to a user (Passport stores the id in the session JSON).
+async function destroyUserSessions(trx, userId) {
+  await trx('session').whereRaw("sess -> 'passport' ->> 'user' = ?", [userId]).del();
 }
 
 // POST /api/auth/register — creates an UNVERIFIED account; does NOT log in.
@@ -102,7 +127,31 @@ router.post('/resend-verification', async (req, res, next) => {
 
     const user = await knex('users').where({ email }).first();
     if (user && !user.email_verified_at) {
-      await issueVerificationEmail(user);
+      // Fire-and-forget (same reasoning as forgot-password): keep response time constant.
+      issueVerificationEmail(user).catch((err) =>
+        console.error('Verification resend failed:', err.message),
+      );
+    }
+    return res.json(generic);
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// POST /api/auth/forgot-password — generic response (no enumeration).
+router.post('/forgot-password', async (req, res, next) => {
+  try {
+    const email = normalizeEmail(req.body && req.body.email);
+    if (!email) return res.status(400).json({ error: 'email is required' });
+    const generic = { ok: true, message: 'If an account with that email exists, a password reset link has been sent.' };
+
+    const user = await knex('users').where({ email }).first();
+    if (user) {
+      // Fire-and-forget: do NOT await the email send, so the response time is the
+      // same whether or not the account exists (prevents timing-based enumeration).
+      issuePasswordResetEmail(user).catch((err) =>
+        console.error('Password reset issue failed:', err.message),
+      );
     }
     return res.json(generic);
   } catch (err) {
@@ -147,7 +196,87 @@ router.get('/verify-email', async (req, res, next) => {
       await trx('email_verification_tokens').where({ id: row.id }).update({ used_at: trx.fn.now() });
     });
 
-    return res.send(page('Email verified ✓', 'You can close this tab and return to VTT.'));
+    return res.send(page('Email verified \u2713', 'You can close this tab and return to VTT.'));
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// GET /api/auth/reset-password?token=... — render a new-password form if the token is valid.
+router.get('/reset-password', async (req, res, next) => {
+  const page = (title, body) =>
+    `<!doctype html><meta charset="utf-8"><title>${title}</title>
+     <body style="font-family:system-ui;max-width:420px;margin:80px auto;text-align:center">
+     <h1>${title}</h1><p>${body}</p></body>`;
+  try {
+    const { token } = req.query;
+    const row = token
+      ? await knex('password_reset_tokens').where({ token_hash: sha256(String(token)) }).first()
+      : null;
+    if (!row || row.used_at || new Date(row.expires_at) < new Date()) {
+      return res.status(400).send(page('Link invalid or expired', 'Please request a new password reset.'));
+    }
+    // Token valid — render the form. The token is read client-side from the URL,
+    // so it is never interpolated into the HTML (no injection surface).
+    return res.send(`<!doctype html><meta charset="utf-8"><title>Reset your password</title>
+<body style="font-family:system-ui;max-width:420px;margin:80px auto">
+  <h1>Choose a new password</h1>
+  <form id="f">
+    <input type="password" id="pw" placeholder="New password (min 8 chars)" minlength="8" required
+           style="width:100%;padding:8px;font-size:15px;box-sizing:border-box" />
+    <button style="margin-top:10px;padding:8px 14px">Reset password</button>
+  </form>
+  <p id="msg" style="margin-top:14px"></p>
+  <script>
+    const token = new URLSearchParams(location.search).get('token');
+    document.getElementById('f').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const msg = document.getElementById('msg');
+      msg.textContent = 'Working...';
+      try {
+        const r = await fetch('/api/auth/reset-password', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token, password: document.getElementById('pw').value }),
+        });
+        const data = await r.json().catch(() => ({}));
+        msg.textContent = r.ok
+          ? 'Password reset. You can now log in with your new password.'
+          : (data.error || 'Reset failed.');
+      } catch (_) { msg.textContent = 'Network error.'; }
+    });
+  </script>
+</body>`);
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// POST /api/auth/reset-password — validate token + new password, update it, log out everywhere.
+router.post('/reset-password', async (req, res, next) => {
+  try {
+    const { token, password } = req.body || {};
+    if (!token) return res.status(400).json({ error: 'token is required' });
+
+    const p = validatePassword(password);
+    if (p.error) return res.status(400).json({ error: p.error });
+    if (await isPasswordBreached(p.value)) {
+      return res.status(400).json({ error: 'password is too common or has appeared in a data breach' });
+    }
+
+    const row = await knex('password_reset_tokens').where({ token_hash: sha256(String(token)) }).first();
+    if (!row || row.used_at || new Date(row.expires_at) < new Date()) {
+      return res.status(400).json({ error: 'Reset link is invalid or expired' });
+    }
+
+    const password_hash = await bcrypt.hash(p.value, 12);
+    await knex.transaction(async (trx) => {
+      await trx('users').where({ id: row.user_id }).update({ password_hash });
+      await trx('password_reset_tokens').where({ id: row.id }).update({ used_at: trx.fn.now() });
+      await trx('password_reset_tokens').where({ user_id: row.user_id }).whereNull('used_at').del();
+      await destroyUserSessions(trx, row.user_id);
+    });
+
+    return res.json({ ok: true, message: 'Password reset. You can now log in with your new password.' });
   } catch (err) {
     return next(err);
   }

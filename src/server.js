@@ -12,7 +12,10 @@ const { Pool } = require('pg');
 const knex = require('./db');
 const passport = require('./config/passport');
 const authRoutes = require('./routes/auth');
-const { loginLimiter, registerLimiter, resendLimiter } = require('./middleware/rateLimit');
+const {
+  loginLimiter, registerLimiter, resendLimiter,
+  forgotPasswordLimiter, resetPasswordLimiter,
+} = require('./middleware/rateLimit');
 
 const app = express();
 const server = http.createServer(app);
@@ -41,6 +44,8 @@ app.use(express.static(path.join(__dirname, '..', 'public')));
 app.use('/api/auth/login', loginLimiter);
 app.use('/api/auth/register', registerLimiter);
 app.use('/api/auth/resend-verification', resendLimiter);
+app.use('/api/auth/forgot-password', forgotPasswordLimiter);
+app.use('/api/auth/reset-password', resetPasswordLimiter);
 app.use('/api/auth', authRoutes);
 
 io.engine.use(sessionMiddleware);
@@ -60,14 +65,14 @@ app.use((err, req, res, next) => {
   res.status(err.status || 500).json({ error: 'Something went wrong' });
 });
 
-// Periodically delete expired or already-used verification tokens.
+// Periodically delete expired or already-used verification + password-reset tokens.
 async function cleanupExpiredTokens() {
   try {
-    const n = await knex('email_verification_tokens')
-      .where('expires_at', '<', knex.fn.now())
-      .orWhereNotNull('used_at')
-      .del();
-    if (n) console.log(`Cleaned up ${n} expired/used verification tokens`);
+    const sweep = (table) =>
+      knex(table).where('expires_at', '<', knex.fn.now()).orWhereNotNull('used_at').del();
+    const v = await sweep('email_verification_tokens');
+    const r = await sweep('password_reset_tokens');
+    if (v || r) console.log(`Cleaned up ${v} verification + ${r} password-reset expired/used tokens`);
   } catch (err) {
     console.error('Token cleanup failed:', err.message);
   }

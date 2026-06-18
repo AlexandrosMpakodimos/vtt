@@ -22,4 +22,21 @@ const resendLimiter = rateLimit({
   standardHeaders: true, legacyHeaders: false, handler: tooMany,
 });
 
-module.exports = { loginLimiter, registerLimiter, resendLimiter };
+// Same reasoning as resend: requesting reset emails is abusable.
+const forgotPasswordLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: Number(process.env.RL_FORGOT_MAX) || 3,
+  standardHeaders: true, legacyHeaders: false, handler: tooMany,
+});
+
+// Submitting resets — caps token-guessing attempts (tokens are already 256-bit).
+const resetPasswordLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: Number(process.env.RL_RESET_MAX) || 10,
+  standardHeaders: true, legacyHeaders: false, handler: tooMany,
+});
+
+module.exports = {
+  loginLimiter, registerLimiter, resendLimiter,
+  forgotPasswordLimiter, resetPasswordLimiter,
+};
