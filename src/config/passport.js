@@ -3,17 +3,21 @@ const { Strategy: LocalStrategy } = require('passport-local');
 const bcrypt = require('bcrypt');
 const knex = require('../db');
 
-// Columns safe to attach to req.user (never the password hash).
-const SAFE_COLUMNS = ['id', 'email', 'username', 'avatar_url', 'created_at'];
+const SAFE_COLUMNS = ['id', 'email', 'username', 'avatar_url', 'email_verified_at', 'created_at'];
 
-// How to verify a login attempt. We log in with email + password.
+// A real hash to compare against when no user is found, so the "unknown email"
+// path costs the same time as the "wrong password" path (defeats timing-based
+// user enumeration).
+const DUMMY_HASH = bcrypt.hashSync('dummy-password-for-timing-equalization', 12);
+
 passport.use(
   new LocalStrategy({ usernameField: 'email' }, async (email, password, done) => {
     try {
       const user = await knex('users').where({ email }).first();
-      // Same generic message whether the email is unknown or the password is
-      // wrong, so we don't leak which emails are registered.
-      if (!user) return done(null, false, { message: 'Invalid email or password' });
+      if (!user) {
+        await bcrypt.compare(password, DUMMY_HASH); // burn equivalent time
+        return done(null, false, { message: 'Invalid email or password' });
+      }
 
       const ok = await bcrypt.compare(password, user.password_hash);
       if (!ok) return done(null, false, { message: 'Invalid email or password' });
@@ -25,12 +29,10 @@ passport.use(
   })
 );
 
-// On login, store only the user id in the session.
 passport.serializeUser((user, done) => {
   done(null, user.id);
 });
 
-// On every authenticated request, turn that id back into req.user.
 passport.deserializeUser(async (id, done) => {
   try {
     const user = await knex('users').select(SAFE_COLUMNS).where({ id }).first();
