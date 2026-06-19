@@ -14,6 +14,8 @@
     #out { background: #111; color: #6f6; padding: 12px; white-space: pre-wrap;
            min-height: 60px; border-radius: 4px; }
     .row { display: flex; gap: 8px; align-items: center; }
+    hr { border: none; border-top: 1px dashed #ccc; margin: 14px 0; }
+    #avatar-img { border: 1px solid #999; object-fit: cover; background: #222; }
   </style>
 </head>
 <body>
@@ -31,7 +33,10 @@
     <legend>Login</legend>
     <label>Email</label><input id="l-email" type="email" />
     <label>Password</label><input id="l-password" type="password" />
-    <button id="l-submit">Login</button>
+    <div class="row">
+      <button id="l-submit">Login</button>
+      <button id="l-forgot">Forgot password</button>
+    </div>
   </fieldset>
 
   <fieldset>
@@ -40,6 +45,21 @@
       <button id="me">Who am I? (/me)</button>
       <button id="logout">Logout</button>
     </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Account (must be logged in)</legend>
+    <label>New username</label><input id="a-username" />
+    <label>New avatar URL</label><input id="a-avatar" placeholder="https://..." />
+    <div class="row" style="margin-top:8px">
+      <img id="avatar-img" alt="" width="72" height="72" />
+      <span id="avatar-note" style="font-size:12px; color:#666">(no avatar)</span>
+    </div>
+    <button id="a-profile">Update profile</button>
+    <hr />
+    <label>Current password</label><input id="a-curpass" type="password" />
+    <label>New password</label><input id="a-newpass" type="password" />
+    <button id="a-changepass">Change password</button>
   </fieldset>
 
   <h3>Last response</h3>

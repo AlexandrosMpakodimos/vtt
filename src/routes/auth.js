@@ -6,6 +6,7 @@ const knex = require('../db');
 const { validateEmail, validateUsername, validatePassword, normalizeEmail } = require('../services/validators');
 const { isPasswordBreached } = require('../services/breachedPassword');
 const { sendVerificationEmail, sendPasswordResetEmail } = require('../services/mailer');
+const { requireAuth } = require('../middleware/auth');
 
 const router = express.Router();
 
@@ -62,9 +63,12 @@ async function issuePasswordResetEmail(user) {
   }
 }
 
-// Delete every session belonging to a user (Passport stores the id in the session JSON).
-async function destroyUserSessions(trx, userId) {
-  await trx('session').whereRaw("sess -> 'passport' ->> 'user' = ?", [userId]).del();
+// Delete sessions belonging to a user (Passport stores the id in the session JSON).
+// Pass exceptSid to keep one alive — e.g. the user's current session on a password change.
+async function destroyUserSessions(trx, userId, exceptSid) {
+  const q = trx('session').whereRaw("sess -> 'passport' ->> 'user' = ?", [userId]);
+  if (exceptSid) q.andWhereNot('sid', exceptSid);
+  await q.del();
 }
 
 // POST /api/auth/register — creates an UNVERIFIED account; does NOT log in.
@@ -277,6 +281,72 @@ router.post('/reset-password', async (req, res, next) => {
     });
 
     return res.json({ ok: true, message: 'Password reset. You can now log in with your new password.' });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// PATCH /api/auth/me — update profile fields (username, avatar_url). Logged-in only.
+router.patch('/me', requireAuth, async (req, res, next) => {
+  try {
+    const body = req.body || {};
+    const updates = {};
+
+    if (body.username !== undefined) {
+      const u = validateUsername(body.username);
+      if (u.error) return res.status(400).json({ error: u.error });
+      updates.username = u.value;
+    }
+
+    if (body.avatar_url !== undefined) {
+      const a = String(body.avatar_url).trim();
+      if (a.length > 2048) return res.status(400).json({ error: 'avatar_url is too long' });
+      if (a && !/^https?:\/\//i.test(a)) {
+        return res.status(400).json({ error: 'avatar_url must start with http:// or https://' });
+      }
+      updates.avatar_url = a || null;
+    }
+
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({ error: 'nothing to update (send username and/or avatar_url)' });
+    }
+
+    const [user] = await knex('users').where({ id: req.user.id }).update(updates).returning(SAFE_COLUMNS);
+    return res.json({ user: publicUser(user) });
+  } catch (err) {
+    if (err.code === '23505') return res.status(409).json({ error: 'username already taken' });
+    return next(err);
+  }
+});
+
+// POST /api/auth/change-password — verify current password, set a new one, drop other sessions.
+router.post('/change-password', requireAuth, async (req, res, next) => {
+  try {
+    const { currentPassword, newPassword } = req.body || {};
+    if (!currentPassword) return res.status(400).json({ error: 'currentPassword is required' });
+
+    // Re-authenticate: req.user has no hash (SAFE_COLUMNS), so fetch it.
+    const row = await knex('users').where({ id: req.user.id }).first();
+    const ok = row && (await bcrypt.compare(currentPassword, row.password_hash));
+    if (!ok) return res.status(400).json({ error: 'current password is incorrect' });
+
+    const p = validatePassword(newPassword);
+    if (p.error) return res.status(400).json({ error: p.error });
+    if (await bcrypt.compare(p.value, row.password_hash)) {
+      return res.status(400).json({ error: 'new password must be different from the current one' });
+    }
+    if (await isPasswordBreached(p.value)) {
+      return res.status(400).json({ error: 'password is too common or has appeared in a data breach' });
+    }
+
+    const password_hash = await bcrypt.hash(p.value, 12);
+    await knex.transaction(async (trx) => {
+      await trx('users').where({ id: req.user.id }).update({ password_hash });
+      // Keep this session; log out the user's other devices.
+      await destroyUserSessions(trx, req.user.id, req.sessionID);
+    });
+
+    return res.json({ ok: true, message: 'Password changed. Other sessions have been logged out.' });
   } catch (err) {
     return next(err);
   }
