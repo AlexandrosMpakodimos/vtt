@@ -15,28 +15,32 @@ const registerLimiter = rateLimit({
   standardHeaders: true, legacyHeaders: false, handler: tooMany,
 });
 
-// Verification emails are abusable (email bombing), so keep this tight.
 const resendLimiter = rateLimit({
   windowMs: 60 * 60 * 1000,
   max: Number(process.env.RL_RESEND_MAX) || 3,
   standardHeaders: true, legacyHeaders: false, handler: tooMany,
 });
 
-// Same reasoning as resend: requesting reset emails is abusable.
 const forgotPasswordLimiter = rateLimit({
   windowMs: 60 * 60 * 1000,
   max: Number(process.env.RL_FORGOT_MAX) || 3,
   standardHeaders: true, legacyHeaders: false, handler: tooMany,
 });
 
-// Submitting resets — caps token-guessing attempts (tokens are already 256-bit).
 const resetPasswordLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: Number(process.env.RL_RESET_MAX) || 10,
   standardHeaders: true, legacyHeaders: false, handler: tooMany,
 });
 
+// Authed, but still abusable to email-bomb a target address with "confirm" mails.
+const changeEmailLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: Number(process.env.RL_CHANGE_EMAIL_MAX) || 3,
+  standardHeaders: true, legacyHeaders: false, handler: tooMany,
+});
+
 module.exports = {
   loginLimiter, registerLimiter, resendLimiter,
-  forgotPasswordLimiter, resetPasswordLimiter,
+  forgotPasswordLimiter, resetPasswordLimiter, changeEmailLimiter,
 };

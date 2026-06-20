@@ -14,7 +14,7 @@ const passport = require('./config/passport');
 const authRoutes = require('./routes/auth');
 const {
   loginLimiter, registerLimiter, resendLimiter,
-  forgotPasswordLimiter, resetPasswordLimiter,
+  forgotPasswordLimiter, resetPasswordLimiter, changeEmailLimiter,
 } = require('./middleware/rateLimit');
 
 const app = express();
@@ -46,6 +46,7 @@ app.use('/api/auth/register', registerLimiter);
 app.use('/api/auth/resend-verification', resendLimiter);
 app.use('/api/auth/forgot-password', forgotPasswordLimiter);
 app.use('/api/auth/reset-password', resetPasswordLimiter);
+app.use('/api/auth/change-email', changeEmailLimiter);
 app.use('/api/auth', authRoutes);
 
 io.engine.use(sessionMiddleware);
@@ -65,7 +66,6 @@ app.use((err, req, res, next) => {
   res.status(err.status || 500).json({ error: 'Something went wrong' });
 });
 
-// Periodically delete expired or already-used verification + password-reset tokens.
 async function cleanupExpiredTokens() {
   try {
     const sweep = (table) =>
@@ -77,8 +77,8 @@ async function cleanupExpiredTokens() {
     console.error('Token cleanup failed:', err.message);
   }
 }
-setInterval(cleanupExpiredTokens, 60 * 60 * 1000); // hourly
-cleanupExpiredTokens(); // also at startup
+setInterval(cleanupExpiredTokens, 60 * 60 * 1000);
+cleanupExpiredTokens();
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => console.log(`Server running at http://localhost:${PORT}`));

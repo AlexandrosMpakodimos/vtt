@@ -5,7 +5,7 @@ const passport = require('../config/passport');
 const knex = require('../db');
 const { validateEmail, validateUsername, validatePassword, normalizeEmail } = require('../services/validators');
 const { isPasswordBreached } = require('../services/breachedPassword');
-const { sendVerificationEmail, sendPasswordResetEmail } = require('../services/mailer');
+const { sendVerificationEmail, sendPasswordResetEmail, sendEmailChangeEmail } = require('../services/mailer');
 const { requireAuth } = require('../middleware/auth');
 
 const router = express.Router();
@@ -348,6 +348,94 @@ router.post('/change-password', requireAuth, async (req, res, next) => {
 
     return res.json({ ok: true, message: 'Password changed. Other sessions have been logged out.' });
   } catch (err) {
+    return next(err);
+  }
+});
+
+async function issueEmailChangeEmail(user, newEmail) {
+  // Invalidate prior tokens so only the newest change link works.
+  await knex('email_verification_tokens').where({ user_id: user.id }).del();
+  const rawToken = crypto.randomBytes(32).toString('hex');
+  await knex('email_verification_tokens').insert({
+    user_id: user.id,
+    token_hash: sha256(rawToken),
+    expires_at: knex.raw("now() + interval '1 hour'"),
+  });
+  const base = process.env.BASE_URL || 'http://localhost:3000';
+  const link = `${base}/api/auth/verify-email-change?token=${rawToken}`;
+  try {
+    await sendEmailChangeEmail(newEmail, link);
+  } catch (err) {
+    console.error('Failed to send email-change email:', err.message);
+  }
+}
+
+// POST /api/auth/change-email — request an email change; confirm link goes to the NEW address.
+router.post('/change-email', requireAuth, async (req, res, next) => {
+  try {
+    const { newEmail, currentPassword } = req.body || {};
+    if (!currentPassword) return res.status(400).json({ error: 'currentPassword is required' });
+
+    // Re-authenticate: sensitive action, and req.user has no hash.
+    const row = await knex('users').where({ id: req.user.id }).first();
+    const ok = row && (await bcrypt.compare(currentPassword, row.password_hash));
+    if (!ok) return res.status(400).json({ error: 'current password is incorrect' });
+
+    const e = validateEmail(newEmail);
+    if (e.error) return res.status(400).json({ error: e.error });
+    if (e.value === row.email) return res.status(400).json({ error: 'that is already your email address' });
+
+    const taken = await knex('users').where({ email: e.value }).first();
+    if (taken) return res.status(409).json({ error: 'email is already in use' });
+
+    await knex('users').where({ id: row.id }).update({ pending_email: e.value });
+    await issueEmailChangeEmail(row, e.value);
+
+    return res.json({ ok: true, message: 'Check your new email address to confirm the change.' });
+  } catch (err) {
+    if (err.code === '23505') return res.status(409).json({ error: 'email is already in use' });
+    return next(err);
+  }
+});
+
+// GET /api/auth/verify-email-change?token=... — confirm and swap the email.
+router.get('/verify-email-change', async (req, res, next) => {
+  const page = (title, body) =>
+    `<!doctype html><meta charset="utf-8"><title>${title}</title>
+     <body style="font-family:system-ui;max-width:420px;margin:80px auto;text-align:center">
+     <h1>${title}</h1><p>${body}</p></body>`;
+  try {
+    const { token } = req.query;
+    if (!token) return res.status(400).send(page('Invalid link', 'No token provided.'));
+
+    const tok = await knex('email_verification_tokens').where({ token_hash: sha256(String(token)) }).first();
+    if (!tok || tok.used_at || new Date(tok.expires_at) < new Date()) {
+      return res.status(400).send(page('Link invalid or expired', 'Please request the email change again.'));
+    }
+
+    const user = await knex('users').where({ id: tok.user_id }).first();
+    if (!user || !user.pending_email) {
+      return res.status(400).send(page('Nothing to confirm', 'There is no pending email change for this account.'));
+    }
+
+    // The address may have been taken in the gap between request and confirmation.
+    const taken = await knex('users').where({ email: user.pending_email }).whereNot({ id: user.id }).first();
+    if (taken) {
+      return res.status(409).send(page('Email no longer available', 'That address was taken in the meantime — please try a different one.'));
+    }
+
+    await knex.transaction(async (trx) => {
+      await trx('users').where({ id: user.id }).update({
+        email: user.pending_email,
+        pending_email: null,
+        email_verified_at: trx.fn.now(),
+      });
+      await trx('email_verification_tokens').where({ id: tok.id }).update({ used_at: trx.fn.now() });
+    });
+
+    return res.send(page('Email updated \u2713', 'Your email address has been changed. You can close this tab.'));
+  } catch (err) {
+    if (err.code === '23505') return res.status(409).send(page('Email no longer available', 'That address is already in use.'));
     return next(err);
   }
 });
