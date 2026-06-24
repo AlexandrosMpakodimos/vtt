@@ -1,6 +1,6 @@
 const express = require('express');
 const crypto = require('crypto');
-const bcrypt = require('bcrypt');
+const { hashPassword, verifyPassword } = require('../services/password');
 const passport = require('../config/passport');
 const knex = require('../db');
 const { validateEmail, validateUsername, validatePassword, normalizeEmail } = require('../services/validators');
@@ -89,7 +89,7 @@ router.post('/register', async (req, res, next) => {
     const existing = await knex('users').where({ email: e.value }).orWhere({ username: u.value }).first();
     if (existing) return res.status(409).json({ error: 'email or username already taken' });
 
-    const password_hash = await bcrypt.hash(p.value, 12);
+    const password_hash = await hashPassword(p.value);
     const [user] = await knex('users')
       .insert({ email: e.value, username: u.value, password_hash })
       .returning(SAFE_COLUMNS);
@@ -264,7 +264,7 @@ router.post('/reset-password', async (req, res, next) => {
       return res.status(400).json({ error: 'Reset link is invalid or expired' });
     }
 
-    const password_hash = await bcrypt.hash(p.value, 12);
+    const password_hash = await hashPassword(p.value);
     await knex.transaction(async (trx) => {
       await trx('users').where({ id: row.user_id }).update({ password_hash });
       await trx('password_reset_tokens').where({ id: row.id }).update({ used_at: trx.fn.now() });
@@ -330,19 +330,19 @@ router.post('/change-password', requireAuth, async (req, res, next) => {
 
     // Re-authenticate: req.user has no hash (SAFE_COLUMNS), so fetch it.
     const row = await knex('users').where({ id: req.user.id }).first();
-    const ok = row && (await bcrypt.compare(currentPassword, row.password_hash));
+    const ok = row && (await verifyPassword(row.password_hash, currentPassword));
     if (!ok) return res.status(400).json({ error: 'current password is incorrect' });
 
     const p = validatePassword(newPassword);
     if (p.error) return res.status(400).json({ error: p.error });
-    if (await bcrypt.compare(p.value, row.password_hash)) {
+    if (await verifyPassword(row.password_hash, p.value)) {
       return res.status(400).json({ error: 'new password must be different from the current one' });
     }
     if (await isPasswordBreached(p.value)) {
       return res.status(400).json({ error: 'password is too common or has appeared in a data breach' });
     }
 
-    const password_hash = await bcrypt.hash(p.value, 12);
+    const password_hash = await hashPassword(p.value);
     await knex.transaction(async (trx) => {
       await trx('users').where({ id: req.user.id }).update({ password_hash });
       // Keep this session; log out the user's other devices.
@@ -382,7 +382,7 @@ router.post('/change-email', requireAuth, async (req, res, next) => {
 
     // Re-authenticate: sensitive action, and req.user has no hash.
     const row = await knex('users').where({ id: req.user.id }).first();
-    const ok = row && (await bcrypt.compare(currentPassword, row.password_hash));
+    const ok = row && (await verifyPassword(row.password_hash, currentPassword));
     if (!ok) return res.status(400).json({ error: 'current password is incorrect' });
 
     const e = validateEmail(newEmail);
