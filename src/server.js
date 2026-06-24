@@ -12,6 +12,7 @@ const { Pool } = require('pg');
 const knex = require('./db');
 const passport = require('./config/passport');
 const authRoutes = require('./routes/auth');
+const { verifyOrigin } = require('./middleware/csrf');
 const {
   loginLimiter, registerLimiter, resendLimiter,
   forgotPasswordLimiter, resetPasswordLimiter, changeEmailLimiter,
@@ -47,6 +48,8 @@ app.use('/api/auth/resend-verification', resendLimiter);
 app.use('/api/auth/forgot-password', forgotPasswordLimiter);
 app.use('/api/auth/reset-password', resetPasswordLimiter);
 app.use('/api/auth/change-email', changeEmailLimiter);
+// Defense-in-depth CSRF check on state-changing requests (no-op on GET/HEAD).
+app.use('/api/auth', verifyOrigin);
 app.use('/api/auth', authRoutes);
 
 io.engine.use(sessionMiddleware);
@@ -56,6 +59,8 @@ io.engine.use(passport.session());
 io.on('connection', (socket) => {
   const user = socket.request.user;
   console.log(`Socket connected: ${socket.id}  (${user ? 'user: ' + user.username : 'anonymous'})`);
+  // Catch socket-level errors so one bad connection can't crash the whole process.
+  socket.on('error', (err) => console.error('Socket error:', socket.id, err && err.message));
   socket.on('ping', () => socket.emit('pong', { message: 'hello from server', timestamp: Date.now() }));
   socket.on('disconnect', () => console.log('Client disconnected:', socket.id));
 });
@@ -66,6 +71,7 @@ app.use((err, req, res, next) => {
   res.status(err.status || 500).json({ error: 'Something went wrong' });
 });
 
+// Periodically delete expired or already-used verification + password-reset tokens.
 async function cleanupExpiredTokens() {
   try {
     const sweep = (table) =>

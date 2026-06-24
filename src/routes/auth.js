@@ -1,6 +1,6 @@
 const express = require('express');
 const crypto = require('crypto');
-const bcrypt = require("bcrypt");
+const bcrypt = require('bcrypt');
 const passport = require('../config/passport');
 const knex = require('../db');
 const { validateEmail, validateUsername, validatePassword, normalizeEmail } = require('../services/validators');
@@ -24,13 +24,14 @@ function publicUser(user) {
 const sha256 = (s) => crypto.createHash('sha256').update(s).digest('hex');
 
 async function issueVerificationEmail(user) {
-  // Invalidate any earlier tokens for this user so only the newest link works.
-  await knex('email_verification_tokens').where({ user_id: user.id }).del();
+  // Invalidate earlier signup tokens for this user so only the newest link works.
+  await knex('email_verification_tokens').where({ user_id: user.id, purpose: 'signup' }).del();
 
   const rawToken = crypto.randomBytes(32).toString('hex');
   await knex('email_verification_tokens').insert({
     user_id: user.id,
     token_hash: sha256(rawToken),
+    purpose: 'signup',
     expires_at: knex.raw("now() + interval '24 hours'"),
   });
 
@@ -131,10 +132,7 @@ router.post('/resend-verification', async (req, res, next) => {
 
     const user = await knex('users').where({ email }).first();
     if (user && !user.email_verified_at) {
-      // Fire-and-forget (same reasoning as forgot-password): keep response time constant.
-      issueVerificationEmail(user).catch((err) =>
-        console.error('Verification resend failed:', err.message),
-      );
+      await issueVerificationEmail(user);
     }
     return res.json(generic);
   } catch (err) {
@@ -151,11 +149,7 @@ router.post('/forgot-password', async (req, res, next) => {
 
     const user = await knex('users').where({ email }).first();
     if (user) {
-      // Fire-and-forget: do NOT await the email send, so the response time is the
-      // same whether or not the account exists (prevents timing-based enumeration).
-      issuePasswordResetEmail(user).catch((err) =>
-        console.error('Password reset issue failed:', err.message),
-      );
+      await issuePasswordResetEmail(user);
     }
     return res.json(generic);
   } catch (err) {
@@ -190,7 +184,7 @@ router.get('/verify-email', async (req, res, next) => {
     const { token } = req.query;
     if (!token) return res.status(400).send(page('Invalid link', 'No token provided.'));
 
-    const row = await knex('email_verification_tokens').where({ token_hash: sha256(String(token)) }).first();
+    const row = await knex('email_verification_tokens').where({ token_hash: sha256(String(token)), purpose: 'signup' }).first();
     if (!row || row.used_at || new Date(row.expires_at) < new Date()) {
       return res.status(400).send(page('Link invalid or expired', 'Please request a new verification email.'));
     }
@@ -220,8 +214,6 @@ router.get('/reset-password', async (req, res, next) => {
     if (!row || row.used_at || new Date(row.expires_at) < new Date()) {
       return res.status(400).send(page('Link invalid or expired', 'Please request a new password reset.'));
     }
-    // Token valid — render the form. The token is read client-side from the URL,
-    // so it is never interpolated into the HTML (no injection surface).
     return res.send(`<!doctype html><meta charset="utf-8"><title>Reset your password</title>
 <body style="font-family:system-ui;max-width:420px;margin:80px auto">
   <h1>Choose a new password</h1>
@@ -299,10 +291,21 @@ router.patch('/me', requireAuth, async (req, res, next) => {
     }
 
     if (body.avatar_url !== undefined) {
-      const a = String(body.avatar_url).trim();
+      let a = String(body.avatar_url).trim();
       if (a.length > 2048) return res.status(400).json({ error: 'avatar_url is too long' });
-      if (a && !/^https?:\/\//i.test(a)) {
-        return res.status(400).json({ error: 'avatar_url must start with http:// or https://' });
+      if (a) {
+        let parsed;
+        try {
+          parsed = new URL(a);
+        } catch {
+          return res.status(400).json({ error: 'avatar_url must be a valid URL' });
+        }
+        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+          return res.status(400).json({ error: 'avatar_url must use http:// or https://' });
+        }
+        // Store the normalized form: new URL() percent-encodes any HTML-significant
+        // characters (" < >), so a stored value can't break out of an attribute later.
+        a = parsed.href;
       }
       updates.avatar_url = a || null;
     }
@@ -353,12 +356,13 @@ router.post('/change-password', requireAuth, async (req, res, next) => {
 });
 
 async function issueEmailChangeEmail(user, newEmail) {
-  // Invalidate prior tokens so only the newest change link works.
-  await knex('email_verification_tokens').where({ user_id: user.id }).del();
+  // Invalidate prior email-change tokens so only the newest change link works.
+  await knex('email_verification_tokens').where({ user_id: user.id, purpose: 'email_change' }).del();
   const rawToken = crypto.randomBytes(32).toString('hex');
   await knex('email_verification_tokens').insert({
     user_id: user.id,
     token_hash: sha256(rawToken),
+    purpose: 'email_change',
     expires_at: knex.raw("now() + interval '1 hour'"),
   });
   const base = process.env.BASE_URL || 'http://localhost:3000';
@@ -408,7 +412,7 @@ router.get('/verify-email-change', async (req, res, next) => {
     const { token } = req.query;
     if (!token) return res.status(400).send(page('Invalid link', 'No token provided.'));
 
-    const tok = await knex('email_verification_tokens').where({ token_hash: sha256(String(token)) }).first();
+    const tok = await knex('email_verification_tokens').where({ token_hash: sha256(String(token)), purpose: 'email_change' }).first();
     if (!tok || tok.used_at || new Date(tok.expires_at) < new Date()) {
       return res.status(400).send(page('Link invalid or expired', 'Please request the email change again.'));
     }
