@@ -19,7 +19,7 @@ function validatePassword(password) {
   if (password.length < 8) return { error: 'password must be at least 8 characters' };
   // Argon2id has no short input limit (unlike bcrypt's 72-byte truncation); this
   // generous cap only guards against pathologically long inputs (a DoS vector).
-  if (password.length > 128) return { error: 'password is too long (max 128 characters)' };
+  if (password.length > 64) return { error: 'password is too long (max 64 characters)' }; //64 character limit per NIST's recommendation
   return { value: password };
 }
 module.exports = { normalizeEmail, validateEmail, validateUsername, validatePassword };

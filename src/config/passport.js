@@ -11,12 +11,12 @@ const DUMMY_HASH = '$argon2id$v=19$m=47104,t=3,p=1$zPAe2EVN9+w9oEt/AGsBeQ$gGI2ug
 passport.use(new LocalStrategy({ usernameField: 'email' }, async (email, password, done) => {
   try {
     // Reject non-string or over-length passwords before any DB lookup or hashing.
-    // No legitimate password exceeds 128 characters (registration caps it), so this
+    // No legitimate password exceeds 64 characters (registration caps it), so this
     // never rejects a real login; it is defence-in-depth against hashing-exhaustion
     // (feeding a huge string to Argon2) and against non-string input. Running it
     // before the user lookup keeps it independent of whether the account exists, so
     // it does not leak account existence and preserves the timing equalisation below.
-    if (typeof password !== 'string' || password.length === 0 || password.length > 128) {
+    if (typeof password !== 'string' || password.length === 0 || password.length > 64) {
       return done(null, false, { message: 'Invalid email or password' });
     }
     const user = await knex('users').where({ email }).first();
