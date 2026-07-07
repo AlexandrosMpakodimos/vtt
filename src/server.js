@@ -4,6 +4,7 @@ const express = require('express');
 const http = require('http');
 const path = require('path');
 const { Server } = require('socket.io');
+const helmet = require('helmet');
 
 const session = require('express-session');
 const PgSession = require('connect-pg-simple')(session);
@@ -36,6 +37,21 @@ const sessionMiddleware = session({
   },
 });
 
+// Security headers (nosniff, frame protection, HSTS, CSP, ...). Placed first so
+// every response -- API, static files, and errors -- carries them.
+const isProd = process.env.NODE_ENV === 'production';
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      ...helmet.contentSecurityPolicy.getDefaultDirectives(),
+      'img-src': ["'self'", 'https:', 'data:'],   // allow externally-hosted https avatars
+      'style-src': ["'self'", "'unsafe-inline'"], // the dev harness uses an inline <style> block
+      // upgrade-insecure-requests only makes sense over HTTPS; dropping it in
+      // local http development avoids breaking same-origin sub-resource loading.
+      ...(isProd ? {} : { 'upgrade-insecure-requests': null }),
+    },
+  },
+}));
 app.use(express.json());
 app.use(sessionMiddleware);
 app.use(passport.initialize());
