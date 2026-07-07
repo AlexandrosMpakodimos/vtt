@@ -292,7 +292,7 @@ router.patch('/me', requireAuth, async (req, res, next) => {
 
     if (body.avatar_url !== undefined) {
       let a = String(body.avatar_url).trim();
-      if (a.length > 2048) return res.status(400).json({ error: 'avatar_url is too long' });
+      if (a.length > 2000) return res.status(400).json({ error: 'avatar_url is too long' });
       if (a) {
         let parsed;
         try {
