@@ -116,40 +116,66 @@ router.post('/', async (req, res, next) => {
       return res.status(400).json({ error: 'a public campaign cannot have a password' });
     }
 
-    const owned = await knex('campaigns')
-      .where({ owner_id: req.user.id }).whereNull('deleted_at')
-      .count({ n: '*' }).first();
-    if (Number(owned.n) >= MAX_CAMPAIGNS_PER_USER) {
-      return res.status(409).json({
-        error: `you can own at most ${MAX_CAMPAIGNS_PER_USER} campaigns — delete one first`,
-      });
-    }
-
+    // Cap enforcement must be ATOMIC, not read-then-write: a plain
+    // "count >= MAX ? reject : insert" is a TOCTOU race (OWASP A08:2025) —
+    // N parallel creates all read the same count before any insert commits and
+    // all overrun the cap. The fix is to do the count and the insert inside one
+    // SERIALIZABLE transaction, so concurrent creators are serialised by the DB
+    // and a loser is aborted (40011) rather than allowed through. We retry the
+    // aborted transaction a bounded number of times.
+    //
     // Columns are hand-listed, never spread from the body: this is what makes
     // the write structurally immune to mass assignment.
-    const campaign = await knex.transaction(async (trx) => {
-      const [row] = await trx('campaigns')
-        .insert({
-          owner_id: req.user.id,
-          name: n.value,
-          description: d.value,
-          img_url: img.value,
-          is_public: isPublic,
-          password_hash,
-        })
-        .returning([...SAFE_COLUMNS, 'password_hash']);
+    let campaign;
+    let attempt = 0;
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      try {
+        campaign = await knex.transaction(async (trx) => {
+          await trx.raw('SET TRANSACTION ISOLATION LEVEL SERIALIZABLE');
 
-      // The owner gets a membership row at creation. Access is still derived
-      // from owner_id (see campaignAuth), but the row keeps the member list
-      // complete and survives an ownership transfer.
-      await trx('campaign_members').insert({
-        campaign_id: row.id,
-        user_id: req.user.id,
-        status: 'active',
-      });
+          const owned = await trx('campaigns')
+            .where({ owner_id: req.user.id }).whereNull('deleted_at')
+            .count({ n: '*' }).first();
+          if (Number(owned.n) >= MAX_CAMPAIGNS_PER_USER) {
+            const e = new Error('cap'); e.capExceeded = true; throw e;
+          }
 
-      return row;
-    });
+          const [row] = await trx('campaigns')
+            .insert({
+              owner_id: req.user.id,
+              name: n.value,
+              description: d.value,
+              img_url: img.value,
+              is_public: isPublic,
+              password_hash,
+            })
+            .returning([...SAFE_COLUMNS, 'password_hash']);
+
+          // The owner gets a membership row at creation. Access is still derived
+          // from owner_id (see campaignAuth), but the row keeps the member list
+          // complete and survives an ownership transfer.
+          await trx('campaign_members').insert({
+            campaign_id: row.id,
+            user_id: req.user.id,
+            status: 'active',
+          });
+
+          return row;
+        });
+        break;
+      } catch (err) {
+        if (err.capExceeded) {
+          return res.status(409).json({
+            error: `you can own at most ${MAX_CAMPAIGNS_PER_USER} campaigns — delete one first`,
+          });
+        }
+        // 40001 = serialization_failure: a concurrent create won the race and
+        // this one was aborted to preserve the cap. Retry a few times.
+        if (err.code === '40001' && attempt < 5) { attempt += 1; continue; }
+        throw err;
+      }
+    }
 
     return res.status(201).json({ campaign: publicCampaign(campaign, req.user.id) });
   } catch (err) {
@@ -316,25 +342,47 @@ router.post('/:id/join', async (req, res, next) => {
     const c = validateColor(req.body && req.body.color);
     if (c.error) return res.status(400).json({ error: c.error });
 
-    // Cap checked after the password so it can't be used to probe how full a
-    // private campaign is without knowing the password.
-    if ((await countActiveMembers(id)) >= MAX_PLAYERS_PER_CAMPAIGN) {
-      return res.status(409).json({ error: 'this campaign is full' });
-    }
+    // Cap + membership write, made ATOMIC to close the same TOCTOU race as
+    // create (OWASP A08:2025): without this, N parallel joiners all read
+    // "count < MAX" before any insert commits and overrun the player cap.
+    // SERIALIZABLE serialises concurrent joiners; a loser aborts (40001) and
+    // retries, re-reading a now-accurate count. The cap is still checked AFTER
+    // the password (above) so it can't probe how full a private campaign is.
+    let attempt = 0;
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      try {
+        await knex.transaction(async (trx) => {
+          await trx.raw('SET TRANSACTION ISOLATION LEVEL SERIALIZABLE');
 
-    // Rows are never deleted — a returning member is an UPDATE of the existing
-    // row, so their history (and original joined_at) survives.
-    if (existing) {
-      await knex('campaign_members')
-        .where({ campaign_id: id, user_id: req.user.id })
-        .update({ status: 'active', ...(c.value ? { color: c.value } : {}) });
-    } else {
-      await knex('campaign_members').insert({
-        campaign_id: id,
-        user_id: req.user.id,
-        status: 'active',
-        color: c.value,
-      });
+          const cur = await trx('campaign_members')
+            .where({ campaign_id: id, status: 'active' })
+            .count({ n: '*' }).first();
+          if (Number(cur.n) >= MAX_PLAYERS_PER_CAMPAIGN) {
+            const e = new Error('full'); e.campaignFull = true; throw e;
+          }
+
+          // Rows are never deleted — a returning member is an UPDATE of the
+          // existing row, so their history (and original joined_at) survives.
+          if (existing) {
+            await trx('campaign_members')
+              .where({ campaign_id: id, user_id: req.user.id })
+              .update({ status: 'active', ...(c.value ? { color: c.value } : {}) });
+          } else {
+            await trx('campaign_members').insert({
+              campaign_id: id,
+              user_id: req.user.id,
+              status: 'active',
+              color: c.value,
+            });
+          }
+        });
+        break;
+      } catch (err) {
+        if (err.campaignFull) return res.status(409).json({ error: 'this campaign is full' });
+        if (err.code === '40001' && attempt < 5) { attempt += 1; continue; }
+        throw err;
+      }
     }
 
     return res.json({ campaign: publicCampaign(campaign, req.user.id), status: 'active' });
