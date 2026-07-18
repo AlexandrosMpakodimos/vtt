@@ -48,6 +48,10 @@ function publicCampaign(c, viewerId) {
     settings: c.settings,
     created_at: c.created_at,
     updated_at: c.updated_at,
+    // archived is the VIEWER's own dashboard state (from their campaign_members
+    // row), not a property of the campaign — two viewers can disagree on it.
+    // Only present when this campaign was loaded with a membership row joined in.
+    ...(c.archived_at !== undefined ? { archived: c.archived_at !== null } : {}),
     ...(c.deleted_at !== undefined && c.deleted_at !== null ? { deleted_at: c.deleted_at } : {}),
   };
 }
@@ -153,17 +157,37 @@ router.post('/', async (req, res, next) => {
   }
 });
 
-// GET /api/campaigns/mine — dashboard: campaigns I own + ones I'm an active member of.
+// GET /api/campaigns/mine?role=all|owner|player&filter=active|archived|all
+// The dashboard: campaigns I'm an active member of (owned or joined).
 // Declared before /:id so "mine" is never parsed as a campaign id.
+//
+//   role   — 'owner' (I'm the GM), 'player' (active member, not GM), 'all' (both).
+//            Drives the Owned vs. Joined tabs; defaults to 'all'.
+//   filter — 'active' (not archived), 'archived', or 'all'. Archive is per-user
+//            (campaign_members.archived_at), so this filters MY view, not the
+//            campaign globally; defaults to 'active' so archived rows are hidden
+//            from the normal dashboard until asked for.
 router.get('/mine', async (req, res, next) => {
   try {
-    const rows = await knex('campaigns as c')
+    const role = ['all', 'owner', 'player'].includes(req.query.role) ? req.query.role : 'all';
+    const filter = ['active', 'archived', 'all'].includes(req.query.filter) ? req.query.filter : 'active';
+
+    const query = knex('campaigns as c')
       .join('campaign_members as m', 'm.campaign_id', 'c.id')
       .where('m.user_id', req.user.id)
       .where('m.status', 'active')
-      .whereNull('c.deleted_at')
+      .whereNull('c.deleted_at');
+
+    // GM is derived from ownership, so the tabs split on owner_id, not a role column.
+    if (role === 'owner') query.where('c.owner_id', req.user.id);
+    if (role === 'player') query.whereNot('c.owner_id', req.user.id);
+
+    if (filter === 'active') query.whereNull('m.archived_at');
+    if (filter === 'archived') query.whereNotNull('m.archived_at');
+
+    const rows = await query
       .orderBy('c.updated_at', 'desc')
-      .select('c.*');
+      .select('c.*', 'm.archived_at'); // archived_at feeds the per-viewer `archived` flag
 
     return res.json({ campaigns: rows.map((c) => publicCampaign(c, req.user.id)) });
   } catch (err) {
@@ -334,6 +358,34 @@ router.post('/:id/leave', requireMember, async (req, res, next) => {
       .update({ status: 'left' });
 
     return res.json({ ok: true, status: 'left' });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// POST /api/campaigns/:id/archive — hide this campaign from MY active dashboard.
+// Per-user and purely visual: it sets my own membership's archived_at and touches
+// no one else's view. Any active member (owner or player) may archive their view;
+// it is not moderation and does not affect membership or access. requireMember
+// guarantees the caller has a membership row to stamp.
+router.post('/:id/archive', requireMember, async (req, res, next) => {
+  try {
+    await knex('campaign_members')
+      .where({ campaign_id: req.campaign.id, user_id: req.user.id })
+      .update({ archived_at: knex.fn.now() });
+    return res.json({ ok: true, archived: true });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// POST /api/campaigns/:id/unarchive — bring it back into my active dashboard.
+router.post('/:id/unarchive', requireMember, async (req, res, next) => {
+  try {
+    await knex('campaign_members')
+      .where({ campaign_id: req.campaign.id, user_id: req.user.id })
+      .update({ archived_at: null });
+    return res.json({ ok: true, archived: false });
   } catch (err) {
     return next(err);
   }

@@ -263,6 +263,78 @@ const connected = (s) =>
   }
   check(`campaign cap stops at 20 (created ${created})`, created === 20, `created=${created}`);
 
+  // ---------- tabs: role filter on /mine ----------
+  // gm owns priv; make gm a PLAYER somewhere too. player2 owns a campaign gm joins.
+  const player2 = await makeUser('owner2');
+  r = await player2.req('POST', '/api/campaigns', { name: 'Others Realm', is_public: true });
+  const others = r.data.campaign;
+  await gm.req('POST', `/api/campaigns/${others.id}/join`, {});
+
+  r = await gm.req('GET', '/api/campaigns/mine?role=owner');
+  check('role=owner returns only campaigns I own', r.data.campaigns.every((c) => c.is_gm === true) && r.data.campaigns.some((c) => c.id === priv.id));
+  check('role=owner excludes campaigns I only joined', !r.data.campaigns.some((c) => c.id === others.id));
+  r = await gm.req('GET', '/api/campaigns/mine?role=player');
+  check('role=player returns only campaigns I joined (not owned)', r.data.campaigns.every((c) => c.is_gm === false) && r.data.campaigns.some((c) => c.id === others.id));
+  check('role=player excludes campaigns I own', !r.data.campaigns.some((c) => c.id === priv.id));
+  r = await gm.req('GET', '/api/campaigns/mine?role=all');
+  check('role=all returns both owned and joined', r.data.campaigns.some((c) => c.id === priv.id) && r.data.campaigns.some((c) => c.id === others.id));
+
+  // ---------- archive: per-user, per-view ----------
+  r = await gm.req('POST', `/api/campaigns/${others.id}/archive`);
+  check('member can archive their own view -> 200', r.status === 200 && r.data.archived === true, JSON.stringify(r.data));
+  r = await gm.req('GET', '/api/campaigns/mine?role=player&filter=active');
+  check('archived campaign hidden from active dashboard', !r.data.campaigns.some((c) => c.id === others.id));
+  r = await gm.req('GET', '/api/campaigns/mine?role=player&filter=archived');
+  check('archived campaign shows under filter=archived', r.data.campaigns.some((c) => c.id === others.id && c.archived === true));
+  r = await gm.req('GET', '/api/campaigns/mine?role=player&filter=all');
+  check('filter=all shows archived + active together', r.data.campaigns.some((c) => c.id === others.id));
+
+  // The crucial property: archive is MINE, not the campaign's. The OWNER's view is untouched.
+  r = await player2.req('GET', '/api/campaigns/mine?role=owner&filter=active');
+  check("one member's archive does NOT archive another member's view", r.data.campaigns.some((c) => c.id === others.id && !c.archived));
+
+  r = await gm.req('POST', `/api/campaigns/${others.id}/unarchive`);
+  check('unarchive -> 200', r.status === 200 && r.data.archived === false);
+  r = await gm.req('GET', '/api/campaigns/mine?role=player&filter=active');
+  check('unarchived campaign back in active dashboard', r.data.campaigns.some((c) => c.id === others.id));
+
+  // a stranger (no membership row) cannot archive
+  r = await stranger.req('POST', `/api/campaigns/${priv.id}/archive`);
+  check('non-member cannot archive -> 404', r.status === 404, JSON.stringify(r.data));
+
+  // ---------- status CHECK constraint (DB-level) ----------
+  let checkRejected = false;
+  try {
+    await knex('campaign_members')
+      .where({ campaign_id: priv.id, user_id: gm.id })
+      .update({ status: 'actve' }); // deliberate typo
+  } catch (e) { checkRejected = /check/i.test(e.message) || e.code === '23514'; }
+  check('DB CHECK constraint rejects an invalid status', checkRejected);
+
+  // ---------- 30-day hard-delete sweep ----------
+  r = await gm.req('POST', '/api/campaigns', { name: 'Sweep Me', is_public: true });
+  const sweepId = r.data.campaign.id;
+  await gm.req('DELETE', `/api/campaigns/${sweepId}`);
+  // Age it past the window, then run the same query the server's sweep runs.
+  await knex('campaigns').where({ id: sweepId }).update({ deleted_at: knex.raw("now() - interval '31 days'") });
+  const swept = await knex('campaigns')
+    .whereNotNull('deleted_at')
+    .whereRaw("deleted_at < now() - interval '30 days'")
+    .del();
+  check('sweep hard-deletes campaigns past 30 days', swept >= 1, `deleted ${swept}`);
+  const gone = await knex('campaigns').where({ id: sweepId }).first();
+  check('swept campaign row is physically gone', !gone);
+  // a fresh soft-delete (within the window) must survive the same sweep
+  r = await gm.req('POST', '/api/campaigns', { name: 'Keep Me', is_public: true });
+  const keepId = r.data.campaign.id;
+  await gm.req('DELETE', `/api/campaigns/${keepId}`);
+  await knex('campaigns')
+    .whereNotNull('deleted_at')
+    .whereRaw("deleted_at < now() - interval '30 days'")
+    .del();
+  const kept = await knex('campaigns').where({ id: keepId }).first();
+  check('recent soft-delete survives the sweep', !!kept && kept.deleted_at !== null);
+
   // ---------- SOCKETS ----------
   await gm.req('POST', `/api/campaigns/${priv.id}/join`, {});
   const sgm = await connected(socketFor(gm));

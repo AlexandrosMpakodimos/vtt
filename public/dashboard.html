@@ -43,7 +43,14 @@
   <fieldset>
     <legend>My campaigns</legend>
     <div class="row">
-      <button id="m-refresh">Refresh</button>
+      <button id="tab-owned">Owned</button>
+      <button id="tab-joined">Joined</button>
+      <span class="muted">| filter:</span>
+      <select id="m-filter">
+        <option value="active">active</option>
+        <option value="archived">archived</option>
+        <option value="all">all</option>
+      </select>
       <button id="m-deleted">Show deleted (30d)</button>
     </div>
     <div id="mine"></div>

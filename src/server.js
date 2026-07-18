@@ -13,7 +13,7 @@ const { Pool } = require('pg');
 const knex = require('./db');
 const passport = require('./config/passport');
 const authRoutes = require('./routes/auth');
-const { router: campaignRoutes } = require('./routes/campaigns');
+const { router: campaignRoutes, SOFT_DELETE_DAYS } = require('./routes/campaigns');
 const { initSockets } = require('./socket');
 const { verifyOrigin } = require('./middleware/csrf');
 const {
@@ -106,6 +106,25 @@ async function cleanupExpiredTokens() {
 }
 setInterval(cleanupExpiredTokens, 60 * 60 * 1000);
 cleanupExpiredTokens();
+
+// Hard-delete campaigns whose 30-day soft-delete window has fully elapsed.
+// Nothing reads these rows past the window (every listing filters deleted_at
+// IS NULL, and /restore returns 410 after it), so this only reclaims storage.
+// The FK cascade takes their campaign_members with them. Same hourly cadence
+// and fail-soft shape as the token sweep above.
+async function cleanupDeletedCampaigns() {
+  try {
+    const n = await knex('campaigns')
+      .whereNotNull('deleted_at')
+      .whereRaw(`deleted_at < now() - interval '${SOFT_DELETE_DAYS} days'`)
+      .del();
+    if (n) console.log(`Hard-deleted ${n} campaign(s) past the ${SOFT_DELETE_DAYS}-day recovery window`);
+  } catch (err) {
+    console.error('Campaign cleanup failed:', err.message);
+  }
+}
+setInterval(cleanupDeletedCampaigns, 60 * 60 * 1000);
+cleanupDeletedCampaigns();
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => console.log(`Server running at http://localhost:${PORT}`));

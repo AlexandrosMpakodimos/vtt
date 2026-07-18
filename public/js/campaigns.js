@@ -54,6 +54,7 @@ function campaignCard(c, actions = []) {
     c.is_public ? 'public' : 'private',
     c.has_password ? 'password' : null,
     c.is_gm ? 'GM' : null,
+    c.archived ? 'ARCHIVED' : null,
     c.deleted_at ? 'DELETED' : null,
   ].filter(Boolean)) {
     const tag = document.createElement('span');
@@ -99,24 +100,44 @@ document.getElementById('c-submit').addEventListener('click', async () => {
   loadMine();
 });
 
-// --- my campaigns ---
+// --- my campaigns (Owned / Joined tabs × active/archived/all filter) ---
+let currentRole = 'owner'; // which tab is active: 'owner' or 'player'
+
 async function loadMine() {
-  const r = await api('GET', '/api/campaigns/mine');
+  const filter = document.getElementById('m-filter').value;
+  const r = await api('GET', `/api/campaigns/mine?role=${currentRole}&filter=${filter}`);
   const box = document.getElementById('mine');
   box.textContent = '';
+  // Make the active tab obvious in this bare harness.
+  document.getElementById('tab-owned').style.fontWeight = currentRole === 'owner' ? 'bold' : 'normal';
+  document.getElementById('tab-joined').style.fontWeight = currentRole === 'player' ? 'bold' : 'normal';
   if (r.status !== 200) return show(`GET /mine → ${r.status}`, r.data);
-  if (!r.data.campaigns.length) box.textContent = '(none)';
+  if (!r.data.campaigns.length) box.textContent = `(no ${filter === 'all' ? '' : filter + ' '}campaigns in "${currentRole}")`;
   for (const c of r.data.campaigns) {
-    box.appendChild(campaignCard(c, [
+    const actions = [
       ['open', () => { document.getElementById('room-id').value = c.id; openRoom(); }],
+      // Archive is per-user: available to owner and player alike.
+      c.archived
+        ? ['unarchive', async () => {
+            const x = await api('POST', `/api/campaigns/${c.id}/unarchive`);
+            show(`unarchive → ${x.status}`, x.data); loadMine();
+          }]
+        : ['archive', async () => {
+            const x = await api('POST', `/api/campaigns/${c.id}/archive`);
+            show(`archive → ${x.status}`, x.data); loadMine();
+          }],
       ...(c.is_gm ? [['delete', async () => {
         const d = await api('DELETE', `/api/campaigns/${c.id}`);
         show(`DELETE → ${d.status}`, d.data); loadMine();
       }]] : []),
-    ]));
+    ];
+    box.appendChild(campaignCard(c, actions));
   }
+  show(`GET /mine (${currentRole}/${filter}) → ${r.status}`, { count: r.data.campaigns.length });
 }
-document.getElementById('m-refresh').addEventListener('click', loadMine);
+document.getElementById('tab-owned').addEventListener('click', () => { currentRole = 'owner'; loadMine(); });
+document.getElementById('tab-joined').addEventListener('click', () => { currentRole = 'player'; loadMine(); });
+document.getElementById('m-filter').addEventListener('change', loadMine);
 
 document.getElementById('m-deleted').addEventListener('click', async () => {
   const r = await api('GET', '/api/campaigns/deleted');
