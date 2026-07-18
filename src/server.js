@@ -13,10 +13,13 @@ const { Pool } = require('pg');
 const knex = require('./db');
 const passport = require('./config/passport');
 const authRoutes = require('./routes/auth');
+const { router: campaignRoutes } = require('./routes/campaigns');
+const { initSockets } = require('./socket');
 const { verifyOrigin } = require('./middleware/csrf');
 const {
   loginLimiter, registerLimiter, resendLimiter,
   forgotPasswordLimiter, resetPasswordLimiter, changeEmailLimiter,
+  campaignJoinLimiter, campaignSearchLimiter, campaignCreateLimiter,
 } = require('./middleware/rateLimit');
 
 const app = express();
@@ -68,18 +71,20 @@ app.use('/api/auth/change-email', changeEmailLimiter);
 app.use('/api/auth', verifyOrigin);
 app.use('/api/auth', authRoutes);
 
+// Join verifies a room password, so it is limited like the login endpoint is.
+app.use('/api/campaigns/:id/join', campaignJoinLimiter);
+app.use('/api/campaigns/search', campaignSearchLimiter);
+app.post('/api/campaigns', campaignCreateLimiter);
+app.use('/api/campaigns', verifyOrigin);
+app.use('/api/campaigns', campaignRoutes);
+
 io.engine.use(sessionMiddleware);
 io.engine.use(passport.initialize());
 io.engine.use(passport.session());
 
-io.on('connection', (socket) => {
-  const user = socket.request.user;
-  console.log(`Socket connected: ${socket.id}  (${user ? 'user: ' + user.username : 'anonymous'})`);
-  // Catch socket-level errors so one bad connection can't crash the whole process.
-  socket.on('error', (err) => console.error('Socket error:', socket.id, err && err.message));
-  socket.on('ping', () => socket.emit('pong', { message: 'hello from server', timestamp: Date.now() }));
-  socket.on('disconnect', () => console.log('Client disconnected:', socket.id));
-});
+// Campaign rooms + their authorisation. Exposed on the app so the kick/ban
+// routes can evict a live socket, not merely update the database row.
+app.set('campaignSockets', initSockets(io));
 
 // eslint-disable-next-line no-unused-vars
 app.use((err, req, res, next) => {

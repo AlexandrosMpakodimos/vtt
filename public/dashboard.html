@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>VTT — Campaigns (dev)</title>
+  <style>
+    body { font-family: monospace; max-width: 720px; margin: 40px auto; padding: 0 16px; }
+    fieldset { margin-bottom: 16px; border: 1px solid #999; }
+    legend { font-weight: bold; }
+    label { display: block; margin: 6px 0 2px; }
+    input, select { width: 100%; padding: 6px; box-sizing: border-box; }
+    button { margin-top: 10px; padding: 6px 12px; cursor: pointer; }
+    #out { background: #111; color: #6f6; padding: 12px; white-space: pre-wrap;
+           min-height: 60px; border-radius: 4px; }
+    .row { display: flex; gap: 8px; align-items: center; }
+    .row > * { margin-top: 0; }
+    hr { border: none; border-top: 1px dashed #ccc; margin: 14px 0; }
+    .card { border: 1px solid #ccc; padding: 8px; margin: 6px 0; border-radius: 4px; }
+    .card b { font-size: 14px; }
+    .tag { font-size: 11px; padding: 1px 5px; border: 1px solid #999; border-radius: 3px; }
+    .muted { color: #777; font-size: 12px; }
+    #log { background: #111; color: #9cf; padding: 8px; white-space: pre-wrap;
+           height: 120px; overflow-y: auto; border-radius: 4px; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <h1>VTT campaigns (dev harness)</h1>
+  <p class="muted">Log in via <a href="/auth.html">/auth.html</a> first. <span id="whoami">checking…</span></p>
+
+  <fieldset>
+    <legend>Create campaign</legend>
+    <label>Name</label><input id="c-name" />
+    <label>Description</label><input id="c-desc" />
+    <label>Image URL</label><input id="c-img" placeholder="https://…" />
+    <div class="row">
+      <label><input type="checkbox" id="c-public" style="width:auto" /> public (no password)</label>
+    </div>
+    <label>Password (private only)</label><input id="c-password" type="password" />
+    <button id="c-submit">Create</button>
+  </fieldset>
+
+  <fieldset>
+    <legend>My campaigns</legend>
+    <div class="row">
+      <button id="m-refresh">Refresh</button>
+      <button id="m-deleted">Show deleted (30d)</button>
+    </div>
+    <div id="mine"></div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Search</legend>
+    <label>Query</label><input id="s-q" placeholder="name or description" />
+    <label>Visibility</label>
+    <select id="s-vis">
+      <option value="all">all</option>
+      <option value="public">public</option>
+      <option value="private">private</option>
+    </select>
+    <button id="s-submit">Search</button>
+    <div id="results"></div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Campaign room</legend>
+    <label>Campaign id</label><input id="room-id" />
+    <div class="row">
+      <button id="room-open">Open (detail + socket join)</button>
+      <button id="room-leave">Leave campaign</button>
+    </div>
+    <div id="room"></div>
+    <hr />
+    <div class="muted">socket log</div>
+    <div id="log"></div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Manage players (owner only)</legend>
+    <div class="row"><button id="mem-refresh">Load members</button></div>
+    <div id="members"></div>
+  </fieldset>
+
+  <div id="out">ready</div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/js/campaigns.js"></script>
+</body>
+</html>
