@@ -71,8 +71,65 @@ function validateColor(color) {
   if (!HEX_COLOR_RE.test(c)) return { error: 'color must be a hex value like #A1B2C3' };
   return { value: c.toLowerCase() };
 }
+
+// --- scenes & tokens (M2 canvas) ---
+
+function validateSceneName(name) {
+  const n = typeof name === 'string' ? name.trim() : '';
+  if (!n) return { error: 'scene name is required' };
+  if (n.length > 100) return { error: 'scene name is too long (max 100 characters)' };
+  return { value: n };
+}
+
+// Token display name. Optional (a decorative token needs none). Kept to the
+// same 100-char bound as other names; stored/rendered as text, never as markup.
+function validateTokenName(name) {
+  if (name === undefined || name === null || name === '') return { value: null };
+  if (typeof name !== 'string') return { error: 'token name must be text' };
+  const n = name.trim();
+  if (n.length > 100) return { error: 'token name is too long (max 100 characters)' };
+  return { value: n || null };
+}
+
+// A bounded, finite number. Rejects NaN/Infinity/strings up front so a bogus
+// coordinate can never reach the DB or a broadcast. Bounds are generous (the
+// canvas is measured in grid units) but finite, so an absurd value is clamped
+// out rather than persisted. Returns { value } (a Number) or { error }.
+function finiteInRange(v, { min, max, field }) {
+  const n = typeof v === 'number' ? v : Number(v);
+  if (!Number.isFinite(n)) return { error: `${field} must be a finite number` };
+  if (n < min || n > max) return { error: `${field} must be between ${min} and ${max}` };
+  return { value: n };
+}
+
+// Grid-unit coordinate. A scene is at most a few hundred squares on a side;
+// -10000..10000 is far past any real canvas yet bounds a hostile input.
+const COORD_MIN = -10000;
+const COORD_MAX = 10000;
+function validateGridCoord(v, field) {
+  return finiteInRange(v, { min: COORD_MIN, max: COORD_MAX, field });
+}
+
+// Token size in grid units. Must be positive; a token cannot be 0 or negative
+// squares. Capped so it cannot be made to blanket an entire scene.
+function validateTokenSize(v, field) {
+  const r = finiteInRange(v, { min: 0.1, max: 100, field });
+  return r;
+}
+
+// Scene canvas dimension in pixels. Positive integer, bounded to sane limits.
+function validateSceneDimension(v, field, dflt) {
+  if (v === undefined || v === null || v === '') return { value: dflt };
+  const n = typeof v === 'number' ? v : Number(v);
+  if (!Number.isInteger(n)) return { error: `${field} must be a whole number of pixels` };
+  if (n < 100 || n > 20000) return { error: `${field} must be between 100 and 20000 pixels` };
+  return { value: n };
+}
+
 module.exports = {
   normalizeEmail, validateEmail, validateUsername, validatePassword,
   validateCampaignName, validateCampaignDescription, validateImageUrl,
   validateCampaignPassword, validateColor,
+  validateSceneName, validateTokenName, validateGridCoord, validateTokenSize,
+  validateSceneDimension,
 };

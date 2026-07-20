@@ -19,7 +19,12 @@
 // deleted — which is why authorisation is re-checked on every join below
 // against the live database, never against a value cached at connect time.
 
+const knex = require('./db');
 const { isActiveMember } = require('./middleware/campaignAuth');
+const {
+  publicToken, tokenMovePolicy, loadSceneInCampaign,
+  validateGridCoord, validateTokenSize,
+} = require('./routes/scenes');
 
 const roomName = (campaignId) => `campaign:${campaignId}`;
 
@@ -54,6 +59,14 @@ function initSockets(io) {
       evicted += 1;
     }
     return evicted;
+  }
+
+  // Push a token delta to everyone in a campaign room. Used by the HTTP token
+  // routes (place / delete), which do the authoritative write and then hand the
+  // shaped row here to fan out. Emitting to io.to(room) rather than a single
+  // socket means the acting user's own other tabs get the update too.
+  function broadcastToken(campaignId, event, payload) {
+    io.to(roomName(campaignId)).emit(event, payload);
   }
 
   io.on('connection', (socket) => {
@@ -110,6 +123,99 @@ function initSockets(io) {
       if (typeof ack === 'function') ack({ ok: true });
     });
 
+    // token:move — the one high-frequency delta, sent ONCE on drop (not streamed
+    // during the drag; live-drag streaming is a deliberate later optimisation).
+    //
+    // Server-authoritative, and every check is redone here against the live DB:
+    // socket.request is a handshake snapshot (see the header note), so nothing
+    // established at connect time may be trusted for a write.
+    //   1. Re-verify active membership of the campaign — a member banned since
+    //      connecting must not move tokens on a stale socket.
+    //   2. Re-verify the socket is actually in the room (it can only be there if
+    //      a prior campaign:join authorised it).
+    //   3. Scope the scene to the campaign (no cross-campaign token by id).
+    //   4. Apply the move policy (GM moves any token; a player only their own).
+    //   5. Validate coordinates BEFORE persisting; then write, then broadcast.
+    // Only after the write succeeds is the delta broadcast — a rejected or
+    // clamped move never reaches other clients.
+    socket.on('token:move', async (payload, ack) => {
+      const respond = (result) => { if (typeof ack === 'function') ack(result); };
+      try {
+        const p = payload || {};
+        const campaignId = p.campaign_id;
+        const sceneId = p.scene_id;
+        const tokenId = p.token_id;
+
+        if (!(await isActiveMember(campaignId, user.id))) {
+          return respond({ ok: false, error: 'not a member of that campaign' });
+        }
+        // Must have joined the room first. Guards against a socket that never
+        // ran campaign:join trying to write straight into a room.
+        if (!socket.rooms.has(roomName(campaignId))) {
+          return respond({ ok: false, error: 'join the campaign room first' });
+        }
+
+        const scene = await loadSceneInCampaign(sceneId, campaignId);
+        if (!scene) return respond({ ok: false, error: 'scene not found' });
+
+        const token = await knex('tokens')
+          .where({ id: typeof tokenId === 'string' ? tokenId : '', scene_id: scene.id })
+          .first();
+        if (!token) return respond({ ok: false, error: 'token not found' });
+
+        // Load the campaign to get owner_id for the policy check. (isActiveMember
+        // already proved access; this is only to distinguish GM from player.)
+        const campaign = await knex('campaigns')
+          .where({ id: campaignId }).whereNull('deleted_at').first();
+        if (!campaign) return respond({ ok: false, error: 'campaign not found' });
+
+        if (!tokenMovePolicy({ campaign, token, userId: user.id })) {
+          return respond({ ok: false, error: 'you can only move tokens you placed' });
+        }
+
+        if (token.locked) return respond({ ok: false, error: 'token is locked' });
+
+        // A move MUST carry both coordinates. Unlike placement (where an absent
+        // coord legitimately defaults to origin), a move with a missing x/y is
+        // malformed. This guard also closes a coercion hole: JSON serialises
+        // Infinity/NaN as null, and Number(null) === 0 would otherwise slip a
+        // bogus "move" through as a move-to-origin.
+        if (p.x === undefined || p.x === null || p.y === undefined || p.y === null) {
+          return respond({ ok: false, error: 'x and y are required' });
+        }
+        const x = validateGridCoord(p.x, 'x');
+        if (x.error) return respond({ ok: false, error: x.error });
+        const y = validateGridCoord(p.y, 'y');
+        if (y.error) return respond({ ok: false, error: y.error });
+
+        // Optional resize on the same event; ignored unless both provided.
+        const updates = { x: x.value, y: y.value, updated_at: knex.fn.now() };
+        if (p.width !== undefined) {
+          const w = validateTokenSize(p.width, 'width');
+          if (w.error) return respond({ ok: false, error: w.error });
+          updates.width = w.value;
+        }
+        if (p.height !== undefined) {
+          const h = validateTokenSize(p.height, 'height');
+          if (h.error) return respond({ ok: false, error: h.error });
+          updates.height = h.value;
+        }
+
+        const [row] = await knex('tokens')
+          .where({ id: token.id }).update(updates).returning('*');
+
+        const shaped = publicToken(row);
+        // Broadcast the authoritative position to the WHOLE room, mover included:
+        // if the server clamped or adjusted anything, the mover's optimistic
+        // local state is corrected by the same message everyone else receives.
+        io.to(roomName(campaignId)).emit('token:moved', shaped);
+        return respond({ ok: true, token: shaped });
+      } catch (err) {
+        console.error('token:move failed:', err.message);
+        return respond({ ok: false, error: 'move failed' });
+      }
+    });
+
     socket.on('disconnect', () => {
       // A disconnect is transient and says nothing about membership: the member
       // stays 'active' in the DB and walks straight back in on reconnect.
@@ -119,7 +225,7 @@ function initSockets(io) {
     });
   });
 
-  return { evictUser, roomName, socketsByUser };
+  return { evictUser, roomName, socketsByUser, broadcastToken };
 }
 
 module.exports = { initSockets, roomName };

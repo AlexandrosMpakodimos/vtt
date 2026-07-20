@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>VTT — Scene canvas (dev)</title>
+  <style>
+    body { font-family: monospace; max-width: 980px; margin: 24px auto; padding: 0 16px; }
+    fieldset { margin-bottom: 16px; border: 1px solid #999; }
+    legend { font-weight: bold; }
+    label { display: block; margin: 6px 0 2px; }
+    input, select { padding: 6px; box-sizing: border-box; }
+    .full { width: 100%; }
+    button { margin-top: 8px; padding: 6px 12px; cursor: pointer; }
+    .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .row > * { margin-top: 0; }
+    .muted { color: #777; font-size: 12px; }
+    #out { background: #111; color: #6f6; padding: 10px; white-space: pre-wrap;
+           min-height: 40px; border-radius: 4px; font-size: 12px; }
+    #log { background: #111; color: #9cf; padding: 8px; white-space: pre-wrap;
+           height: 110px; overflow-y: auto; border-radius: 4px; font-size: 12px; }
+    /* The canvas surface. Tokens are absolutely-positioned children so the
+       browser handles hit-testing on pointer events; the grid is a CSS
+       background so we don't repaint it per drag. */
+    #stage-wrap { overflow: auto; border: 1px solid #999; background: #222; max-height: 60vh; }
+    #stage { position: relative; }
+    #stage-bg { position: absolute; inset: 0; background-size: cover; background-position: center; opacity: 0.85; }
+    .token { position: absolute; box-sizing: border-box; border: 2px solid #fff;
+             border-radius: 6px; background: #445 center/cover no-repeat;
+             color: #fff; font-size: 10px; text-align: center; cursor: grab;
+             display: flex; align-items: flex-end; justify-content: center;
+             user-select: none; overflow: hidden; }
+    .token.mine { border-color: #6f6; }
+    .token.dragging { cursor: grabbing; opacity: 0.8; z-index: 10; }
+    .token .cap { background: rgba(0,0,0,0.55); width: 100%; padding: 1px 2px;
+                  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  </style>
+</head>
+<body>
+  <h1>VTT scene canvas (dev harness)</h1>
+  <p class="muted">
+    Log in via <a href="/auth.html">/auth.html</a>, get a campaign id from
+    <a href="/dashboard.html">/dashboard.html</a>. <span id="whoami">checking…</span>
+  </p>
+
+  <fieldset>
+    <legend>Campaign & scene</legend>
+    <label>Campaign id</label>
+    <input id="campaign-id" class="full" placeholder="uuid from the dashboard" />
+    <div class="row">
+      <button id="load-scenes">Load scenes</button>
+      <span class="muted">or make one (GM only):</span>
+      <input id="new-scene-name" placeholder="scene name" />
+      <button id="create-scene">Create scene</button>
+    </div>
+    <div id="scene-list"></div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Place a token</legend>
+    <div class="row">
+      <input id="tok-name" placeholder="token name" />
+      <input id="tok-img" placeholder="https://image… (optional)" style="min-width:260px" />
+      <button id="place-token">Place at (0,0)</button>
+      <span class="muted">GM: unlimited · player: 1</span>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Canvas <span class="muted" id="scene-title"></span></legend>
+    <div class="muted">drag a token; the move syncs on drop. green border = yours / GM.</div>
+    <div id="stage-wrap">
+      <div id="stage"><div id="stage-bg"></div></div>
+    </div>
+  </fieldset>
+
+  <div class="muted">socket log</div>
+  <div id="log"></div>
+  <div id="out">ready</div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/js/scene.js"></script>
+</body>
+</html>

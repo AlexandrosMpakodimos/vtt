@@ -8,11 +8,19 @@ const {
   validateImageUrl, validateCampaignPassword, validateColor,
 } = require('../services/validators');
 
+const { router: sceneRoutes } = require('./scenes');
+
 const router = express.Router();
 
 // Every campaign route requires a logged-in user; mounting the guard once here
 // means a new route cannot be added without it by accident.
 router.use(requireAuth);
+
+// Scenes + tokens live under a specific campaign. Mounting here (rather than in
+// server.js) means the scene routes inherit requireAuth above and receive :id
+// as req.params.id via mergeParams, and the requireMember/requireOwner guards
+// inside scenes.js resolve that campaign exactly as the campaign routes do.
+router.use('/:id/scenes', sceneRoutes);
 
 // Abuse-prevention caps, enforced in application logic (consistent with the
 // attunement cap). NOT memory protection: campaigns are rows in Postgres, not
