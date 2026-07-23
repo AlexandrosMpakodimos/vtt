@@ -22,10 +22,19 @@ const {
   validateGridCoord, validateTokenSize, validateSceneDimension,
   validateTokenIdList, validateBool,
 } = require('../services/validators');
+const { contentWriteLimiter } = require('../middleware/rateLimit');
 
 // mergeParams: this router is mounted at .../:id/scenes, and :id (the campaign)
 // lives on the parent router's params.
 const router = express.Router({ mergeParams: true });
+
+// Rate-limit state-changing requests only. Reads are cheap and an open canvas
+// polls them; writes are what a script would abuse. Total state is separately
+// bounded by the caps below — this bounds the rate, they bound the amount.
+router.use((req, res, next) => {
+  if (req.method === 'GET' || req.method === 'HEAD') return next();
+  return contentWriteLimiter(req, res, next);
+});
 
 // D&D 5e creature-size categories → token footprint in GRID UNITS (1 = one
 // 5-ft square). Tiny is a quarter-square (0.5×0.5); Small and Medium both fill
@@ -47,6 +56,42 @@ const SIZE_PRESETS = {
 // from the M2 audit it is enforced ATOMICALLY (serialisable transaction), never
 // read-then-write.
 const MAX_PLAYER_TOKENS_PER_SCENE = 1;
+
+// Abuse-prevention caps (added after the canvas security audit, which created
+// 6000 tokens in under a second and 30 scenes unchecked). These are NOT gameplay
+// limits — they are bounds on what a single authenticated GM can do to the
+// database and to every client's scene-load. Like the campaign caps, they are
+// app-logic abuse prevention, and per the standing constraint every one of them
+// is enforced atomically (count + write inside one SERIALIZABLE transaction),
+// never as a separate read-then-write.
+const MAX_TOKENS_PER_SCENE = 500;    // a crowded battle map is dozens, not thousands
+const MAX_SCENES_PER_CAMPAIGN = 100; // a long campaign is tens of maps
+
+// Run a count-then-write as one serialisable transaction with bounded retry, so
+// N concurrent requests cannot all read "count < MAX" before any of them commits.
+// `capError` is thrown (and surfaced as 409) when the cap is already reached.
+async function withAtomicCap({ table, where, max, capMessage, insert }) {
+  let attempt = 0;
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    try {
+      return await knex.transaction(async (trx) => {
+        await trx.raw('SET TRANSACTION ISOLATION LEVEL SERIALIZABLE');
+        const cur = await trx(table).where(where).count({ n: '*' }).first();
+        const have = Number(cur.n);
+        const adding = Array.isArray(insert) ? insert.length : 1;
+        if (have + adding > max) {
+          const e = new Error(capMessage); e.capExceeded = true; e.have = have; throw e;
+        }
+        return await trx(table).insert(insert).returning('*');
+      });
+    } catch (err) {
+      if (err.capExceeded) throw err;
+      if (err.code === '40001' && attempt < 5) { attempt += 1; continue; }
+      throw err;
+    }
+  }
+}
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const validUuid = (v) => typeof v === 'string' && UUID_RE.test(v);
@@ -133,15 +178,27 @@ router.post('/', requireOwner, async (req, res, next) => {
     if (h.error) return res.status(400).json({ error: h.error });
 
     // Hand-listed columns only — never the raw body (mass-assignment immunity).
-    const [row] = await knex('scenes')
-      .insert({
-        campaign_id: req.campaign.id,
-        name: n.value,
-        img_url: img.value,
-        width: w.value,
-        height: h.value,
-      })
-      .returning('*');
+    // Scene count is capped atomically (abuse prevention, not a gameplay limit).
+    let rows;
+    try {
+      rows = await withAtomicCap({
+        table: 'scenes',
+        where: { campaign_id: req.campaign.id },
+        max: MAX_SCENES_PER_CAMPAIGN,
+        capMessage: `a campaign may hold at most ${MAX_SCENES_PER_CAMPAIGN} scenes`,
+        insert: {
+          campaign_id: req.campaign.id,
+          name: n.value,
+          img_url: img.value,
+          width: w.value,
+          height: h.value,
+        },
+      });
+    } catch (err) {
+      if (err.capExceeded) return res.status(409).json({ error: err.message });
+      throw err;
+    }
+    const row = rows[0];
 
     return res.status(201).json({ scene: publicScene(row) });
   } catch (err) {
@@ -226,9 +283,22 @@ router.post('/:sceneId/tokens', requireMember, async (req, res, next) => {
 
     let token;
     if (isOwner) {
-      // GM: no cap, a plain insert.
-      const [row] = await knex('tokens').insert(insertRow).returning('*');
-      token = row;
+      // GM: no per-player cap, but the scene still has a total-token ceiling as
+      // abuse prevention (the audit created 6000 tokens in under a second, and
+      // every one of them is returned on every client's scene-load).
+      try {
+        const rows = await withAtomicCap({
+          table: 'tokens',
+          where: { scene_id: scene.id },
+          max: MAX_TOKENS_PER_SCENE,
+          capMessage: `a scene may hold at most ${MAX_TOKENS_PER_SCENE} tokens`,
+          insert: insertRow,
+        });
+        token = rows[0];
+      } catch (err) {
+        if (err.capExceeded) return res.status(409).json({ error: err.message });
+        throw err;
+      }
     } else {
       // Player: at most N tokens per scene, enforced atomically. Same pattern as
       // the campaign create/join caps: count + insert inside one SERIALIZABLE
@@ -510,7 +580,22 @@ router.post('/:sceneId/tokens/copy', requireOwner, async (req, res, next) => {
       });
     }
 
-    const inserted = await knex('tokens').insert(rows).returning('*');
+    // The scene's total-token ceiling applies here too, and this is the biggest
+    // amplification vector (up to 500 rows per request), so the count and the
+    // insert happen inside one serialisable transaction.
+    let inserted;
+    try {
+      inserted = await withAtomicCap({
+        table: 'tokens',
+        where: { scene_id: scene.id },
+        max: MAX_TOKENS_PER_SCENE,
+        capMessage: `a scene may hold at most ${MAX_TOKENS_PER_SCENE} tokens`,
+        insert: rows,
+      });
+    } catch (err) {
+      if (err.capExceeded) return res.status(409).json({ error: err.message });
+      throw err;
+    }
     const shaped = inserted.map(publicToken);
 
     const sockets = req.app.get('campaignSockets');

@@ -64,8 +64,22 @@ const campaignCreateLimiter = rateLimit({
   standardHeaders: true, legacyHeaders: false, handler: tooMany,
 });
 
+// Scene and token writes. Total state is already bounded by the per-scene and
+// per-campaign caps in routes/scenes.js; this bounds the RATE at which a script
+// can churn through those caps (create/delete/create) and, more importantly, the
+// rate of paste requests — each of which may carry up to 500 tokens, so a small
+// number of requests is a large amount of work. Generous enough that real play
+// (dragging, placing, editing) never touches it. Applied to writes only; reads
+// are cheap and constantly polled by an open canvas.
+const contentWriteLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: Number(process.env.RL_CONTENT_WRITE_MAX) || 120,
+  standardHeaders: true, legacyHeaders: false, handler: tooMany,
+});
+
 module.exports = {
   loginLimiter, registerLimiter, resendLimiter,
   forgotPasswordLimiter, resetPasswordLimiter, changeEmailLimiter,
   campaignJoinLimiter, campaignSearchLimiter, campaignCreateLimiter,
+  contentWriteLimiter,
 };

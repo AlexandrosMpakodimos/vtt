@@ -91,12 +91,24 @@ function validateTokenName(name) {
   return { value: n || null };
 }
 
-// A bounded, finite number. Rejects NaN/Infinity/strings up front so a bogus
-// coordinate can never reach the DB or a broadcast. Bounds are generous (the
-// canvas is measured in grid units) but finite, so an absurd value is clamped
-// out rather than persisted. Returns { value } (a Number) or { error }.
+// A bounded, finite number. Rejects NaN/Infinity and — critically — anything
+// that is not already a number or a plain numeric string. An earlier version
+// used bare Number() coercion, which silently accepted values that are not
+// numbers at all: Number([[5]]) === 5 and Number([5]) === 5 (JS recursively
+// stringifies single-element arrays) and Number(true) === 1. A client could
+// therefore smuggle an array or boolean into a numeric column. Found by
+// break-canvas.js (type confusion, OWASP API3/BOPLA class).
+// Returns { value } (a Number) or { error }.
 function finiteInRange(v, { min, max, field }) {
-  const n = typeof v === 'number' ? v : Number(v);
+  let n;
+  if (typeof v === 'number') {
+    n = v;
+  } else if (typeof v === 'string' && v.trim() !== '') {
+    // Accept a numeric string (form inputs arrive as strings), nothing else.
+    n = Number(v);
+  } else {
+    return { error: `${field} must be a number` };
+  }
   if (!Number.isFinite(n)) return { error: `${field} must be a finite number` };
   if (n < min || n > max) return { error: `${field} must be between ${min} and ${max}` };
   return { value: n };
