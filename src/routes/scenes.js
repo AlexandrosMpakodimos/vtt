@@ -20,11 +20,27 @@ const { requireMember, requireOwner, validCampaignId } = require('../middleware/
 const {
   validateSceneName, validateTokenName, validateImageUrl,
   validateGridCoord, validateTokenSize, validateSceneDimension,
+  validateTokenIdList, validateBool,
 } = require('../services/validators');
 
 // mergeParams: this router is mounted at .../:id/scenes, and :id (the campaign)
 // lives on the parent router's params.
 const router = express.Router({ mergeParams: true });
+
+// D&D 5e creature-size categories → token footprint in GRID UNITS (1 = one
+// 5-ft square). Tiny is a quarter-square (0.5×0.5); Small and Medium both fill
+// one square; each step up doubles the side. Gargantuan's 4×4 is the 5e minimum
+// (the DMG treats 20ft+ as Gargantuan, so bigger is legal — a GM can still set a
+// custom size directly). These are presets, not enforcement: the token width/
+// height columns accept any validated size.
+const SIZE_PRESETS = {
+  tiny: 0.5,
+  small: 1,
+  medium: 1,
+  large: 2,
+  huge: 3,
+  gargantuan: 4,
+};
 
 // A player may place at most this many tokens per scene this pass. The GM is
 // exempt. This is a "no more than N of X" rule, so per the standing constraint
@@ -153,9 +169,13 @@ router.get('/:sceneId', requireMember, async (req, res, next) => {
     const scene = await loadSceneInCampaign(req.params.sceneId, req.campaign.id);
     if (!scene) return res.status(404).json({ error: 'scene not found' });
 
-    const tokens = await knex('tokens')
-      .where({ scene_id: scene.id })
-      .orderBy('created_at', 'asc');
+    // True hiding: a hidden token is filtered out of what a PLAYER receives, not
+    // merely dimmed client-side. Sending it and hiding it in CSS would leak — a
+    // player reading the socket/JSON would see it. The GM (owner) gets everything.
+    const isOwner = req.campaign.owner_id === req.user.id;
+    const q = knex('tokens').where({ scene_id: scene.id });
+    if (!isOwner) q.where('hidden', false);
+    const tokens = await q.orderBy('created_at', 'asc');
 
     return res.json({ scene: publicScene(scene), tokens: tokens.map(publicToken) });
   } catch (err) {
@@ -289,6 +309,224 @@ router.delete('/:sceneId/tokens/:tokenId', requireMember, async (req, res, next)
   }
 });
 
+// PATCH /api/campaigns/:id/scenes/:sceneId/tokens/:tokenId — GM edits a token's
+// size / visibility / lock. GM-only this pass (players' tokens are move-only for
+// the player; the GM runs the board). Settings may later widen this.
+//
+// Accepts any subset of:
+//   size    — a 5e size preset name (sets width AND height from SIZE_PRESETS)
+//   width   — explicit grid-unit width  (alternative to size)
+//   height  — explicit grid-unit height (alternative to size)
+//   hidden  — hide/show from players
+//   locked  — lock/unlock (a locked token refuses moves; see socket.js)
+router.patch('/:sceneId/tokens/:tokenId', requireOwner, async (req, res, next) => {
+  try {
+    const scene = await loadSceneInCampaign(req.params.sceneId, req.campaign.id);
+    if (!scene) return res.status(404).json({ error: 'scene not found' });
+
+    if (!validUuid(req.params.tokenId)) return res.status(404).json({ error: 'token not found' });
+    const token = await knex('tokens')
+      .where({ id: req.params.tokenId, scene_id: scene.id }).first();
+    if (!token) return res.status(404).json({ error: 'token not found' });
+
+    const body = req.body || {};
+    const updates = {};
+
+    // A named 5e size preset sets both dimensions. `size` and explicit
+    // width/height are mutually exclusive to avoid an ambiguous request.
+    if (body.size !== undefined) {
+      if (body.width !== undefined || body.height !== undefined) {
+        return res.status(400).json({ error: 'use either size or width/height, not both' });
+      }
+      const key = typeof body.size === 'string' ? body.size.toLowerCase() : '';
+      if (!Object.prototype.hasOwnProperty.call(SIZE_PRESETS, key)) {
+        return res.status(400).json({ error: `size must be one of: ${Object.keys(SIZE_PRESETS).join(', ')}` });
+      }
+      updates.width = SIZE_PRESETS[key];
+      updates.height = SIZE_PRESETS[key];
+    } else {
+      if (body.width !== undefined) {
+        const w = validateTokenSize(body.width, 'width');
+        if (w.error) return res.status(400).json({ error: w.error });
+        updates.width = w.value;
+      }
+      if (body.height !== undefined) {
+        const h = validateTokenSize(body.height, 'height');
+        if (h.error) return res.status(400).json({ error: h.error });
+        updates.height = h.value;
+      }
+    }
+
+    if (body.hidden !== undefined) {
+      const b = validateBool(body.hidden, 'hidden');
+      if (b.error) return res.status(400).json({ error: b.error });
+      updates.hidden = b.value;
+    }
+    if (body.locked !== undefined) {
+      const b = validateBool(body.locked, 'locked');
+      if (b.error) return res.status(400).json({ error: b.error });
+      updates.locked = b.value;
+    }
+
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({ error: 'nothing to update' });
+    }
+    updates.updated_at = knex.fn.now();
+
+    const [row] = await knex('tokens').where({ id: token.id }).update(updates).returning('*');
+    const shaped = publicToken(row);
+
+    // Visibility-aware broadcast. If the token is (now) hidden, only the GM should
+    // learn its state; players must not receive it. If it just became visible, a
+    // full 'token:created' to players re-materialises it on their canvas.
+    const sockets = req.app.get('campaignSockets');
+    if (sockets) {
+      const becameHidden = row.hidden === true;
+      const becameVisible = token.hidden === true && row.hidden === false;
+      if (becameHidden) {
+        // Tell players to drop it (if they could see it before), GM to update it.
+        sockets.broadcastToPlayers(req.campaign.id, 'token:deleted', { id: row.id, scene_id: scene.id });
+        sockets.broadcastToOwner(req.campaign.id, 'token:updated', shaped);
+      } else if (becameVisible) {
+        sockets.broadcastToOwner(req.campaign.id, 'token:updated', shaped);
+        sockets.broadcastToPlayers(req.campaign.id, 'token:created', shaped);
+      } else {
+        // Not a visibility change (resize/lock on an already-visible token, or an
+        // edit to an already-hidden one): update whoever can legitimately see it.
+        if (row.hidden) sockets.broadcastToOwner(req.campaign.id, 'token:updated', shaped);
+        else sockets.broadcastToken(req.campaign.id, 'token:updated', shaped);
+      }
+    }
+
+    return res.json({ token: shaped });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// POST /api/campaigns/:id/scenes/:sceneId/tokens/batch-delete — GM removes many
+// tokens at once (marquee delete). GM-only, so no per-token authority check is
+// needed; the whole call is gated by requireOwner. Scoped to the scene, run in
+// one transaction so a mid-batch failure doesn't leave a half-applied delete.
+router.post('/:sceneId/tokens/batch-delete', requireOwner, async (req, res, next) => {
+  try {
+    const scene = await loadSceneInCampaign(req.params.sceneId, req.campaign.id);
+    if (!scene) return res.status(404).json({ error: 'scene not found' });
+
+    const ids = validateTokenIdList(req.body && req.body.token_ids);
+    if (ids.error) return res.status(400).json({ error: ids.error });
+
+    // Only ids that actually belong to this scene are deletable; a foreign id is
+    // silently ignored rather than erroring the whole batch.
+    const deleted = await knex('tokens')
+      .whereIn('id', ids.value)
+      .where('scene_id', scene.id)
+      .del()
+      .returning('id');
+    const deletedIds = deleted.map((r) => r.id);
+
+    const sockets = req.app.get('campaignSockets');
+    if (sockets && deletedIds.length) {
+      // Deletion is broadcast to everyone: a player who could see a token must be
+      // told it's gone. (Hidden tokens they never had are simply a no-op for them.)
+      sockets.broadcastToken(req.campaign.id, 'token:deleted-batch', {
+        ids: deletedIds, scene_id: scene.id,
+      });
+    }
+
+    return res.json({ ok: true, deleted: deletedIds });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// POST /api/campaigns/:id/scenes/:sceneId/tokens/copy — GM pastes tokens.
+// GM-only; every pasted token is stamped created_by = the GM (so the pasting GM
+// owns them, and the player 1-token cap is never involved).
+//
+// The body carries token SPECS, not ids:
+//   { tokens: [{ name, img_url, width, height, rotation, hidden, x, y }, ...] }
+//
+// Why specs and not ids: a clipboard is a SNAPSHOT, not a pointer. An earlier
+// version re-read the source rows from the DB by id, which meant copy-then-delete
+// (and cut, which deletes by definition) could never be pasted — the source was
+// gone. Holding the data client-side is what makes cut work at all.
+//
+// Trusting client-supplied data here is safe because nothing is trusted: every
+// field is validated exactly as it is on placement, `created_by` and `scene_id`
+// are set server-side (never from the body), and actor_id is forced NULL. The
+// worst a hostile client can do is create tokens it is already allowed to create
+// via the normal placement endpoint.
+router.post('/:sceneId/tokens/copy', requireOwner, async (req, res, next) => {
+  try {
+    const scene = await loadSceneInCampaign(req.params.sceneId, req.campaign.id);
+    if (!scene) return res.status(404).json({ error: 'scene not found' });
+
+    const specs = req.body && req.body.tokens;
+    if (!Array.isArray(specs)) return res.status(400).json({ error: 'tokens must be an array' });
+    if (specs.length === 0) return res.status(400).json({ error: 'tokens is empty' });
+    if (specs.length > 500) return res.status(400).json({ error: 'too many tokens (max 500)' });
+
+    // Validate every field of every spec before touching the DB — one bad spec
+    // rejects the whole paste rather than half-applying it.
+    const rows = [];
+    for (const spec of specs) {
+      if (!spec || typeof spec !== 'object') return res.status(400).json({ error: 'invalid token spec' });
+
+      const name = validateTokenName(spec.name);
+      if (name.error) return res.status(400).json({ error: name.error });
+      const img = validateImageUrl(spec.img_url, 'img_url');
+      if (img.error) return res.status(400).json({ error: img.error });
+      const x = validateGridCoord(spec.x === undefined ? 0 : spec.x, 'x');
+      if (x.error) return res.status(400).json({ error: x.error });
+      const y = validateGridCoord(spec.y === undefined ? 0 : spec.y, 'y');
+      if (y.error) return res.status(400).json({ error: y.error });
+      const width = validateTokenSize(spec.width === undefined ? 1 : spec.width, 'width');
+      if (width.error) return res.status(400).json({ error: width.error });
+      const height = validateTokenSize(spec.height === undefined ? 1 : spec.height, 'height');
+      if (height.error) return res.status(400).json({ error: height.error });
+
+      let hidden = false;
+      if (spec.hidden !== undefined) {
+        const b = validateBool(spec.hidden, 'hidden');
+        if (b.error) return res.status(400).json({ error: b.error });
+        hidden = b.value;
+      }
+
+      // Hand-listed columns only. scene_id / created_by / actor_id come from the
+      // server, never from the body — a forged value in the spec is ignored.
+      rows.push({
+        scene_id: scene.id,
+        actor_id: null,
+        created_by: req.user.id,
+        name: name.value,
+        img_url: img.value,
+        x: x.value,
+        y: y.value,
+        width: width.value,
+        height: height.value,
+        hidden,
+        locked: false,          // a pasted token starts unlocked
+      });
+    }
+
+    const inserted = await knex('tokens').insert(rows).returning('*');
+    const shaped = inserted.map(publicToken);
+
+    const sockets = req.app.get('campaignSockets');
+    if (sockets) {
+      for (const t of shaped) {
+        if (t.hidden) sockets.broadcastToOwner(req.campaign.id, 'token:created', t);
+        else sockets.broadcastToken(req.campaign.id, 'token:created', t);
+      }
+    }
+
+    return res.status(201).json({ tokens: shaped });
+  } catch (err) {
+    return next(err);
+  }
+});
+
 module.exports = {
   router,
   publicToken,
@@ -298,4 +536,5 @@ module.exports = {
   validateGridCoord,
   validateTokenSize,
   MAX_PLAYER_TOKENS_PER_SCENE,
+  SIZE_PRESETS,
 };

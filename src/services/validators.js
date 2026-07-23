@@ -126,10 +126,39 @@ function validateSceneDimension(v, field, dflt) {
   return { value: n };
 }
 
+// A batch of token ids (for group move / delete / copy). Rejects non-arrays,
+// empties, over-long batches (a DoS bound), and any malformed uuid — so a
+// hostile body can never reach the DB or spin the server on a huge list.
+// De-duplicates, since selecting the same token twice is meaningless.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const MAX_BATCH = 500; // far past any real selection; bounds a hostile payload
+function validateTokenIdList(ids, field = 'token_ids') {
+  if (!Array.isArray(ids)) return { error: `${field} must be an array` };
+  if (ids.length === 0) return { error: `${field} is empty` };
+  if (ids.length > MAX_BATCH) return { error: `${field} has too many items (max ${MAX_BATCH})` };
+  const seen = new Set();
+  for (const id of ids) {
+    if (typeof id !== 'string' || !UUID_RE.test(id)) {
+      return { error: `${field} contains an invalid id` };
+    }
+    seen.add(id);
+  }
+  return { value: [...seen] };
+}
+
+// A tri-state boolean from a request body: true if === true or 'true', false if
+// === false or 'false', else an error. Avoids the JS truthiness trap where any
+// non-empty string flips a flag on.
+function validateBool(v, field) {
+  if (v === true || v === 'true') return { value: true };
+  if (v === false || v === 'false') return { value: false };
+  return { error: `${field} must be true or false` };
+}
+
 module.exports = {
   normalizeEmail, validateEmail, validateUsername, validatePassword,
   validateCampaignName, validateCampaignDescription, validateImageUrl,
   validateCampaignPassword, validateColor,
   validateSceneName, validateTokenName, validateGridCoord, validateTokenSize,
-  validateSceneDimension,
+  validateSceneDimension, validateTokenIdList, validateBool,
 };

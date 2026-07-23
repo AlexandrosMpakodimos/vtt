@@ -32,11 +32,25 @@
              user-select: none; overflow: hidden; }
     .token.mine { border-color: #6f6; }
     .token.dragging { cursor: grabbing; opacity: 0.8; z-index: 10; }
+    .token.selected { outline: 2px dashed #fc6; outline-offset: 2px; }
+    .token.locked { cursor: not-allowed; }
+    .token.hidden-tok { opacity: 0.4; border-style: dashed; }   /* GM-only view of a hidden token */
     .token .cap { background: rgba(0,0,0,0.55); width: 100%; padding: 1px 2px;
                   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    /* Marquee selection rectangle drawn on the stage. */
+    #marquee { position: absolute; border: 1px dashed #fc6; background: rgba(255,204,102,0.12);
+               pointer-events: none; display: none; z-index: 20; }
+    /* Right-click context menu. */
+    #ctx-menu { position: fixed; z-index: 100; background: #1a1a1a; border: 1px solid #555;
+                border-radius: 4px; font-size: 12px; display: none; min-width: 150px; padding: 4px 0; }
+    #ctx-menu .item { padding: 5px 12px; cursor: pointer; white-space: nowrap; color: #ddd; }
+    #ctx-menu .item:hover { background: #2c2c2c; }
+    #ctx-menu .sep { border-top: 1px solid #444; margin: 4px 0; }
+    #ctx-menu .head { padding: 3px 12px; color: #888; font-size: 11px; }
   </style>
 </head>
 <body>
+  <div id="ctx-menu"></div>
   <h1>VTT scene canvas (dev harness)</h1>
   <p class="muted">
     Log in via <a href="/auth.html">/auth.html</a>, get a campaign id from
@@ -60,17 +74,38 @@
     <legend>Place a token</legend>
     <div class="row">
       <input id="tok-name" placeholder="token name" />
-      <input id="tok-img" placeholder="https://image… (optional)" style="min-width:260px" />
-      <button id="place-token">Place at (0,0)</button>
-      <span class="muted">GM: unlimited · player: 1</span>
+      <input id="tok-img" placeholder="https://image… (optional)" style="min-width:220px" />
+      <label for="tok-count" style="display:inline;margin:0">×</label>
+      <input id="tok-count" type="number" min="1" max="50" value="1" style="width:60px" title="how many to place" />
+      <select id="tok-size" title="creature size">
+        <option value="medium">Medium (1×1)</option>
+        <option value="tiny">Tiny (½×½)</option>
+        <option value="small">Small (1×1)</option>
+        <option value="large">Large (2×2)</option>
+        <option value="huge">Huge (3×3)</option>
+        <option value="gargantuan">Gargantuan (4×4)</option>
+      </select>
+      <button id="place-token">Place</button>
+    </div>
+    <div class="muted">
+      placed at the mouse pointer (or 0,0 if the pointer hasn't been over the canvas).
+      Multiples are packed into a compact block and numbered: <i>Goblin, Goblin 2, Goblin 3…</i>
+      · GM: unlimited · player: 1
     </div>
   </fieldset>
 
   <fieldset>
     <legend>Canvas <span class="muted" id="scene-title"></span></legend>
-    <div class="muted">drag a token; the move syncs on drop. green border = yours / GM.</div>
+    <div class="muted">drag a token to move (syncs on drop) · drag empty space to marquee-select · right-click for actions · green border = movable by you</div>
+    <div class="muted" id="shortcuts">
+      <b>shortcuts:</b>
+      arrows = nudge 1 · shift+arrows = nudge 5 · Esc = clear selection · Ctrl/Cmd+A = select all
+      <span class="gm-only"> · <i>GM only:</i> Ctrl/Cmd+C copy · Ctrl/Cmd+X cut ·
+      Ctrl/Cmd+V paste <i>(at the mouse pointer)</i> · Ctrl/Cmd+D duplicate <i>(+1/+1)</i> ·
+      Del/Backspace delete</span>
+    </div>
     <div id="stage-wrap">
-      <div id="stage"><div id="stage-bg"></div></div>
+      <div id="stage"><div id="stage-bg"></div><div id="marquee"></div></div>
     </div>
   </fieldset>
 
