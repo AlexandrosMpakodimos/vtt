@@ -47,6 +47,11 @@ function waitFor(s, ev, ms = 1200) { return new Promise((res) => { const t = set
   const s = await gm.req('POST', `/api/campaigns/${cid}/scenes`, { name: 'S1' });
   const sid = s.data.scene.id;
   const scenePath = `/api/campaigns/${cid}/scenes/${sid}`;
+  // The active-scene rule (M3) pins players to the campaign's active scene, so
+  // every player-path assertion below needs this scene to BE the active one.
+  // Written before that rule existed; this line is what the old contract
+  // implicitly assumed.
+  await gm.req('PUT', `/api/campaigns/${cid}/scenes/active`, { scene_id: sid });
 
   // seed tokens: two GM tokens, one player token
   const g1 = (await gm.req('POST', `${scenePath}/tokens`, { name: 'G1', x: 1, y: 1 })).data.token;

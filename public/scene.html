@@ -40,6 +40,23 @@
     /* Marquee selection rectangle drawn on the stage. */
     #marquee { position: absolute; border: 1px dashed #fc6; background: rgba(255,204,102,0.12);
                pointer-events: none; display: none; z-index: 20; }
+    /* Fog overlay. z-index 15 puts it ABOVE tokens (which are appended to #stage
+       later in the DOM, and so would otherwise paint on top) but BELOW the
+       marquee. pointer-events stays none unless fog mode is on, so fog never
+       steals a token drag. */
+    #fog-layer { position: absolute; left: 0; top: 0; pointer-events: none; z-index: 15; }
+    #fog-layer.editing { pointer-events: auto; }
+    /* One transparent full-scene rect catches every pointer event while editing.
+       Which region a click actually hit is then decided in JS against the
+       geometry, not by SVG document order. */
+    .fog-catch { cursor: crosshair; }
+    #fog-layer.tool-select .fog-catch { cursor: default; }
+    .fog-outline { fill: none; stroke: #6cf; stroke-width: 2; stroke-dasharray: 5 4; }
+    .fog-outline.revealed { stroke: #6f6; }
+    .fog-outline.selected { stroke: #fc6; stroke-width: 3; stroke-dasharray: none; }
+    .fog-preview { fill: rgba(108,204,255,0.20); stroke: #6cf; stroke-width: 2; stroke-dasharray: 4 3; }
+    #fog-panel .row { margin-top: 6px; }
+    #fog-panel.hidden-panel { display: none; }
     /* Right-click context menu. */
     #ctx-menu { position: fixed; z-index: 100; background: #1a1a1a; border: 1px solid #555;
                 border-radius: 4px; font-size: 12px; display: none; min-width: 150px; padding: 4px 0; }
@@ -47,6 +64,9 @@
     #ctx-menu .item:hover { background: #2c2c2c; }
     #ctx-menu .sep { border-top: 1px solid #444; margin: 4px 0; }
     #ctx-menu .head { padding: 3px 12px; color: #888; font-size: 11px; }
+    .scene-row { margin: 4px 0; display: flex; gap: 6px; align-items: center; }
+    .scene-row button { margin-top: 0; padding: 2px 8px; font-size: 12px; }
+    .active-scene { color: #2a7; font-weight: bold; }
   </style>
 </head>
 <body>
@@ -63,6 +83,7 @@
     <input id="campaign-id" class="full" placeholder="uuid from the dashboard" />
     <div class="row">
       <button id="load-scenes">Load scenes</button>
+      <span class="muted">GM: <b>open</b> loads a scene for you only · <b>activate</b> moves every player into it. Players cannot switch scenes.</span>
       <span class="muted">or make one (GM only):</span>
       <input id="new-scene-name" placeholder="scene name" />
       <button id="create-scene">Create scene</button>
@@ -94,6 +115,40 @@
     </div>
   </fieldset>
 
+  <fieldset id="fog-panel" class="hidden-panel">
+    <legend>Fog of war <span class="muted">(GM)</span></legend>
+    <div class="row">
+      <label for="fog-mode" style="display:inline;margin:0">
+        <input type="checkbox" id="fog-mode" /> fog mode <span class="muted">(F)</span>
+      </label>
+      <span class="muted">|</span>
+      <select id="fog-tool" title="what a drag does">
+        <option value="select">select / move</option>
+        <option value="cover">cover (draw fog)</option>
+        <option value="reveal">reveal (erase fog)</option>
+      </select>
+      <select id="fog-shape" title="shape to draw">
+        <option value="rect">rectangle</option>
+        <option value="circle">circle</option>
+        <option value="poly">polygon</option>
+      </select>
+      <button id="fog-cover-all">Cover whole scene</button>
+      <button id="fog-clear-all">Clear all fog</button>
+    </div>
+    <div class="muted">
+      <b>F</b> toggles fog mode from anywhere on the page (GM only), or use the checkbox.
+      Fog mode routes clicks to fog instead of tokens — tokens are untouched while it is on.
+      <b>Cover</b> paints fog; <b>Reveal</b> erases it (drag inside existing fog to open a window).
+      Drag for a rectangle or circle; for a polygon click each corner then press Enter
+      (Esc cancels). With <b>select</b>: click a region to pick it (the most recent one under
+      the pointer wins) · drag it to move · drag empty space (or Alt/Option+drag anywhere) to marquee-select ·
+      right-click for actions · <b>T</b> flips cover/reveal · arrows nudge ·
+      Ctrl/Cmd+A/C/X/V/D · Del deletes.
+      Rendering is <i>fog = everything covered, minus everything revealed</i>, so a reveal
+      is reversible — unlike a real eraser, you can flip it back to cover.
+    </div>
+  </fieldset>
+
   <fieldset>
     <legend>Canvas <span class="muted" id="scene-title"></span></legend>
     <div class="muted">drag a token to move (syncs on drop) · drag empty space to marquee-select · right-click for actions · green border = movable by you</div>
@@ -102,10 +157,10 @@
       arrows = nudge 1 · shift+arrows = nudge 5 · Esc = clear selection · Ctrl/Cmd+A = select all
       <span class="gm-only"> · <i>GM only:</i> Ctrl/Cmd+C copy · Ctrl/Cmd+X cut ·
       Ctrl/Cmd+V paste <i>(at the mouse pointer)</i> · Ctrl/Cmd+D duplicate <i>(+1/+1)</i> ·
-      Del/Backspace delete</span>
+      Del/Backspace delete · F toggle fog mode</span>
     </div>
     <div id="stage-wrap">
-      <div id="stage"><div id="stage-bg"></div><div id="marquee"></div></div>
+      <div id="stage"><div id="stage-bg"></div><svg id="fog-layer" xmlns="http://www.w3.org/2000/svg"></svg><div id="marquee"></div></div>
     </div>
   </fieldset>
 

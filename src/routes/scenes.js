@@ -21,6 +21,7 @@ const {
   validateSceneName, validateTokenName, validateImageUrl,
   validateGridCoord, validateTokenSize, validateSceneDimension,
   validateTokenIdList, validateBool,
+  validateFogType, validateFogPoints,
 } = require('../services/validators');
 const { contentWriteLimiter } = require('../middleware/rateLimit');
 
@@ -66,6 +67,14 @@ const MAX_PLAYER_TOKENS_PER_SCENE = 1;
 // never as a separate read-then-write.
 const MAX_TOKENS_PER_SCENE = 500;    // a crowded battle map is dozens, not thousands
 const MAX_SCENES_PER_CAMPAIGN = 100; // a long campaign is tens of maps
+
+// Fog regions per scene (M3). Same class of rule as the two above, so it is
+// enforced through the same atomic helper. This bounds HOW MANY regions exist;
+// MAX_FOG_POINTS in validators.js separately bounds how big ONE region can be,
+// which is the bound that actually matters — 200 regions of 50,000 vertices each
+// is a small number of requests that poisons every future scene load, and no row
+// cap would catch it. Both numbers are chosen as sane abuse bounds, not measured.
+const MAX_FOG_REGIONS_PER_SCENE = 200;
 
 // Run a count-then-write as one serialisable transaction with bounded retry, so
 // N concurrent requests cannot all read "count < MAX" before any of them commits.
@@ -147,6 +156,49 @@ async function loadSceneInCampaign(sceneId, campaignId) {
   return knex('scenes').where({ id: sceneId, campaign_id: campaignId }).first();
 }
 
+// A PLAYER is pinned to the campaign's active scene; the GM may open any scene
+// (they need to prep and check maps without dragging the table along).
+//
+// This is enforced on the SERVER, not by hiding buttons: a player who typed a
+// scene id straight into the URL, or replayed an old request, would otherwise
+// read a map the GM has not revealed yet — including its tokens and its fog.
+// Client-side hiding here would be the same security theatre that cosmetic
+// token-dimming was rejected as in M2.
+//
+// Refusal is 404, never 403, and for the same reason non-members get 404: a 403
+// would confirm that a scene with this id exists, letting a player enumerate the
+// GM's unpublished maps by probing. To a player, a non-active scene is
+// indistinguishable from one that does not exist.
+function mayUseScene(req, scene) {
+  if (req.isOwner) return true;
+  return !!scene && req.campaign.active_scene_id === scene.id;
+}
+
+function publicFog(f) {
+  if (!f) return null;
+  return {
+    id: f.id,
+    scene_id: f.scene_id,
+    type: f.type,
+    // jsonb comes back parsed from pg; coordinates were validated as numbers on
+    // the way in, so no coercion is needed on the way out (unlike token DECIMALs,
+    // which arrive as strings).
+    points: f.points,
+    revealed: f.revealed,
+    created_at: f.created_at,
+    updated_at: f.updated_at,
+  };
+}
+
+// Fog equivalent of the scene loader: a region is only addressable through the
+// scene it belongs to, which is itself only addressable through the campaign.
+// That two-step scoping is what blocks cross-scene and cross-campaign IDOR on
+// every fog endpoint, exactly as it does for tokens.
+async function loadFogInScene(fogId, sceneId) {
+  if (!validUuid(fogId)) return null;
+  return knex('fog_of_war').where({ id: fogId, scene_id: sceneId }).first();
+}
+
 // The single seam for the future per-campaign movement setting. Today it encodes
 // the fixed default; later it will read req.campaign.settings. Returns true if
 // `user` may move `token` in `campaign`.
@@ -209,6 +261,16 @@ router.post('/', requireOwner, async (req, res, next) => {
 // GET /api/campaigns/:id/scenes — any active member lists the campaign's scenes.
 router.get('/', requireMember, async (req, res, next) => {
   try {
+    // The GM gets the whole list — it is their scene manager. A player gets at
+    // most the active scene, so the other maps are not even enumerable, let
+    // alone openable. An unset active scene means a player sees nothing yet.
+    if (!req.isOwner) {
+      if (!req.campaign.active_scene_id) return res.json({ scenes: [] });
+      const active = await knex('scenes')
+        .where({ id: req.campaign.active_scene_id, campaign_id: req.campaign.id })
+        .first();
+      return res.json({ scenes: active ? [publicScene(active)] : [] });
+    }
     const rows = await knex('scenes')
       .where({ campaign_id: req.campaign.id })
       .orderBy('created_at', 'asc');
@@ -218,13 +280,57 @@ router.get('/', requireMember, async (req, res, next) => {
   }
 });
 
+// PUT /api/campaigns/:id/scenes/active — the GM sets (or clears) the campaign's
+// active scene: the shared notion of "which scene everyone is looking at".
+//
+// Registered BEFORE the /:sceneId routes. There is no PUT on /:sceneId, so
+// nothing is actually shadowed today, but keeping it above the parameterised
+// routes means adding one later can't silently swallow this path.
+//
+// Body: { scene_id: <uuid> } to activate, or { scene_id: null } to clear.
+// The scene is looked up THROUGH the campaign, so a GM cannot point their
+// campaign at a scene belonging to someone else's (cross-campaign IDOR, and
+// also an integrity problem: every member would then load a foreign scene).
+router.put('/active', requireOwner, async (req, res, next) => {
+  try {
+    const body = req.body || {};
+    if (!Object.prototype.hasOwnProperty.call(body, 'scene_id')) {
+      return res.status(400).json({ error: 'scene_id is required (use null to clear)' });
+    }
+
+    let nextId = null;
+    if (body.scene_id !== null) {
+      const scene = await loadSceneInCampaign(body.scene_id, req.campaign.id);
+      if (!scene) return res.status(404).json({ error: 'scene not found' });
+      nextId = scene.id;
+    }
+
+    await knex('campaigns')
+      .where({ id: req.campaign.id })
+      .update({ active_scene_id: nextId, updated_at: knex.fn.now() });
+
+    // Everyone in the room follows the GM. The FK is ON DELETE SET NULL, so a
+    // deleted active scene simply clears the pointer rather than cascading.
+    req.app.get('campaignSockets')?.broadcastRoom(req.campaign.id, 'scene:activated', {
+      campaign_id: req.campaign.id,
+      scene_id: nextId,
+    });
+
+    return res.json({ ok: true, active_scene_id: nextId });
+  } catch (err) {
+    return next(err);
+  }
+});
+
 // GET /api/campaigns/:id/scenes/:sceneId — a full scene load: the scene plus all
-// its tokens. This is the "load heavy" half; live moves after this arrive as
-// socket deltas.
+// its tokens and all its fog. This is the "load heavy" half; live changes after
+// this arrive as socket deltas.
 router.get('/:sceneId', requireMember, async (req, res, next) => {
   try {
     const scene = await loadSceneInCampaign(req.params.sceneId, req.campaign.id);
     if (!scene) return res.status(404).json({ error: 'scene not found' });
+    // A player may only load the active scene (see mayUseScene).
+    if (!mayUseScene(req, scene)) return res.status(404).json({ error: 'scene not found' });
 
     // True hiding: a hidden token is filtered out of what a PLAYER receives, not
     // merely dimmed client-side. Sending it and hiding it in CSS would leak — a
@@ -234,13 +340,83 @@ router.get('/:sceneId', requireMember, async (req, res, next) => {
     if (!isOwner) q.where('hidden', false);
     const tokens = await q.orderBy('created_at', 'asc');
 
-    return res.json({ scene: publicScene(scene), tokens: tokens.map(publicToken) });
+    // Fog is NOT filtered by viewer, deliberately, and the reasoning differs
+    // from the hidden-token case above. A player has to draw the fog, so they
+    // must receive its geometry: what is sent is exactly what is rendered on
+    // their own screen, so withholding it would buy nothing. Fog is a
+    // presentation control over the scene image the client already holds
+    // (scenes.img_url is sent to every member), NOT a confidentiality boundary
+    // like a hidden token, whose row genuinely never leaves the server.
+    const fog = await knex('fog_of_war')
+      .where({ scene_id: scene.id })
+      .orderBy('created_at', 'asc');
+
+    return res.json({
+      scene: publicScene(scene),
+      tokens: tokens.map(publicToken),
+      fog: fog.map(publicFog),
+    });
   } catch (err) {
     return next(err);
   }
 });
 
 // ---- tokens ----
+
+// DELETE /api/campaigns/:id/scenes/:sceneId — GM destroys a scene.
+//
+// HARD delete, not the 30-day soft delete campaigns get. The reasoning follows
+// the account-deletion decision already recorded for this project: keep the
+// cascade, and mitigate with a confirmation that NAMES THE BLAST RADIUS rather
+// than a bare "are you sure?". That is why this returns the counts it destroyed
+// — the harness reads them first and puts them in the prompt.
+//
+// The cascade is real: tokens and fog_of_war are both ON DELETE CASCADE, so this
+// one call can remove hours of preparation. Counting happens BEFORE the delete
+// for the obvious reason that afterwards there is nothing left to count.
+//
+// A scene delete is also the only operation that can silently invalidate the
+// campaign's active scene. The FK does the right thing on its own
+// (active_scene_id is ON DELETE SET NULL, verified in break-fog.js) — but the DB
+// cannot tell anybody, so players would sit looking at a scene that no longer
+// exists while the server refused every request they made. Hence the explicit
+// scene:activated broadcast below.
+router.delete('/:sceneId', requireOwner, async (req, res, next) => {
+  try {
+    const scene = await loadSceneInCampaign(req.params.sceneId, req.campaign.id);
+    if (!scene) return res.status(404).json({ error: 'scene not found' });
+
+    const wasActive = req.campaign.active_scene_id === scene.id;
+    const tokenCount = Number((await knex('tokens').where({ scene_id: scene.id }).count({ n: '*' }).first()).n);
+    const fogCount = Number((await knex('fog_of_war').where({ scene_id: scene.id }).count({ n: '*' }).first()).n);
+
+    await knex('scenes').where({ id: scene.id }).del();
+
+    const sockets = req.app.get('campaignSockets');
+    // GM-only: a player has no business learning that a scene they could never
+    // open has been removed. Consistent with the active-scene boundary — the
+    // only scene ids a player ever hears about are ones they are allowed to load.
+    await sockets?.broadcastToOwner(req.campaign.id, 'scene:deleted', {
+      campaign_id: req.campaign.id, id: scene.id,
+    });
+    // If it was the active scene, everyone must be told to stand down. This one
+    // IS room-wide: the players were looking at it.
+    if (wasActive) {
+      sockets?.broadcastRoom(req.campaign.id, 'scene:activated', {
+        campaign_id: req.campaign.id, scene_id: null,
+      });
+    }
+
+    return res.json({
+      ok: true,
+      id: scene.id,
+      was_active: wasActive,
+      deleted: { tokens: tokenCount, fog: fogCount },
+    });
+  } catch (err) {
+    return next(err);
+  }
+});
 
 // POST /api/campaigns/:id/scenes/:sceneId/tokens — place a token.
 // GM: unlimited. Player: at most MAX_PLAYER_TOKENS_PER_SCENE, enforced
@@ -249,6 +425,10 @@ router.post('/:sceneId/tokens', requireMember, async (req, res, next) => {
   try {
     const scene = await loadSceneInCampaign(req.params.sceneId, req.campaign.id);
     if (!scene) return res.status(404).json({ error: 'scene not found' });
+    // A player may only place on the active scene — otherwise "players are only
+    // on the active scene" would hold for reads but not for writes, and a player
+    // could seed tokens onto a map the GM has not opened yet.
+    if (!mayUseScene(req, scene)) return res.status(404).json({ error: 'scene not found' });
 
     const body = req.body || {};
     const isOwner = req.campaign.owner_id === req.user.id;
@@ -269,6 +449,23 @@ router.post('/:sceneId/tokens', requireMember, async (req, res, next) => {
     const height = validateTokenSize(body.height === undefined ? 1 : body.height, 'height');
     if (height.error) return res.status(400).json({ error: height.error });
 
+    // A GM may place a token ALREADY HIDDEN. Without this the only route to a
+    // hidden token is place-then-PATCH, and the placement is broadcast to every
+    // player in between: the ambush appears on their canvas and then vanishes.
+    // Brief, but a genuine spoiler leak in ordinary use, and it defeats the point
+    // of the hidden flag. Found while auditing the active-scene work.
+    //
+    // Players may NOT place hidden tokens, consistent with the existing "player
+    // cannot hide (403)" rule on PATCH. A non-owner sending hidden:true has it
+    // ignored rather than refused, matching every other non-allow-listed field
+    // on this endpoint.
+    let hidden = false;
+    if (isOwner && body.hidden !== undefined) {
+      const h = validateBool(body.hidden, 'hidden');
+      if (h.error) return res.status(400).json({ error: h.error });
+      hidden = h.value;
+    }
+
     const insertRow = {
       scene_id: scene.id,
       actor_id: null,
@@ -279,6 +476,7 @@ router.post('/:sceneId/tokens', requireMember, async (req, res, next) => {
       y: y.value,
       width: width.value,
       height: height.value,
+      hidden,
     };
 
     let token;
@@ -335,10 +533,14 @@ router.post('/:sceneId/tokens', requireMember, async (req, res, next) => {
 
     const shaped = publicToken(token);
 
-    // Broadcast the placement to everyone in the campaign room (including the
-    // placer) so every open canvas gets the authoritative row. The socket layer
-    // owns the room; we reach it through the same handle the kick/ban routes use.
-    req.app.get('campaignSockets')?.broadcastToken(req.campaign.id, 'token:created', shaped);
+    // Broadcast the placement to the room (including the placer) so every open
+    // canvas gets the authoritative row — but a HIDDEN token is announced to the
+    // GM alone. The row must not leave the server for players here, exactly as on
+    // scene load and on move. The scene-aware helper then applies the second
+    // gate: players hear nothing at all about a non-active scene.
+    const sockets = req.app.get('campaignSockets');
+    if (shaped.hidden) await sockets?.broadcastToOwner(req.campaign.id, 'token:created', shaped);
+    else await sockets?.broadcastScene(req.campaign.id, scene.id, 'token:created', shaped);
 
     return res.status(201).json({ token: shaped });
   } catch (err) {
@@ -354,6 +556,11 @@ router.delete('/:sceneId/tokens/:tokenId', requireMember, async (req, res, next)
   try {
     const scene = await loadSceneInCampaign(req.params.sceneId, req.campaign.id);
     if (!scene) return res.status(404).json({ error: 'scene not found' });
+    // This is the one player-reachable WRITE besides placement, and it was missed
+    // in the first pass of the active-scene work: without this a player could
+    // still delete their own token on a scene the GM had switched away from —
+    // mutating state on a map the server refuses to show them.
+    if (!mayUseScene(req, scene)) return res.status(404).json({ error: 'scene not found' });
 
     if (!validUuid(req.params.tokenId)) {
       return res.status(404).json({ error: 'token not found' });
@@ -369,7 +576,7 @@ router.delete('/:sceneId/tokens/:tokenId', requireMember, async (req, res, next)
 
     await knex('tokens').where({ id: token.id }).del();
 
-    req.app.get('campaignSockets')?.broadcastToken(req.campaign.id, 'token:deleted', {
+    req.app.get('campaignSockets')?.broadcastScene(req.campaign.id, scene.id, 'token:deleted', {
       id: token.id, scene_id: scene.id,
     });
 
@@ -455,16 +662,16 @@ router.patch('/:sceneId/tokens/:tokenId', requireOwner, async (req, res, next) =
       const becameVisible = token.hidden === true && row.hidden === false;
       if (becameHidden) {
         // Tell players to drop it (if they could see it before), GM to update it.
-        sockets.broadcastToPlayers(req.campaign.id, 'token:deleted', { id: row.id, scene_id: scene.id });
+        sockets.broadcastScenePlayers(req.campaign.id, scene.id, 'token:deleted', { id: row.id, scene_id: scene.id });
         sockets.broadcastToOwner(req.campaign.id, 'token:updated', shaped);
       } else if (becameVisible) {
         sockets.broadcastToOwner(req.campaign.id, 'token:updated', shaped);
-        sockets.broadcastToPlayers(req.campaign.id, 'token:created', shaped);
+        sockets.broadcastScenePlayers(req.campaign.id, scene.id, 'token:created', shaped);
       } else {
         // Not a visibility change (resize/lock on an already-visible token, or an
         // edit to an already-hidden one): update whoever can legitimately see it.
         if (row.hidden) sockets.broadcastToOwner(req.campaign.id, 'token:updated', shaped);
-        else sockets.broadcastToken(req.campaign.id, 'token:updated', shaped);
+        else sockets.broadcastScene(req.campaign.id, scene.id, 'token:updated', shaped);
       }
     }
 
@@ -499,7 +706,7 @@ router.post('/:sceneId/tokens/batch-delete', requireOwner, async (req, res, next
     if (sockets && deletedIds.length) {
       // Deletion is broadcast to everyone: a player who could see a token must be
       // told it's gone. (Hidden tokens they never had are simply a no-op for them.)
-      sockets.broadcastToken(req.campaign.id, 'token:deleted-batch', {
+      sockets.broadcastScene(req.campaign.id, scene.id, 'token:deleted-batch', {
         ids: deletedIds, scene_id: scene.id,
       });
     }
@@ -602,7 +809,7 @@ router.post('/:sceneId/tokens/copy', requireOwner, async (req, res, next) => {
     if (sockets) {
       for (const t of shaped) {
         if (t.hidden) sockets.broadcastToOwner(req.campaign.id, 'token:created', t);
-        else sockets.broadcastToken(req.campaign.id, 'token:created', t);
+        else sockets.broadcastScene(req.campaign.id, scene.id, 'token:created', t);
       }
     }
 
@@ -612,14 +819,291 @@ router.post('/:sceneId/tokens/copy', requireOwner, async (req, res, next) => {
   }
 });
 
+// ---- fog of war (M3) ----
+//
+// Every fog write is GM-only (requireOwner) and every one is scoped through
+// loadSceneInCampaign, so a non-member gets 404 — no existence leak — and a
+// member of another campaign cannot reach these rows at all.
+//
+// All fog writes are HTTP, not socket events. Drawing, toggling, moving and
+// deleting a region are STRUCTURAL changes, not per-frame deltas, so they sit on
+// the same side of the "load heavy, update light" split as token placement and
+// deletion. The practical consequence is that fog adds ZERO new authorisation
+// surface to socket.js: there is no new event handler to get wrong.
+//
+// Render rule the whole feature is built around, order-independent because the
+// schema deliberately has no z_index:
+//     fog = union(revealed = false) - union(revealed = true)
+
+// POST /api/campaigns/:id/scenes/:sceneId/fog — GM draws a region.
+router.post('/:sceneId/fog', requireOwner, async (req, res, next) => {
+  try {
+    const scene = await loadSceneInCampaign(req.params.sceneId, req.campaign.id);
+    if (!scene) return res.status(404).json({ error: 'scene not found' });
+
+    const body = req.body || {};
+
+    const type = validateFogType(body.type);
+    if (type.error) return res.status(400).json({ error: type.error });
+
+    // Geometry rules are per-type, and the validator NORMALISES as it goes (a
+    // backwards rect drag is stored as [min, max]), so what lands in jsonb is
+    // canonical regardless of how the client drew it.
+    const points = validateFogPoints(type.value, body.points);
+    if (points.error) return res.status(400).json({ error: points.error });
+
+    // Default false: a freshly drawn region COVERS, which is what the gesture of
+    // dragging a shape onto the map means. An explicit revealed:true creates the
+    // region as a hole, which is how "cover everything, then punch windows" works.
+    let revealed = false;
+    if (body.revealed !== undefined) {
+      const b = validateBool(body.revealed, 'revealed');
+      if (b.error) return res.status(400).json({ error: b.error });
+      revealed = b.value;
+    }
+
+    // Hand-listed columns only; scene_id comes from the server, never the body.
+    // points is JSON.stringify'd because node-pg turns a bare JS ARRAY into a
+    // Postgres array literal, which a jsonb column rejects — objects are inferred
+    // correctly but arrays are not, and every fog region's points IS an array.
+    let rows;
+    try {
+      rows = await withAtomicCap({
+        table: 'fog_of_war',
+        where: { scene_id: scene.id },
+        max: MAX_FOG_REGIONS_PER_SCENE,
+        capMessage: `a scene may hold at most ${MAX_FOG_REGIONS_PER_SCENE} fog regions`,
+        insert: {
+          scene_id: scene.id,
+          type: type.value,
+          points: JSON.stringify(points.value),
+          revealed,
+        },
+      });
+    } catch (err) {
+      if (err.capExceeded) return res.status(409).json({ error: err.message });
+      throw err;
+    }
+
+    const shaped = publicFog(rows[0]);
+    req.app.get('campaignSockets')?.broadcastScene(req.campaign.id, scene.id, 'fog:created', shaped);
+
+    return res.status(201).json({ fog: shaped });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// PATCH /api/campaigns/:id/scenes/:sceneId/fog/:fogId — GM toggles a region
+// between fog and revealed, and/or moves/reshapes it.
+//
+// `type` is NOT patchable: changing a rect into a poly changes what `points`
+// even means, so that is a delete plus a create rather than an update. New
+// points are therefore validated against the STORED type, and re-validated in
+// full — the update path is not a way around the geometry rules.
+router.patch('/:sceneId/fog/:fogId', requireOwner, async (req, res, next) => {
+  try {
+    const scene = await loadSceneInCampaign(req.params.sceneId, req.campaign.id);
+    if (!scene) return res.status(404).json({ error: 'scene not found' });
+
+    const fog = await loadFogInScene(req.params.fogId, scene.id);
+    if (!fog) return res.status(404).json({ error: 'fog region not found' });
+
+    const body = req.body || {};
+    const updates = {};
+
+    if (body.revealed !== undefined) {
+      const b = validateBool(body.revealed, 'revealed');
+      if (b.error) return res.status(400).json({ error: b.error });
+      updates.revealed = b.value;
+    }
+
+    if (body.points !== undefined) {
+      const points = validateFogPoints(fog.type, body.points);
+      if (points.error) return res.status(400).json({ error: points.error });
+      updates.points = JSON.stringify(points.value);
+    }
+
+    if (body.type !== undefined) {
+      return res.status(400).json({ error: 'type cannot be changed; delete and redraw instead' });
+    }
+
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({ error: 'nothing to update' });
+    }
+    updates.updated_at = knex.fn.now();
+
+    const [row] = await knex('fog_of_war').where({ id: fog.id }).update(updates).returning('*');
+    const shaped = publicFog(row);
+
+    req.app.get('campaignSockets')?.broadcastScene(req.campaign.id, scene.id, 'fog:updated', shaped);
+
+    return res.json({ fog: shaped });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// DELETE /api/campaigns/:id/scenes/:sceneId/fog/:fogId — GM removes one region.
+router.delete('/:sceneId/fog/:fogId', requireOwner, async (req, res, next) => {
+  try {
+    const scene = await loadSceneInCampaign(req.params.sceneId, req.campaign.id);
+    if (!scene) return res.status(404).json({ error: 'scene not found' });
+
+    const fog = await loadFogInScene(req.params.fogId, scene.id);
+    if (!fog) return res.status(404).json({ error: 'fog region not found' });
+
+    await knex('fog_of_war').where({ id: fog.id }).del();
+
+    req.app.get('campaignSockets')?.broadcastScene(req.campaign.id, scene.id, 'fog:deleted', {
+      id: fog.id, scene_id: scene.id,
+    });
+
+    return res.json({ ok: true, id: fog.id });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// POST /api/campaigns/:id/scenes/:sceneId/fog/batch-delete — GM removes many
+// regions at once (marquee delete), or clears the scene's fog entirely.
+//
+// Body is either { fog_ids: [uuid, ...] } or { all: true }. The `all` form
+// exists so clearing a fully-fogged map is one request instead of a round-trip
+// carrying 200 ids back to the server that the server could derive itself.
+router.post('/:sceneId/fog/batch-delete', requireOwner, async (req, res, next) => {
+  try {
+    const scene = await loadSceneInCampaign(req.params.sceneId, req.campaign.id);
+    if (!scene) return res.status(404).json({ error: 'scene not found' });
+
+    const body = req.body || {};
+    let deletedIds;
+
+    if (body.all !== undefined) {
+      const b = validateBool(body.all, 'all');
+      if (b.error) return res.status(400).json({ error: b.error });
+      if (!b.value) return res.status(400).json({ error: 'all must be true, or send fog_ids' });
+      const deleted = await knex('fog_of_war').where({ scene_id: scene.id }).del().returning('id');
+      deletedIds = deleted.map((r) => r.id);
+    } else {
+      const ids = validateTokenIdList(body.fog_ids, 'fog_ids');
+      if (ids.error) return res.status(400).json({ error: ids.error });
+
+      // Scene-scoped: an id belonging to another scene is silently skipped rather
+      // than erroring the whole batch, matching the token batch-delete.
+      const deleted = await knex('fog_of_war')
+        .whereIn('id', ids.value)
+        .where('scene_id', scene.id)
+        .del()
+        .returning('id');
+      deletedIds = deleted.map((r) => r.id);
+    }
+
+    if (deletedIds.length) {
+      req.app.get('campaignSockets')?.broadcastScene(req.campaign.id, scene.id, 'fog:deleted-batch', {
+        ids: deletedIds, scene_id: scene.id,
+      });
+    }
+
+    return res.json({ ok: true, deleted: deletedIds });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// POST /api/campaigns/:id/scenes/:sceneId/fog/copy — GM pastes fog regions.
+//
+// Same clipboard model as tokens, for the same recorded reason: the body carries
+// region SPECS, not ids, because a clipboard is a SNAPSHOT and not a pointer.
+// An id-based paste cannot survive a CUT, which deletes the source by definition.
+//
+// Trusting client-supplied specs is safe because nothing is trusted: every field
+// goes through exactly the validation the create endpoint applies, and scene_id
+// is set server-side. The worst a hostile client achieves is creating regions it
+// is already allowed to create one at a time.
+router.post('/:sceneId/fog/copy', requireOwner, async (req, res, next) => {
+  try {
+    const scene = await loadSceneInCampaign(req.params.sceneId, req.campaign.id);
+    if (!scene) return res.status(404).json({ error: 'scene not found' });
+
+    const specs = req.body && req.body.regions;
+    if (!Array.isArray(specs)) return res.status(400).json({ error: 'regions must be an array' });
+    if (specs.length === 0) return res.status(400).json({ error: 'regions is empty' });
+    // Bounded by the per-scene cap: one request can never legitimately create
+    // more regions than a scene may hold.
+    if (specs.length > MAX_FOG_REGIONS_PER_SCENE) {
+      return res.status(400).json({ error: `too many regions (max ${MAX_FOG_REGIONS_PER_SCENE})` });
+    }
+
+    // Validate every spec before touching the DB — one bad spec rejects the whole
+    // paste rather than half-applying it.
+    const rows = [];
+    for (const spec of specs) {
+      if (!spec || typeof spec !== 'object' || Array.isArray(spec)) {
+        return res.status(400).json({ error: 'invalid fog spec' });
+      }
+
+      const type = validateFogType(spec.type);
+      if (type.error) return res.status(400).json({ error: type.error });
+
+      const points = validateFogPoints(type.value, spec.points);
+      if (points.error) return res.status(400).json({ error: points.error });
+
+      let revealed = false;
+      if (spec.revealed !== undefined) {
+        const b = validateBool(spec.revealed, 'revealed');
+        if (b.error) return res.status(400).json({ error: b.error });
+        revealed = b.value;
+      }
+
+      rows.push({
+        scene_id: scene.id,
+        type: type.value,
+        points: JSON.stringify(points.value),
+        revealed,
+      });
+    }
+
+    // The per-scene ceiling applies here too, and this is the biggest
+    // amplification vector, so count and insert happen in one serialisable
+    // transaction rather than as a read-then-write.
+    let inserted;
+    try {
+      inserted = await withAtomicCap({
+        table: 'fog_of_war',
+        where: { scene_id: scene.id },
+        max: MAX_FOG_REGIONS_PER_SCENE,
+        capMessage: `a scene may hold at most ${MAX_FOG_REGIONS_PER_SCENE} fog regions`,
+        insert: rows,
+      });
+    } catch (err) {
+      if (err.capExceeded) return res.status(409).json({ error: err.message });
+      throw err;
+    }
+
+    const shaped = inserted.map(publicFog);
+    const sockets = req.app.get('campaignSockets');
+    if (sockets) {
+      for (const f of shaped) sockets.broadcastScene(req.campaign.id, scene.id, 'fog:created', f);
+    }
+
+    return res.status(201).json({ fog: shaped });
+  } catch (err) {
+    return next(err);
+  }
+});
+
 module.exports = {
   router,
   publicToken,
   publicScene,
+  publicFog,
   tokenMovePolicy,
   loadSceneInCampaign,
+  loadFogInScene,
   validateGridCoord,
   validateTokenSize,
   MAX_PLAYER_TOKENS_PER_SCENE,
+  MAX_FOG_REGIONS_PER_SCENE,
   SIZE_PRESETS,
 };

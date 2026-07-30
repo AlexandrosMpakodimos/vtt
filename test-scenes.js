@@ -105,6 +105,12 @@ function waitFor(s, event, ms = 1200) {
   const sceneId = sceneRes.data.scene && sceneRes.data.scene.id;
   check('scene has campaign_id', sceneRes.data.scene && sceneRes.data.scene.campaign_id === campaignId);
 
+  // The active-scene rule (M3) pins players to the campaign's active scene, so
+  // every player-path assertion below needs this scene to BE the active one.
+  // Written before that rule existed; this line is what the old contract
+  // implicitly assumed.
+  await gm.req('PUT', `/api/campaigns/${campaignId}/scenes/active`, { scene_id: sceneId });
+
   const playerScene = await player.req('POST', `/api/campaigns/${campaignId}/scenes`, { name: 'sneaky' });
   check('player cannot create scene (403)', playerScene.status === 403, `got ${playerScene.status}`);
 

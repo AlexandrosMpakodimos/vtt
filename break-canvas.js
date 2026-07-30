@@ -60,6 +60,11 @@ const waitFor = (s, ev, ms=900) => new Promise((r) => { const t=setTimeout(()=>{
   const vScene = (await gm.req('POST', `/api/campaigns/${victim.id}/scenes`, { name: 'V' })).data.scene;
   const aScene = (await outsider.req('POST', `/api/campaigns/${attacker.id}/scenes`, { name: 'A' })).data.scene;
   const vPath = `/api/campaigns/${victim.id}/scenes/${vScene.id}`;
+  // The active-scene rule (M3) pins players to the campaign's active scene, so
+  // every player-path assertion below needs this scene to BE the active one.
+  // Written before that rule existed; this line is what the old contract
+  // implicitly assumed.
+  await gm.req('PUT', `/api/campaigns/${victim.id}/scenes/active`, { scene_id: vScene.id });
   const vTok = (await gm.req('POST', `${vPath}/tokens`, { name: 'Secret', x: 1, y: 1 })).data.token;
 
   // ============ API1: BOLA — object level ============
@@ -252,6 +257,11 @@ const waitFor = (s, ev, ms=900) => new Promise((r) => { const t=setTimeout(()=>{
   const victim2 = (await gm.req('POST', '/api/campaigns', { name: 'Race', is_public: true })).data.campaign;
   await player.req('POST', `/api/campaigns/${victim2.id}/join`, {});
   const rScene = (await gm.req('POST', `/api/campaigns/${victim2.id}/scenes`, { name: 'R' })).data.scene;
+  // The active-scene rule (M3) pins players to the campaign's active scene, so a
+  // player cannot place here at all until this scene is activated. Without it the
+  // race is not run and the probe reports 0 accepted — which the === 1 assertion
+  // below correctly refuses to call a pass.
+  await gm.req('PUT', `/api/campaigns/${victim2.id}/scenes/active`, { scene_id: rScene.id });
   const parallel = await Promise.all(Array.from({ length: 25 }, () =>
     player.req('POST', `/api/campaigns/${victim2.id}/scenes/${rScene.id}/tokens`, { name: 'race' })));
   const accepted = parallel.filter(x => x.status === 201).length;

@@ -158,6 +158,107 @@ function validateTokenIdList(ids, field = 'token_ids') {
   return { value: [...seen] };
 }
 
+// --- fog of war (M3) ---
+
+// Shape types. A fixed allow-list in app logic rather than a DB CHECK: the house
+// convention is app-logic allow-lists, and campaign_members.status is the one
+// stated exception because it drives AUTHORISATION. Fog type drives rendering.
+const FOG_TYPES = ['rect', 'circle', 'poly'];
+
+// Vertices per region. The row cap (MAX_FOG_REGIONS_PER_SCENE, in routes/scenes.js)
+// bounds how many regions exist; this bounds how big ONE of them can be. That
+// second bound is the one that actually matters: 200 regions of 50,000 vertices
+// each is a trivially small number of requests that poisons every future scene
+// load, and no row cap would catch it.
+const MAX_FOG_POINTS = 500;
+
+function validateFogType(v) {
+  const t = typeof v === 'string' ? v.trim().toLowerCase() : '';
+  if (!FOG_TYPES.includes(t)) {
+    return { error: `type must be one of: ${FOG_TYPES.join(', ')}` };
+  }
+  return { value: t };
+}
+
+// One {x, y} vertex in GRID UNITS — the same coordinate space tokens live in,
+// validated by the same validateGridCoord (which wraps finiteInRange, the
+// post-audit numeric path that rejects [[5]], [5], true and other coercion
+// smuggling). No second numeric path is defined here on purpose: duplicating
+// that logic is exactly how the type-confusion bug arrived the first time.
+function validateFogPoint(p, i) {
+  if (!p || typeof p !== 'object' || Array.isArray(p)) {
+    return { error: `points[${i}] must be an object like {x, y}` };
+  }
+  const x = validateGridCoord(p.x, `points[${i}].x`);
+  if (x.error) return { error: x.error };
+  const y = validateGridCoord(p.y, `points[${i}].y`);
+  if (y.error) return { error: y.error };
+  return { value: { x: x.value, y: y.value } };
+}
+
+// Validate + NORMALISE a region's geometry for a given (already validated) type.
+// Returns { value: [{x,y}, ...] } or { error }.
+//
+//   rect   — exactly 2 opposite corners. Stored canonically as [min, max] so a
+//            backwards drag (bottom-right to top-left) and a forwards one that
+//            describe the same rectangle store identically. A zero-width or
+//            zero-height rect is rejected: it renders as nothing, so it is a
+//            junk row that only consumes the scene's region cap.
+//   circle — exactly 2 points: [centre, a point on the rim]. The radius is
+//            DERIVED from the two, never stored, which is why the schema needs
+//            no radius column. A zero radius is rejected for the same reason a
+//            zero-area rect is. The rim point is stored as given rather than
+//            rotated to a canonical angle: canonicalising it would push the
+//            stored point outside the ±10000 coordinate bound for a circle
+//            drawn near the edge of a large scene, and a circle has no
+//            orientation worth normalising anyway.
+//   poly   — 3..MAX_FOG_POINTS vertices, stored in the order drawn (winding
+//            order is the renderer's business, not the database's).
+function validateFogPoints(type, points) {
+  if (!Array.isArray(points)) return { error: 'points must be an array' };
+  if (points.length > MAX_FOG_POINTS) {
+    return { error: `points has too many items (max ${MAX_FOG_POINTS})` };
+  }
+
+  const need = (n) => `a ${type} needs exactly ${n} points`;
+  if ((type === 'rect' || type === 'circle') && points.length !== 2) {
+    return { error: need(2) };
+  }
+  if (type === 'poly' && points.length < 3) {
+    return { error: 'a poly needs at least 3 points' };
+  }
+
+  const out = [];
+  for (let i = 0; i < points.length; i += 1) {
+    const p = validateFogPoint(points[i], i);
+    if (p.error) return { error: p.error };
+    out.push(p.value);
+  }
+
+  if (type === 'rect') {
+    const [a, b] = out;
+    if (a.x === b.x || a.y === b.y) {
+      return { error: 'a rect must have a non-zero width and height' };
+    }
+    return {
+      value: [
+        { x: Math.min(a.x, b.x), y: Math.min(a.y, b.y) },
+        { x: Math.max(a.x, b.x), y: Math.max(a.y, b.y) },
+      ],
+    };
+  }
+
+  if (type === 'circle') {
+    const [c, rim] = out;
+    if (c.x === rim.x && c.y === rim.y) {
+      return { error: 'a circle must have a non-zero radius' };
+    }
+    return { value: out };
+  }
+
+  return { value: out };
+}
+
 // A tri-state boolean from a request body: true if === true or 'true', false if
 // === false or 'false', else an error. Avoids the JS truthiness trap where any
 // non-empty string flips a flag on.
@@ -173,4 +274,5 @@ module.exports = {
   validateCampaignPassword, validateColor,
   validateSceneName, validateTokenName, validateGridCoord, validateTokenSize,
   validateSceneDimension, validateTokenIdList, validateBool,
+  validateFogType, validateFogPoints, FOG_TYPES, MAX_FOG_POINTS,
 };

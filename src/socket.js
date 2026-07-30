@@ -69,6 +69,38 @@ function initSockets(io) {
     io.to(roomName(campaignId)).emit(event, payload);
   }
 
+  // Emit a SCENE-SCOPED event. The GM always receives it; players receive it only
+  // when the scene is the campaign's ACTIVE scene.
+  //
+  // Without this, pinning players to the active scene would be enforced on the
+  // HTTP layer and leak on the socket layer: every token the GM placed and every
+  // fog region they drew while prepping an unopened map would still be pushed to
+  // every player in the room. The client filters those by scene_id, but that is
+  // client-side filtering of data the server should never have sent — precisely
+  // the security theatre that cosmetic token-dimming was rejected as in M2.
+  //
+  // Built from the two helpers below rather than duplicating their logic, so
+  // there is one definition of "the GM" (derived live from owner_id) everywhere.
+  async function broadcastScene(campaignId, sceneId, event, payload) {
+    const campaign = await knex('campaigns')
+      .where({ id: campaignId }).whereNull('deleted_at').first();
+    if (!campaign) return;
+    if (campaign.active_scene_id === sceneId) {
+      broadcastToken(campaignId, event, payload);
+      return;
+    }
+    await broadcastToOwner(campaignId, event, payload);
+  }
+
+  // Players only, and only on the active scene. Used by the hide/show transition,
+  // where the GM's copy is sent separately as a different event.
+  async function broadcastScenePlayers(campaignId, sceneId, event, payload) {
+    const campaign = await knex('campaigns')
+      .where({ id: campaignId }).whereNull('deleted_at').first();
+    if (!campaign || campaign.active_scene_id !== sceneId) return;
+    await broadcastToPlayers(campaignId, event, payload);
+  }
+
   // Emit only to the GM's sockets that are in the room. Used for HIDDEN tokens:
   // a hidden token's state may reach the owner but must never reach players.
   // The owner is derived from campaigns.owner_id (single source of truth), and
@@ -202,6 +234,13 @@ function initSockets(io) {
           .where({ id: campaignId }).whereNull('deleted_at').first();
         if (!campaign) return respond({ ok: false, error: 'campaign not found' });
 
+        // Players are pinned to the active scene on the socket path too. Without
+        // this, the HTTP gate would be bypassable: a player who had a token on a
+        // scene before it was deactivated could keep moving it there unseen.
+        if (campaign.owner_id !== user.id && campaign.active_scene_id !== scene.id) {
+          return respond({ ok: false, error: 'that scene is not active' });
+        }
+
         if (!tokenMovePolicy({ campaign, token, userId: user.id })) {
           return respond({ ok: false, error: 'you can only move tokens you placed' });
         }
@@ -245,7 +284,7 @@ function initSockets(io) {
         if (shaped.hidden) {
           await broadcastToOwner(campaignId, 'token:moved', shaped);
         } else {
-          io.to(roomName(campaignId)).emit('token:moved', shaped);
+          await broadcastScene(campaignId, scene.id, 'token:moved', shaped);
         }
         return respond({ ok: true, token: shaped });
       } catch (err) {
@@ -283,6 +322,10 @@ function initSockets(io) {
         const campaign = await knex('campaigns')
           .where({ id: campaignId }).whereNull('deleted_at').first();
         if (!campaign) return respond({ ok: false, error: 'campaign not found' });
+        // Same active-scene pin as the single move above.
+        if (campaign.owner_id !== user.id && campaign.active_scene_id !== scene.id) {
+          return respond({ ok: false, error: 'that scene is not active' });
+        }
 
         const applied = [];
         const rejected = [];
@@ -318,7 +361,7 @@ function initSockets(io) {
         if (applied.length) {
           const visible = applied.filter((t) => !t.hidden);
           const hidden = applied.filter((t) => t.hidden);
-          if (visible.length) io.to(roomName(campaignId)).emit('token:moved-batch', { tokens: visible });
+          if (visible.length) await broadcastScene(campaignId, scene.id, 'token:moved-batch', { tokens: visible });
           if (hidden.length) await broadcastToOwner(campaignId, 'token:moved-batch', { tokens: hidden });
         }
         return respond({ ok: true, applied, rejected });
@@ -337,7 +380,17 @@ function initSockets(io) {
     });
   });
 
-  return { evictUser, roomName, socketsByUser, broadcastToken, broadcastToOwner, broadcastToPlayers };
+  return {
+    evictUser, roomName, socketsByUser,
+    broadcastToken, broadcastToOwner, broadcastToPlayers,
+    broadcastScene, broadcastScenePlayers,
+    // Same function as broadcastToken, exported under a neutral name. Fog
+    // regions and the active-scene pointer are broadcast to the whole room too,
+    // and routing them through a helper called "broadcastToken" would make the
+    // call sites read like a lie. No behaviour change, no existing caller
+    // touched — deliberately an alias rather than a rename, to avoid churn.
+    broadcastRoom: broadcastToken,
+  };
 }
 
 module.exports = { initSockets, roomName };
