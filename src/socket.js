@@ -25,6 +25,9 @@ const {
   publicToken, tokenMovePolicy, loadSceneInCampaign,
   validateGridCoord, validateTokenSize,
 } = require('./routes/scenes');
+// The active-scene rule, in one place. See services/sceneAccess.js for why it
+// moved out of routes/scenes.js during M5.
+const { mayUseSceneFor } = require('./services/sceneAccess');
 
 const roomName = (campaignId) => `campaign:${campaignId}`;
 
@@ -114,6 +117,44 @@ function initSockets(io) {
     for (const sid of ids) {
       const socket = io.sockets.sockets.get(sid);
       if (socket && socket.rooms.has(roomName(campaignId))) socket.emit(event, payload);
+    }
+  }
+
+  // Emit to a SPECIFIC SET OF USERS' sockets in the room. M5 (whispers).
+  //
+  // PROJECT_STATE recorded, during M4, that per-recipient visibility finer than
+  // GM/not-GM was "structurally impossible today — broadcastToPlayers targets
+  // the room minus the GM, so GM/not-GM is the only distinction the socket layer
+  // can express, and a finer rule would need new socket machinery, not a new
+  // column." That note is wrong as written, and M5 depends on it being wrong:
+  // broadcastToOwner directly above ALREADY does per-user targeting. It looks up
+  // socketsByUser for one id and emits to that user's sockets in the room. It is
+  // this function with a recipient set of size one.
+  //
+  // So this is a generalisation of an existing helper, not new machinery. The
+  // room membership check is kept for the same reason broadcastToOwner keeps it:
+  // socketsByUser is global, so without it a whisper would reach a recipient's
+  // socket that is connected but sitting in a different campaign.
+  //
+  // Whisper policy, decided 2026-08-03: a private message reaches exactly the
+  // ids in whisper_to plus its sender. The GM is included only when explicitly
+  // targeted. Silently copying the GM on every private message is surveillance,
+  // and this project already chose prevention over surveillance in M4 when it
+  // took a restricted field allow-list over a change history.
+  async function broadcastToUsers(campaignId, userIds, event, payload) {
+    const campaign = await knex('campaigns')
+      .where({ id: campaignId }).whereNull('deleted_at').first();
+    if (!campaign) return;
+    const room = roomName(campaignId);
+    // A Set, so a duplicate id (sender also listed as a recipient) does not emit
+    // the same message twice to the same socket.
+    for (const userId of new Set(userIds || [])) {
+      const ids = socketsByUser.get(userId);
+      if (!ids) continue;
+      for (const sid of ids) {
+        const socket = io.sockets.sockets.get(sid);
+        if (socket && socket.rooms.has(room)) socket.emit(event, payload);
+      }
     }
   }
 
@@ -237,7 +278,13 @@ function initSockets(io) {
         // Players are pinned to the active scene on the socket path too. Without
         // this, the HTTP gate would be bypassable: a player who had a token on a
         // scene before it was deactivated could keep moving it there unseen.
-        if (campaign.owner_id !== user.id && campaign.active_scene_id !== scene.id) {
+        //
+        // M5: this was an INLINE COPY of routes/scenes.js's mayUseScene, which
+        // was never exported. Two copies here plus the original made three, all
+        // correct, none of them the single definition an authorisation rule
+        // should have — and M3's V2 was exactly a boundary that held in one place
+        // and leaked in another. Now one function in services/sceneAccess.js.
+        if (!mayUseSceneFor({ isOwner: campaign.owner_id === user.id, campaign, scene })) {
           return respond({ ok: false, error: 'that scene is not active' });
         }
 
@@ -322,8 +369,9 @@ function initSockets(io) {
         const campaign = await knex('campaigns')
           .where({ id: campaignId }).whereNull('deleted_at').first();
         if (!campaign) return respond({ ok: false, error: 'campaign not found' });
-        // Same active-scene pin as the single move above.
-        if (campaign.owner_id !== user.id && campaign.active_scene_id !== scene.id) {
+        // Same active-scene pin as the single move above, through the same
+        // single definition.
+        if (!mayUseSceneFor({ isOwner: campaign.owner_id === user.id, campaign, scene })) {
           return respond({ ok: false, error: 'that scene is not active' });
         }
 
@@ -384,6 +432,11 @@ function initSockets(io) {
     evictUser, roomName, socketsByUser,
     broadcastToken, broadcastToOwner, broadcastToPlayers,
     broadcastScene, broadcastScenePlayers,
+    // M5. The only addition to this file: one helper, no new event handler and
+    // therefore no new authorisation surface. Fog cost this file one line and M4
+    // cost it none, for the same reason — every combat and chat write is
+    // structural and goes over HTTP.
+    broadcastToUsers,
     // Same function as broadcastToken, exported under a neutral name. Fog
     // regions and the active-scene pointer are broadcast to the whole room too,
     // and routing them through a helper called "broadcastToken" would make the

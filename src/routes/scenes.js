@@ -28,6 +28,15 @@ const { contentWriteLimiter } = require('../middleware/rateLimit');
 // this primitive, and leaving it here would create a require cycle between the
 // scene and actor routers. Behaviour is unchanged for every call site below.
 const { withAtomicCap } = require('../services/atomicCap');
+// M5. Scene access moved to a leaf module to break the routes/scenes <->
+// routes/combat require cycle; see that module's header.
+const { loadSceneInCampaign, mayUseScene } = require('../services/sceneAccess');
+// M5. Auto-add / auto-remove hooks. A token placed on a scene with a running
+// fight joins the roster; a token deleted leaves it (via the FK cascade, which
+// cannot notify anyone, hence the explicit broadcast).
+const {
+  autoAddCombatant, afterTokensDeleted, syncPropFlag,
+} = require('./combat');
 // M4: a token may now be LINKED to an actor. The actor router owns the
 // projection (what a player may see of a character), and this router imports it
 // rather than reimplementing it — one definition, so the scene load and the
@@ -123,6 +132,10 @@ function publicToken(t) {
     rotation: Number(t.rotation),
     hidden: t.hidden,
     locked: t.locked,
+    // M5. The GM's "this is scenery, never a combatant" flag. Safe to send to
+    // players: it is the GM's classification of a token they can already see,
+    // and hidden tokens never reach them at all. Same class as `locked`.
+    is_prop: t.is_prop,
     bar1_value: t.bar1_value,
     bar1_max: t.bar1_max,
     conditions: t.conditions,
@@ -131,31 +144,15 @@ function publicToken(t) {
   };
 }
 
-// Load a live scene that belongs to a given campaign. Scoping the lookup to the
-// campaign is what stops a member of campaign A from reading/mutating a scene in
-// campaign B by guessing its id (cross-campaign IDOR).
-async function loadSceneInCampaign(sceneId, campaignId) {
-  if (!validUuid(sceneId)) return null;
-  return knex('scenes').where({ id: sceneId, campaign_id: campaignId }).first();
-}
-
-// A PLAYER is pinned to the campaign's active scene; the GM may open any scene
-// (they need to prep and check maps without dragging the table along).
-//
-// This is enforced on the SERVER, not by hiding buttons: a player who typed a
-// scene id straight into the URL, or replayed an old request, would otherwise
-// read a map the GM has not revealed yet — including its tokens and its fog.
-// Client-side hiding here would be the same security theatre that cosmetic
-// token-dimming was rejected as in M2.
-//
-// Refusal is 404, never 403, and for the same reason non-members get 404: a 403
-// would confirm that a scene with this id exists, letting a player enumerate the
-// GM's unpublished maps by probing. To a player, a non-active scene is
-// indistinguishable from one that does not exist.
-function mayUseScene(req, scene) {
-  if (req.isOwner) return true;
-  return !!scene && req.campaign.active_scene_id === scene.id;
-}
+// loadSceneInCampaign and mayUseScene now live in services/sceneAccess.js and are
+// imported at the top of this file. M5 moved them for two reasons, both recorded
+// in that module's header: routes/combat.js needs them and this file needs
+// routes/combat.js (a genuine require cycle, the same one that moved
+// withAtomicCap out of here during M4), and mayUseScene was never exported, so
+// socket.js had re-derived it inline in two places. Three copies of one
+// authorisation rule, collapsed to one before M5 added a fourth caller.
+// Both are re-exported at the bottom of this file, so every existing call site
+// is unchanged.
 
 function publicFog(f) {
   if (!f) return null;
@@ -444,6 +441,16 @@ router.delete('/:sceneId', requireOwner, async (req, res, next) => {
     const wasActive = req.campaign.active_scene_id === scene.id;
     const tokenCount = Number((await knex('tokens').where({ scene_id: scene.id }).count({ n: '*' }).first()).n);
     const fogCount = Number((await knex('fog_of_war').where({ scene_id: scene.id }).count({ n: '*' }).first()).n);
+    // M5. combat.scene_id is ON DELETE CASCADE, so deleting a scene destroys any
+    // encounter staged on it and every combatant in it. This route's whole
+    // design is that the confirmation NAMES what is destroyed rather than asking
+    // a bare "are you sure?" — a silent third casualty would make that promise
+    // false, so the counts are gathered here alongside tokens and fog.
+    const combatCount = Number((await knex('combat').where({ scene_id: scene.id }).count({ n: '*' }).first()).n);
+    const combatantCount = Number((await knex('combatants')
+      .join('combat', 'combat.id', 'combatants.combat_id')
+      .where('combat.scene_id', scene.id)
+      .count({ n: '*' }).first()).n);
 
     await knex('scenes').where({ id: scene.id }).del();
 
@@ -466,7 +473,12 @@ router.delete('/:sceneId', requireOwner, async (req, res, next) => {
       ok: true,
       id: scene.id,
       was_active: wasActive,
-      deleted: { tokens: tokenCount, fog: fogCount },
+      deleted: {
+        tokens: tokenCount,
+        fog: fogCount,
+        combat: combatCount,
+        combatants: combatantCount,
+      },
     });
   } catch (err) {
     return next(err);
@@ -532,6 +544,25 @@ router.post('/:sceneId/tokens', requireMember, async (req, res, next) => {
       hidden = h.value;
     }
 
+    // M5. is_prop marks scenery — a tree, a door, a barricade — so auto-add does
+    // not enrol it when a fight is running on this scene. GM-only, and SILENTLY
+    // DROPPED for a player rather than refused, matching `hidden` immediately
+    // above on this same handler.
+    //
+    // That is deliberate and it is the exception the M4 refuse-vs-ignore
+    // amendment already carved out: that amendment was scoped to ACTORS, and its
+    // stated reason for leaving the token routes alone was that `hidden` is a
+    // GM-only presentation flag with a safe default rather than authored
+    // content. is_prop is exactly that same class of field on exactly that same
+    // route, so it follows its neighbour. Two different behaviours for two
+    // identical booleans in one handler would be worse than matching.
+    let isProp = false;
+    if (isOwner && body.is_prop !== undefined) {
+      const pr = validateBool(body.is_prop, 'is_prop');
+      if (pr.error) return res.status(400).json({ error: pr.error });
+      isProp = pr.value;
+    }
+
     // A linked token INHERITS the character's name, portrait and footprint when
     // the request does not override them — placing a Goblin actor should give a
     // token called "Goblin" wearing the goblin's picture, not an unnamed square.
@@ -565,6 +596,7 @@ router.post('/:sceneId/tokens', requireMember, async (req, res, next) => {
       width: tokenW,
       height: tokenH,
       hidden,
+      is_prop: isProp,
     };
 
     let token;
@@ -645,6 +677,16 @@ router.post('/:sceneId/tokens', requireMember, async (req, res, next) => {
     if (shaped.hidden) await sockets?.broadcastToOwner(req.campaign.id, 'token:created', shaped);
     else await sockets?.broadcastScene(req.campaign.id, scene.id, 'token:created', shaped);
 
+    // M5. A token placed on a scene with a RUNNING fight joins the roster
+    // automatically, unless it is a prop. autoAddCombatant is a no-op when there
+    // is no active combat, so this costs one indexed lookup in the ordinary case.
+    //
+    // The roster broadcast is the two-payload one in routes/combat.js: a hidden
+    // token produces a combatant row the GM receives and players do not, which
+    // is why enrolling one here cannot leak it.
+    const enrolled = await autoAddCombatant(token);
+    if (enrolled) await afterTokensDeleted(req, scene.id);
+
     return res.status(201).json({ token: shaped, actor: actor ? shapeActorFor(true, actor) : null });
   } catch (err) {
     return next(err);
@@ -682,6 +724,12 @@ router.delete('/:sceneId/tokens/:tokenId', requireMember, async (req, res, next)
     req.app.get('campaignSockets')?.broadcastScene(req.campaign.id, scene.id, 'token:deleted', {
       id: token.id, scene_id: scene.id,
     });
+
+    // M5. combatants.token_id is ON DELETE CASCADE, so the roster row is already
+    // gone — but a FOREIGN KEY CANNOT NOTIFY ANYBODY, so every open tracker
+    // would keep showing a combatant whose token no longer exists. Same lesson
+    // DELETE /:sceneId learned when the FK silently cleared active_scene_id.
+    await afterTokensDeleted(req, scene.id);
 
     return res.json({ ok: true, id: token.id });
   } catch (err) {
@@ -768,6 +816,13 @@ router.patch('/:sceneId/tokens/:tokenId', requireOwner, async (req, res, next) =
       if (b.error) return res.status(400).json({ error: b.error });
       updates.locked = b.value;
     }
+    // M5. Toggling scenery on/off. This route is requireOwner, so unlike
+    // placement there is no player branch to consider.
+    if (body.is_prop !== undefined) {
+      const b = validateBool(body.is_prop, 'is_prop');
+      if (b.error) return res.status(400).json({ error: b.error });
+      updates.is_prop = b.value;
+    }
 
     if (Object.keys(updates).length === 0) {
       return res.status(400).json({ error: 'nothing to update' });
@@ -809,6 +864,13 @@ router.patch('/:sceneId/tokens/:tokenId', requireOwner, async (req, res, next) =
       }
     }
 
+    // M5. Tagging something a prop while it stands in the roster must REMOVE it,
+    // or the flag is lying; untagging it while a fight runs enrols it. Only
+    // fires when the flag actually changed, so a resize never touches combat.
+    if (body.is_prop !== undefined && row.is_prop !== token.is_prop) {
+      await syncPropFlag(req, row);
+    }
+
     return res.json({ token: shaped });
   } catch (err) {
     return next(err);
@@ -844,6 +906,9 @@ router.post('/:sceneId/tokens/batch-delete', requireOwner, async (req, res, next
         ids: deletedIds, scene_id: scene.id,
       });
     }
+
+    // M5. Same cascade-cannot-notify problem as the single delete above.
+    if (deletedIds.length) await afterTokensDeleted(req, scene.id);
 
     return res.json({ ok: true, deleted: deletedIds });
   } catch (err) {
@@ -941,6 +1006,10 @@ router.post('/:sceneId/tokens/copy', requireOwner, async (req, res, next) => {
         height: height.value,
         hidden,
         locked: false,          // a pasted token starts unlocked
+        // A copied prop stays a prop: pasting a row of trees should not fill the
+        // initiative roster. Read from the spec like every other field and
+        // validated the same way; this route is requireOwner.
+        is_prop: spec.is_prop === undefined ? false : spec.is_prop === true || spec.is_prop === 'true',
       });
     }
 
@@ -980,6 +1049,19 @@ router.post('/:sceneId/tokens/copy', requireOwner, async (req, res, next) => {
         else sockets.broadcastScene(req.campaign.id, scene.id, 'token:created', t);
       }
     }
+
+    // M5. Paste is how a GM populates an encounter, so it is the auto-add path
+    // that matters most in practice: pasting five goblins mid-fight should put
+    // five goblins in the roster, each with its OWN hp_override defaulted from
+    // the shared actor's hp_max. One roster broadcast at the end rather than one
+    // per token — the same "N ids in one event, not N events" discipline the
+    // batch token operations already follow.
+    let enrolledAny = false;
+    for (const t of inserted) {
+      // eslint-disable-next-line no-await-in-loop
+      if (await autoAddCombatant(t)) enrolledAny = true;
+    }
+    if (enrolledAny) await afterTokensDeleted(req, scene.id);
 
     return res.status(201).json({ tokens: shaped });
   } catch (err) {
@@ -1267,7 +1349,12 @@ module.exports = {
   publicScene,
   publicFog,
   tokenMovePolicy,
+  // Re-exported from services/sceneAccess.js so socket.js and every existing
+  // suite keep importing them from here. mayUseScene is now exported too, which
+  // it never was — that omission is why socket.js had two inline copies of the
+  // active-scene rule.
   loadSceneInCampaign,
+  mayUseScene,
   loadFogInScene,
   validateGridCoord,
   validateTokenSize,

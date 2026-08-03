@@ -458,6 +458,85 @@ function validateSortOrder(v) {
   return validateInt(v, { min: 0, max: 9999, field: 'sort_order' });
 }
 
+// ---------------------------------------------------------------------------
+// M5 — combat and chat
+// ---------------------------------------------------------------------------
+
+// Combat name. Optional; a fight does not need a title.
+function validateCombatName(v) {
+  return validateShortText(v, 'name', 100);
+}
+
+// Per-instance hit points for one combatant. NULL is meaningful and is NOT an
+// absent value: it means "this combatant has no per-fight HP of its own", which
+// is the correct state for a player character (their sheet is authoritative) and
+// for an unlinked token.
+//
+// Bounds match actors.hp_current in ACTOR_INT_FIELDS deliberately, negatives
+// included: hp_current may go negative and is never clamped, because death is
+// not a mechanic in this project, and a per-fight override that could not go
+// negative would be a stricter rule than the column it stands in for.
+function validateHpOverride(v) {
+  if (v === null || v === '') return { value: null };
+  if (v === undefined) return { value: undefined };
+  return validateInt(v, { min: -9999, max: 9999, field: 'hp_override' });
+}
+
+// Message body types. An app-level allow-list with no DB CHECK, consistent with
+// FOG_TYPES and ITEM_TYPES. Note this does NOT gate confidentiality: whisper_to
+// being non-empty is the only thing that makes a row private, so a 'chat' with a
+// populated whisper_to is private and a 'whisper' with an empty one is not.
+const MESSAGE_TYPES = ['chat', 'roll', 'system', 'whisper'];
+function validateMessageType(v) {
+  if (v === undefined || v === null || v === '') return { value: 'chat' };
+  if (typeof v !== 'string') return { error: 'type must be text' };
+  const s = v.trim().toLowerCase();
+  if (!MESSAGE_TYPES.includes(s)) {
+    return { error: `type must be one of: ${MESSAGE_TYPES.join(', ')}` };
+  }
+  return { value: s };
+}
+
+// A chat line. Shorter than actors.notes (5000) on purpose: this is a message in
+// a live log, not a document, and every one of them is broadcast to every
+// recipient and then held in the campaign's history.
+const MAX_MESSAGE_LENGTH = 2000;
+function validateMessageContent(v) {
+  if (typeof v !== 'string' || !v.trim()) return { error: 'content is required' };
+  const s = v.trim();
+  if (s.length > MAX_MESSAGE_LENGTH) {
+    return { error: `content is too long (max ${MAX_MESSAGE_LENGTH} characters)` };
+  }
+  return { value: s };
+}
+
+// The whisper recipient list. Shape only — MEMBERSHIP of each id is checked in
+// the route against the campaign, because that needs the database and this
+// module has none. Both halves are required: an id that is well-formed but
+// belongs to a stranger is a row deliberately emitted to a stranger, since
+// whisper_to is a disclosure list rather than a display field.
+//
+// An empty array is normalised to null ("everyone") rather than kept as [], so
+// there is exactly one representation of a public message and no route has to
+// test for both.
+const MAX_WHISPER_RECIPIENTS = 20;
+function validateWhisperTo(v) {
+  if (v === undefined || v === null) return { value: null };
+  if (!Array.isArray(v)) return { error: 'whisper_to must be an array' };
+  if (v.length === 0) return { value: null };
+  if (v.length > MAX_WHISPER_RECIPIENTS) {
+    return { error: `whisper_to has too many recipients (max ${MAX_WHISPER_RECIPIENTS})` };
+  }
+  const seen = new Set();
+  for (const id of v) {
+    if (typeof id !== 'string' || !UUID_RE.test(id)) {
+      return { error: 'whisper_to contains an invalid id' };
+    }
+    seen.add(id);
+  }
+  return { value: [...seen] };
+}
+
 module.exports = {
   normalizeEmail, validateEmail, validateUsername, validatePassword,
   validateCampaignName, validateCampaignDescription, validateImageUrl,
@@ -470,4 +549,8 @@ module.exports = {
   validateJsonBlob, MAX_JSON_BYTES, MAX_JSON_DEPTH, MAX_JSON_KEYS,
   validateItemType, ITEM_TYPES, validateItemWeight,
   validateQuantity, validateSortOrder,
+  validateCombatName, validateHpOverride,
+  validateMessageType, MESSAGE_TYPES,
+  validateMessageContent, MAX_MESSAGE_LENGTH,
+  validateWhisperTo, MAX_WHISPER_RECIPIENTS,
 };

@@ -11,6 +11,8 @@ const {
 const { router: sceneRoutes } = require('./scenes');
 const { router: actorRoutes } = require('./actors');
 const { router: itemRoutes } = require('./items');
+const { router: combatRoutes } = require('./combat');
+const { router: chatRoutes } = require('./chat');
 
 const router = express.Router();
 
@@ -30,6 +32,11 @@ router.use('/:id/scenes', sceneRoutes);
 // so there is one definition of campaign membership across every game resource.
 router.use('/:id/actors', actorRoutes);
 router.use('/:id/items', itemRoutes);
+// M5. Mounted through the campaign router like every other resource, so
+// requireAuth / requireMember / requireOwner, req.campaign and req.isOwner apply
+// unchanged and none of them has to be re-implemented.
+router.use('/:id/combat', combatRoutes);
+router.use('/:id/messages', chatRoutes);
 
 // Abuse-prevention caps, enforced in application logic (consistent with the
 // attunement cap). NOT memory protection: campaigns are rows in Postgres, not
