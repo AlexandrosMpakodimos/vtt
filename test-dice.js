@@ -23,16 +23,25 @@ const t = (name, cond, extra = '') => {
 
 console.log('\n--- dice grammar: what IS supported ---');
 const p = (f) => d.parseFormula(f);
-t('2d6+3 parses', p('2d6+3').count === 2 && p('2d6+3').sides === 6 && p('2d6+3').modifier === 3);
+// rng that always returns the max, so arithmetic assertions are exact rather
+// than depending on random values. (The later `maxRng` is the same function;
+// this one is hoisted because the multi-group block runs before it.)
+const maxRngEarly = (max) => max;
+// [CHANGED 2026-08-03] The parse result is now {groups:[{count,sides}], modifier}
+// rather than a flat {count, sides, modifier}, because a formula can hold more
+// than one group. These probes were UPDATED, not deleted — a contract change
+// invalidates fixtures as well as assertions, and this is what that looks like.
+t('2d6+3 parses', p('2d6+3').groups[0].count === 2 && p('2d6+3').groups[0].sides === 6
+  && p('2d6+3').modifier === 3);
 t('2d6-1 parses a negative modifier', p('2d6-1').modifier === -1);
-t('d20 defaults count to 1', p('d20').count === 1 && p('d20').sides === 20);
-t('1d20 explicit count', p('1d20').count === 1);
-t('bare number is a flat modifier', p('5').count === 0 && p('5').modifier === 5);
+t('d20 defaults count to 1', p('d20').groups[0].count === 1 && p('d20').groups[0].sides === 20);
+t('1d20 explicit count', p('1d20').groups[0].count === 1);
+t('bare number is a flat modifier', p('5').groups.length === 0 && p('5').modifier === 5);
 t('+2 is a flat modifier', p('+2').modifier === 2);
 t('-2 is a flat modifier', p('-2').modifier === -2);
 t('whitespace tolerated', p('  2d6 + 3  ').modifier === 3);
-t('uppercase D tolerated', p('2D6').sides === 6);
-t('100d1000 at both bounds accepted', p('100d1000').count === 100);
+t('uppercase D tolerated', p('2D6').groups[0].sides === 6);
+t('100d1000 at both bounds accepted', p('100d1000').groups[0].count === 100);
 
 console.log('\n--- dice grammar: the SCOPE BOUNDARY, asserted not assumed ---');
 t('keep-highest REFUSED (4d6kh3)', !!p('4d6kh3').error);
@@ -40,10 +49,43 @@ t('drop-lowest REFUSED (4d6dl1)', !!p('4d6dl1').error);
 t('exploding REFUSED (3d6!)', !!p('3d6!').error);
 t('reroll REFUSED (2d6r1)', !!p('2d6r1').error);
 t('advantage keyword REFUSED', !!p('adv').error);
-t('multiple groups REFUSED (2d6+1d4)', !!p('2d6+1d4').error);
+// [CHANGED 2026-08-03] This probe previously asserted that multiple groups were
+// REFUSED. The boundary moved by explicit decision — see the dice.js header. It
+// is inverted here rather than deleted, so the change is visible in the diff
+// instead of a probe quietly vanishing.
+t('multiple groups NOW ACCEPTED (scope amendment)', !p('2d6+1d4').error);
 t('target-number REFUSED (5d10>7)', !!p('5d10>7').error);
 t('multiplication REFUSED (2d6*2)', !!p('2d6*2').error);
 t('parentheses REFUSED', !!p('(2d6)+3').error);
+
+console.log('\n--- multiple dice groups (the 2026-08-03 amendment) ---');
+t('1d20+1d6 parses two groups', p('1d20+1d6').groups.length === 2);
+t('...with the right shapes',
+  p('1d20+1d6').groups[0].sides === 20 && p('1d20+1d6').groups[1].sides === 6);
+t('three groups plus a modifier', p('1d20+1d6+2d4-1').groups.length === 3
+  && p('1d20+1d6+2d4-1').modifier === -1);
+t('a single group still yields one group', p('2d6').groups.length === 1);
+t('a flat formula yields no groups', p('5').groups.length === 0);
+t('results are FLAT across groups', d.roll('1d20+2d6', maxRngEarly).results.length === 3);
+t('groups carry their own results',
+  d.roll('1d20+2d6', maxRngEarly).groups[1].results.length === 2);
+t('total sums every group plus the modifier', (() => {
+  const r = d.roll('1d20+2d6+3', maxRngEarly);
+  return r.total === r.results.reduce((a, b) => a + b, 0) + 3;
+})());
+t('canonical formula round-trips a multi-group roll',
+  d.roll('  1D20 + 2d6 - 1 ', maxRngEarly).formula === '1d20+2d6-1');
+
+console.log('\n--- what multi-group did NOT open up ---');
+t('subtracting DICE still refused (2d6-1d4)', !!p('2d6-1d4').error);
+t('a group after the modifier refused (2d6+3+1d4)', !!p('2d6+3+1d4').error);
+t('groups must be joined with + (2d6 1d4)', !!p('2d6 1d4').error);
+t('MAX_DICE bounds the TOTAL, not each group', !!p('50d6+60d6').error);
+t('...and a legal total across groups is accepted', !p('50d6+50d6').error);
+t('too many kinds of dice refused',
+  !!p(Array.from({ length: v.length ? 11 : 11 }, () => '1d6').join('+')).error);
+t('ten kinds accepted (at the bound)',
+  !p(Array.from({ length: 10 }, () => '1d6').join('+')).error);
 
 console.log('\n--- dice bounds: payload/CPU abuse, the MAX_FOG_POINTS analogue ---');
 t('101 dice refused (over MAX_DICE)', !!p('101d6').error);
@@ -75,8 +117,16 @@ const r1 = d.roll('2d6+3', maxRng);
 t('results has one entry per die', r1.results.length === 2);
 t('total = sum(results) + modifier',
   r1.total === r1.results.reduce((a, b) => a + b, 0) + 3, JSON.stringify(r1));
-t('roll_data shape matches SCHEMA_REFERENCE',
-  'formula' in r1 && 'results' in r1 && 'total' in r1 && Object.keys(r1).length === 3);
+// [CHANGED 2026-08-03] roll_data gained `groups`. The three original keys are
+// UNCHANGED and still asserted — `groups` is additive, so a row written by the
+// earlier build still reads correctly and break-combat.js's roll_data probes
+// were untouched by this amendment.
+t('roll_data keeps its original three keys',
+  'formula' in r1 && 'results' in r1 && 'total' in r1);
+t('roll_data adds groups, and nothing else',
+  'groups' in r1 && Object.keys(r1).length === 4, Object.keys(r1).join(','));
+t('results stays FLAT (the shape audited assertions read)',
+  Array.isArray(r1.results) && r1.results.every((x) => typeof x === 'number'));
 const r2 = d.roll('4d6', maxRng);
 t('no modifier totals the dice alone',
   r2.total === r2.results.reduce((a, b) => a + b, 0));

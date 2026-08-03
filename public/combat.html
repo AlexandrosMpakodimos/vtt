@@ -81,6 +81,23 @@
     #log { background: #111; color: #9cf; padding: 8px; white-space: pre-wrap;
            height: 200px; overflow-y: auto; border-radius: 4px; font-size: 11px; }
 
+    /* ---- 3D dice tray -------------------------------------------------
+       Fixed overlay, pointer-events:none so it NEVER intercepts a click on
+       the tracker underneath — the dice are decoration over a working UI,
+       not a modal that has to be dismissed. */
+    #diceTray { position: fixed; inset: 0; z-index: 50; pointer-events: none;
+                display: none; }
+    #diceTray.on { display: block; }
+    #diceTray canvas { width: 100%; height: 100%; display: block; }
+    .dice-bar { display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap; }
+    .dice-bar > * { margin-top: 0; }
+    .quick { padding: 4px 8px; }
+    .pool { border: 1px solid #ddd; border-radius: 3px; padding: 5px; min-height: 24px;
+            font-size: 12px; background: #fafafa; }
+    .pool .chip { display: inline-block; border: 1px solid #06c; color: #06c;
+                  border-radius: 3px; padding: 0 5px; margin: 1px 3px 1px 0; cursor: pointer; }
+    .pool .chip:hover { background: #f0f6ff; }
+
     .gm-only { display: none; }
     body.is-gm .gm-only { display: block; }
     body.is-gm .player-only { display: none; }
@@ -169,6 +186,30 @@
         <div style="flex:3"><label for="chatText">message</label><input id="chatText" placeholder="I attack the goblin" /></div>
         <button id="sendChat">say</button>
       </div>
+      <div class="row dice-bar">
+        <div style="flex:0 0 100%">
+          <label>dice tray <span class="muted">— click to add, click again to stack</span></label>
+        </div>
+        <button class="quick" data-sides="4">d4</button>
+        <button class="quick" data-sides="6">d6</button>
+        <button class="quick" data-sides="8">d8</button>
+        <button class="quick" data-sides="10">d10</button>
+        <button class="quick" data-sides="12">d12</button>
+        <button class="quick" data-sides="20">d20</button>
+        <button class="quick" data-sides="100">d100</button>
+      </div>
+      <div class="row dice-bar">
+        <div style="flex:2">
+          <label for="trayMod">modifier</label>
+          <input id="trayMod" type="number" value="0" />
+        </div>
+        <div style="flex:3">
+          <label>pool</label>
+          <div id="trayPool" class="pool">empty</div>
+        </div>
+        <button id="trayRoll">roll pool</button>
+        <button id="trayClear">clear</button>
+      </div>
       <div class="row">
         <div style="flex:2"><label for="diceFormula">roll</label><input id="diceFormula" value="2d6+3" /></div>
         <div style="flex:2"><label for="diceLabel">label (optional)</label><input id="diceLabel" placeholder="Perception" /></div>
@@ -180,6 +221,27 @@
           <select id="whisperTo" multiple size="3"></select>
         </div>
       </div>
+      <div class="row">
+        <div style="flex:0 0 auto">
+          <label for="dice3d">3D dice</label>
+          <input id="dice3d" type="checkbox" style="width:auto" checked />
+        </div>
+        <div style="flex:2">
+          <label for="diceColor">dice colour</label>
+          <select id="diceColor"></select>
+        </div>
+        <div style="flex:0 0 auto">
+          <label for="diceGrab">grab dice</label>
+          <input id="diceGrab" type="checkbox" style="width:auto" checked />
+        </div>
+        <button id="diceClear">clear tray</button>
+      </div>
+      <p class="muted">
+        The dice animate a result the <b>server</b> already rolled — they never decide
+        anything. Because <code>roll_data</code> is broadcast, every window at the table
+        animates the same dice. A die with no mesh (d5, d7, d30…) is still a legal roll;
+        it just prints instead of tumbling.
+      </p>
       <p class="muted">
         A whisper reaches exactly the people named plus you. The GM is <b>not</b> copied
         unless targeted — check by whispering between two players with a GM window open.
@@ -197,7 +259,13 @@
     <div id="log"></div>
   </fieldset>
 
+  <div id="diceTray"></div>
+
   <script src="/socket.io/socket.io.js"></script>
+  <!-- An ES module, because the vendored dice library ships as one. It sets
+       window.VTTDice and fires `vtt-dice-ready`; combat.js is a classic script
+       and waits for that event rather than assuming load order. -->
+  <script type="module" src="/js/dice3d.js"></script>
   <script src="/js/combat.js"></script>
 </body>
 </html>

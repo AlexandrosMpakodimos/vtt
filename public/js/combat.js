@@ -81,6 +81,8 @@ let combat = null;
 let combatants = [];
 let members = [];
 let socket = null;
+let dice3d = null;        // window.VTTDice once the ES module has loaded
+let dice3dOn = true;
 
 async function whoami() {
   const r = await api('GET', '/api/auth/me');
@@ -376,6 +378,20 @@ function renderTokens() {
   }
 }
 
+// A roll that arrives — from my own POST or from anyone else's broadcast —
+// animates the numbers the SERVER produced. showRoll returns false when the die
+// has no mesh (d5, d7, d30…), in which case the text line below is the whole
+// answer, which is exactly what it was before the tray existed.
+//
+// This is called from renderMessage rather than from the send handlers, so a
+// roll animates once per client regardless of who threw it, and a whispered
+// roll animates only where the message actually landed — the confidentiality
+// rule does that work, not this code.
+function animateRoll(m) {
+  if (!dice3dOn || !dice3d || !m || !m.roll_data) return;
+  dice3d.showRoll(m.roll_data);
+}
+
 function renderMessage(m) {
   const cls = 'msg'
     + (m.whisper_to && m.whisper_to.length ? ' whisper' : '')
@@ -395,6 +411,9 @@ function renderMessage(m) {
   chatEl.appendChild(row);
   chatEl.scrollTop = chatEl.scrollHeight;
 }
+
+// History replay must NOT re-throw fifty old rolls on page load, so
+// animateRoll is wired to the socket path only, never to loadMessages().
 
 // ---------------------------------------------------------------------------
 // loading
@@ -617,6 +636,7 @@ function connectSocket() {
   socket.on('message:created', (d) => {
     log(`message:created  ${JSON.stringify(d)}`);
     renderMessage(d);
+    animateRoll(d);
     // Learn speakers, so a player can whisper back without a members endpoint.
     if (d.user_id && d.user_id !== (me && me.id) && !members.some((m) => m.id === d.user_id)) {
       members.push({ id: d.user_id, name: d.speaker_name });
@@ -662,6 +682,131 @@ document.getElementById('sceneSel').addEventListener('change', async (e) => {
   sceneId = e.target.value;
   await loadScene();
   await loadCombat();
+});
+
+// ---------------------------------------------------------------------------
+// 3D dice — entirely optional, entirely presentational
+// ---------------------------------------------------------------------------
+//
+// Everything below degrades to nothing. Delete /js/dice3d.js and its <script>
+// tag and this harness behaves exactly as it did before: rolls still happen on
+// the server, still land in the log, still broadcast. The tray adds pixels.
+
+// ---- the dice tray: build a pool, roll it in one go --------------------
+//
+// The server accepts multiple groups since the 2026-08-03 scope amendment, so
+// "1d20 + 2d6 + 3" is ONE roll with ONE result line and ONE animation — not
+// three separate messages that the reader has to add up themselves.
+//
+// The pool is kept as a map of sides -> count so clicking d6 three times reads
+// as 3d6 rather than d6+d6+d6. Both are legal notation; the first is what a
+// person would write.
+const pool = new Map();
+
+function poolFormula() {
+  if (!pool.size) return null;
+  // Descending by sides: 1d20+2d6 is how it is said out loud.
+  const parts = [...pool.entries()]
+    .sort((a, b) => b[0] - a[0])
+    .map(([sides, count]) => `${count}d${sides}`);
+  const mod = Number(document.getElementById('trayMod').value) || 0;
+  let f = parts.join('+');
+  if (mod > 0) f += `+${mod}`;
+  else if (mod < 0) f += String(mod);
+  return f;
+}
+
+function renderPool() {
+  const box = document.getElementById('trayPool');
+  box.textContent = '';
+  if (!pool.size) { box.textContent = 'empty'; return; }
+  for (const [sides, count] of [...pool.entries()].sort((a, b) => b[0] - a[0])) {
+    // Each chip removes one die, so a mis-click is one click to undo.
+    const chip = el('span', { cls: 'chip', text: `${count}d${sides} ✕` });
+    chip.title = 'remove one';
+    chip.addEventListener('click', () => {
+      const n = pool.get(sides) - 1;
+      if (n > 0) pool.set(sides, n); else pool.delete(sides);
+      renderPool();
+    });
+    box.appendChild(chip);
+  }
+  const f = poolFormula();
+  if (f) box.appendChild(el('span', { cls: 'muted', text: `  →  ${f}` }));
+}
+
+for (const b of document.querySelectorAll('.quick')) {
+  b.addEventListener('click', () => {
+    const sides = Number(b.dataset.sides);
+    pool.set(sides, (pool.get(sides) || 0) + 1);
+    renderPool();
+  });
+}
+
+document.getElementById('trayClear').addEventListener('click', () => {
+  pool.clear();
+  document.getElementById('trayMod').value = '0';
+  renderPool();
+});
+
+document.getElementById('trayRoll').addEventListener('click', async () => {
+  const f = poolFormula();
+  if (!f) return;
+  document.getElementById('diceFormula').value = f;
+  await sendRoll();
+  // The pool survives the roll deliberately — an attack is usually thrown more
+  // than once, and rebuilding it every time would be the annoying choice.
+});
+
+document.getElementById('trayMod').addEventListener('input', renderPool);
+
+document.getElementById('dice3d').addEventListener('change', (e) => {
+  dice3dOn = e.target.checked;
+  document.getElementById('diceTray').classList.toggle('on', dice3dOn);
+  if (!dice3dOn && dice3d) dice3d.clearDice();
+});
+
+document.getElementById('diceClear').addEventListener('click', () => {
+  if (dice3d) dice3d.clearDice();
+});
+
+// Dragging settled dice is position-only — see dice3d.js. Off-switch provided
+// because a pointer handler that swallows clicks, however narrowly, should
+// always be disableable.
+document.getElementById('diceGrab').addEventListener('change', (e) => {
+  if (dice3d) dice3d.setInteractive(e.target.checked);
+});
+
+document.getElementById('diceColor').addEventListener('change', (e) => {
+  if (dice3d) dice3d.setColorset(e.target.value);
+});
+
+// The module sets window.VTTDice and fires this event. Listening for it rather
+// than assuming script order means a failed or blocked module load leaves the
+// rest of the page working instead of throwing on first roll.
+document.addEventListener('vtt-dice-ready', async () => {
+  dice3d = window.VTTDice;
+
+  const sel = document.getElementById('diceColor');
+  sel.textContent = '';
+  for (const c of dice3d.colorsets()) {
+    const o = document.createElement('option');
+    o.value = c; o.textContent = c;
+    sel.appendChild(o);
+  }
+
+  try {
+    document.getElementById('diceTray').classList.add('on');
+    await dice3d.initDice('#diceTray');
+    log('3D dice ready — they animate the server\'s result, they do not roll it');
+  } catch (err) {
+    // WebGL unavailable, assets missing, whatever. The chat log is the
+    // authoritative surface and it is untouched by this failing.
+    dice3d = null;
+    document.getElementById('diceTray').classList.remove('on');
+    document.getElementById('dice3d').checked = false;
+    log(`3D dice unavailable (${err && err.message}) — rolls still work, they just print`);
+  }
 });
 
 // Convenience: /combat.html?campaign=<uuid> preloads, so the GM and player
