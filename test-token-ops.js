@@ -147,13 +147,20 @@ function waitFor(s, ev, ms = 1200) { return new Promise((res) => { const t = set
 
   // forged server-owned fields in a spec must be ignored
   const forged = await gm.req('POST', `${scenePath}/tokens/copy`, {
-    tokens: [{ name: 'Forged', created_by: player.id, actor_id: player.id, id: '00000000-0000-0000-0000-000000000000', locked: true }],
+    tokens: [{ name: 'Forged', created_by: player.id, id: '00000000-0000-0000-0000-000000000000', locked: true }],
   });
-  check('paste ignores forged created_by/actor_id/id',
+  check('paste ignores forged created_by/id',
     forged.status === 201 && forged.data.tokens[0].created_by === gm.id &&
-    forged.data.tokens[0].actor_id === null &&
     forged.data.tokens[0].id !== '00000000-0000-0000-0000-000000000000', JSON.stringify(forged.data));
   check('pasted token always starts unlocked', forged.status === 201 && forged.data.tokens[0].locked === false);
+
+  // M4: actor_id left this "silently ignored" group and became a validated
+  // field. A spec naming something that is not an actor in this campaign refuses
+  // the paste instead of producing unlinked tokens under a 201.
+  const badLinkPaste = await gm.req('POST', `${scenePath}/tokens/copy`, {
+    tokens: [{ name: 'Ghost', actor_id: player.id }],
+  });
+  check('paste refuses an unresolvable actor_id (404)', badLinkPaste.status === 404, `got ${badLinkPaste.status}`);
 
   // spec validation
   const badSpec = await gm.req('POST', `${scenePath}/tokens/copy`, { tokens: [{ name: 'x', x: 'NaN' }] });

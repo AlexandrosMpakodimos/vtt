@@ -268,6 +268,196 @@ function validateBool(v, field) {
   return { error: `${field} must be true or false` };
 }
 
+// --- actors, items & inventory (M4) ---
+
+// The uuid shape check, exported so the M4 routes do not define a fourth copy of
+// this regex. campaignAuth.js and routes/scenes.js keep their own local copies:
+// they work and rewriting them would be churn for no behavioural gain, but new
+// code has one place to import from.
+const validUuid = (v) => typeof v === 'string' && UUID_RE.test(v);
+
+// A bounded INTEGER. Built on finiteInRange so it inherits the post-audit
+// numeric path that rejects [[5]], [5], true and the rest of the coercion
+// smuggling found by break-canvas.js — then additionally requires wholeness,
+// because an actor cannot have 12.4 hit points or 3.5 levels.
+function validateInt(v, { min, max, field }) {
+  const r = finiteInRange(v, { min, max, field });
+  if (r.error) return r;
+  if (!Number.isInteger(r.value)) return { error: `${field} must be a whole number` };
+  return { value: r.value };
+}
+
+// Bounds for the actor's numeric columns. Every one of these is a BOUND, not a
+// RULE: the server refuses absurd input and then never looks at the value again.
+// Nothing here is enforced, derived or auto-applied. In particular:
+//   - hp_current may go NEGATIVE and is never clamped to hp_max. Clamping is a
+//     rule, and "dead" is a display state the client derives from hp_current<=0.
+//   - the death-save counters are bounded generously rather than at 3, so that
+//     the bound cannot be mistaken for the 5e three-strikes rule. The server
+//     never acts on them: no auto-stabilisation, no auto-death.
+//   - level tops out at 20 as an abuse bound, not as a progression cap.
+const ACTOR_INT_FIELDS = {
+  level:                { min: 1,     max: 20 },
+  hp_current:           { min: -9999, max: 9999 },
+  hp_max:               { min: 0,     max: 9999 },
+  hp_temp:              { min: 0,     max: 9999 },
+  armor_class:          { min: 0,     max: 99 },
+  speed:                { min: 0,     max: 999 },
+  strength:             { min: 1,     max: 30 },
+  dexterity:            { min: 1,     max: 30 },
+  constitution:         { min: 1,     max: 30 },
+  intelligence:         { min: 1,     max: 30 },
+  wisdom:               { min: 1,     max: 30 },
+  charisma:             { min: 1,     max: 30 },
+  death_save_successes: { min: 0,     max: 10 },
+  death_save_failures:  { min: 0,     max: 10 },
+};
+
+function validateActorInt(field, v) {
+  const spec = ACTOR_INT_FIELDS[field];
+  if (!spec) return { error: `${field} is not a numeric actor field` };
+  return validateInt(v, { min: spec.min, max: spec.max, field });
+}
+
+// A short optional free-text field (actor class / race). Not allow-listed: the
+// system is D&D-INSPIRED, not 5e, so there is no canonical class list to check
+// against and inventing one would be exactly the rules-system creep this project
+// excludes. Stored as text, rendered via textContent, never as markup.
+function validateShortText(v, field, max = 50) {
+  if (v === undefined || v === null || v === '') return { value: null };
+  if (typeof v !== 'string') return { error: `${field} must be text` };
+  const s = v.trim();
+  if (s.length > max) return { error: `${field} is too long (max ${max} characters)` };
+  return { value: s || null };
+}
+
+// Creature size category. Allow-listed against the SAME six 5e size names the
+// token size presets already use (routes/scenes.js SIZE_PRESETS), because this
+// column's job is to supply a token's default footprint when a token is placed
+// from an actor. Matched case-insensitively, stored Title-cased to match the
+// column's 'Medium' default in the schema.
+const ACTOR_SIZES = ['Tiny', 'Small', 'Medium', 'Large', 'Huge', 'Gargantuan'];
+function validateActorSize(v) {
+  if (v === undefined || v === null || v === '') return { value: 'Medium' };
+  if (typeof v !== 'string') return { error: 'size must be text' };
+  const wanted = v.trim().toLowerCase();
+  const hit = ACTOR_SIZES.find((s) => s.toLowerCase() === wanted);
+  if (!hit) return { error: `size must be one of: ${ACTOR_SIZES.join(', ')}` };
+  return { value: hit };
+}
+
+// Long-form free text (actor notes, item description).
+function validateLongText(v, field, max = 5000) {
+  if (v === undefined || v === null || v === '') return { value: null };
+  if (typeof v !== 'string') return { error: `${field} must be text` };
+  const s = v.trim();
+  if (s.length > max) return { error: `${field} is too long (max ${max} characters)` };
+  return { value: s || null };
+}
+
+// A JSONB overflow blob (actors.data, items.properties).
+//
+// This is the one input in the project with no natural shape to validate — that
+// is the entire point of an overflow bucket, and it is exactly why it needs
+// bounds instead. actors.data is PLAYER-WRITABLE (it holds their currency, spell
+// slots and proficiencies), so without a cap a player could POST a 40 MB
+// document, or a 10,000-deep nested structure that costs more to parse than to
+// send. The row caps elsewhere in this project bound how MANY rows exist; this
+// bounds how big ONE of them can be — the same argument as MAX_FOG_POINTS, and
+// the same reason that bound mattered more than the region cap.
+//
+// Bounds are chosen, not measured: a real character sheet's overflow is a few
+// hundred bytes.
+const MAX_JSON_BYTES = 8192;
+const MAX_JSON_DEPTH = 6;
+const MAX_JSON_KEYS = 200;
+
+function jsonShapeError(v, field, depth = 1) {
+  if (depth > MAX_JSON_DEPTH) return `${field} is nested too deeply (max ${MAX_JSON_DEPTH})`;
+  if (Array.isArray(v)) {
+    for (const el of v) {
+      const e = jsonShapeError(el, field, depth + 1);
+      if (e) return e;
+    }
+    return null;
+  }
+  if (v && typeof v === 'object') {
+    for (const k of Object.keys(v)) {
+      const e = jsonShapeError(v[k], field, depth + 1);
+      if (e) return e;
+    }
+    return null;
+  }
+  return null;
+}
+
+function countJsonKeys(v) {
+  if (Array.isArray(v)) return v.reduce((n, el) => n + countJsonKeys(el), 0);
+  if (v && typeof v === 'object') {
+    return Object.keys(v).reduce((n, k) => n + 1 + countJsonKeys(v[k]), 0);
+  }
+  return 0;
+}
+
+function validateJsonBlob(v, field) {
+  if (v === undefined || v === null || v === '') return { value: {} };
+  // Must be a plain object. An array would be valid JSON but changes what the
+  // column means, and node-pg turns a bare JS array into a Postgres array
+  // literal rather than jsonb (the trap M3 hit with fog points), so refusing it
+  // here avoids a confusing 500 later.
+  if (typeof v !== 'object' || Array.isArray(v)) {
+    return { error: `${field} must be a JSON object` };
+  }
+  const shape = jsonShapeError(v, field);
+  if (shape) return { error: shape };
+  if (countJsonKeys(v) > MAX_JSON_KEYS) {
+    return { error: `${field} has too many keys (max ${MAX_JSON_KEYS})` };
+  }
+  let serialised;
+  try {
+    serialised = JSON.stringify(v);
+  } catch {
+    // Circular structures cannot arrive over JSON, but a defensive catch keeps
+    // a malformed body from throwing inside the route.
+    return { error: `${field} is not serialisable` };
+  }
+  if (serialised === undefined) return { error: `${field} must be a JSON object` };
+  if (Buffer.byteLength(serialised, 'utf8') > MAX_JSON_BYTES) {
+    return { error: `${field} is too large (max ${MAX_JSON_BYTES} bytes)` };
+  }
+  return { value: v };
+}
+
+// Item category. A fixed app-logic allow-list (no DB CHECK), per the house
+// convention stated on fog `type`.
+const ITEM_TYPES = ['weapon', 'armor', 'consumable', 'misc'];
+function validateItemType(v) {
+  const t = typeof v === 'string' ? v.trim().toLowerCase() : '';
+  if (!ITEM_TYPES.includes(t)) {
+    return { error: `type must be one of: ${ITEM_TYPES.join(', ')}` };
+  }
+  return { value: t };
+}
+
+// Item weight. Fractional (a dagger is 1 lb, a coin is 0.02), non-negative, and
+// bounded. Weight is STORED AND DISPLAYED ONLY — encumbrance is cut by name in
+// database-decisions.md, so no movement penalty is ever derived from it.
+function validateItemWeight(v) {
+  if (v === undefined || v === null || v === '') return { value: 0 };
+  return finiteInRange(v, { min: 0, max: 10000, field: 'weight' });
+}
+
+// A stack size in a bag.
+function validateQuantity(v) {
+  if (v === undefined || v === null || v === '') return { value: 1 };
+  return validateInt(v, { min: 1, max: 9999, field: 'quantity' });
+}
+
+function validateSortOrder(v) {
+  if (v === undefined || v === null || v === '') return { value: 0 };
+  return validateInt(v, { min: 0, max: 9999, field: 'sort_order' });
+}
+
 module.exports = {
   normalizeEmail, validateEmail, validateUsername, validatePassword,
   validateCampaignName, validateCampaignDescription, validateImageUrl,
@@ -275,4 +465,9 @@ module.exports = {
   validateSceneName, validateTokenName, validateGridCoord, validateTokenSize,
   validateSceneDimension, validateTokenIdList, validateBool,
   validateFogType, validateFogPoints, FOG_TYPES, MAX_FOG_POINTS,
+  validUuid, validateInt, validateActorInt, ACTOR_INT_FIELDS,
+  validateShortText, validateLongText, validateActorSize, ACTOR_SIZES,
+  validateJsonBlob, MAX_JSON_BYTES, MAX_JSON_DEPTH, MAX_JSON_KEYS,
+  validateItemType, ITEM_TYPES, validateItemWeight,
+  validateQuantity, validateSortOrder,
 };

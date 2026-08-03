@@ -107,31 +107,57 @@ const waitFor = (s, ev, ms=900) => new Promise((r) => { const t=setTimeout(()=>{
   // ============ API3: BOPLA — property level ============
   // Forge server-owned fields through every write path.
   r = await gm.req('POST', `${vPath}/tokens`, {
-    name: 'Forge', created_by: player.id, actor_id: player.id, scene_id: aScene.id,
+    name: 'Forge', created_by: player.id, scene_id: aScene.id,
     id: '00000000-0000-0000-0000-000000000000', locked: true, hidden: true,
   });
   ok('BOPLA: placement ignores forged created_by', r.data.token.created_by === gm.id, r.data.token.created_by);
-  ok('BOPLA: placement ignores forged actor_id', r.data.token.actor_id === null);
+  ok('BOPLA: placement leaves actor_id null when none was asked for', r.data.token.actor_id === null);
   ok('BOPLA: placement ignores forged scene_id', r.data.token.scene_id === vScene.id);
   ok('BOPLA: placement ignores forged id', r.data.token.id !== '00000000-0000-0000-0000-000000000000');
   const forgedTok = r.data.token;
 
+  // M4 changed actor_id from a server-owned column that was silently forced NULL
+  // into a VALIDATED input field. The mass-assignment guarantee is unchanged —
+  // the value is still server-resolved and never taken from the body — but an
+  // unresolvable id now REFUSES the write rather than quietly producing an
+  // unlinked token. Refusing is the stricter outcome and the honest one.
+  r = await gm.req('POST', `${vPath}/tokens`, { name: 'Ghost', actor_id: player.id });
+  ok('BOPLA: unresolvable actor_id refused on placement (404)', r.status === 404, `got ${r.status}`);
+  const ghostRows = await knex('tokens').where({ scene_id: vScene.id, name: 'Ghost' });
+  ok('BOPLA: the refused placement created nothing', ghostRows.length === 0, `${ghostRows.length} rows`);
+
   // PATCH must not let a GM rewrite immutable identity fields.
   r = await gm.req('PATCH', `${vPath}/tokens/${forgedTok.id}`, {
-    created_by: player.id, scene_id: aScene.id, actor_id: player.id, id: vTok.id, size: 'large',
+    created_by: player.id, scene_id: aScene.id, id: vTok.id, size: 'large',
   });
   const afterPatch = await knex('tokens').where({ id: forgedTok.id }).first();
   ok('BOPLA: PATCH cannot rewrite created_by', afterPatch.created_by === gm.id, afterPatch.created_by);
   ok('BOPLA: PATCH cannot move a token to another scene', afterPatch.scene_id === vScene.id);
-  ok('BOPLA: PATCH cannot set actor_id', afterPatch.actor_id === null);
+  ok('BOPLA: PATCH left actor_id null', afterPatch.actor_id === null);
+
+  r = await gm.req('PATCH', `${vPath}/tokens/${forgedTok.id}`, { actor_id: player.id });
+  ok('BOPLA: PATCH refuses an unresolvable actor_id (404)', r.status === 404, `got ${r.status}`);
+  const afterBadLink = await knex('tokens').where({ id: forgedTok.id }).first();
+  ok('BOPLA: the refused PATCH changed nothing', afterBadLink.actor_id === null);
 
   // Paste specs must not carry privileged fields through.
   r = await gm.req('POST', `${vPath}/tokens/copy`, {
-    tokens: [{ name: 'P', created_by: player.id, actor_id: player.id, scene_id: aScene.id, locked: true }],
+    tokens: [{ name: 'P', created_by: player.id, scene_id: aScene.id, locked: true }],
   });
   ok('BOPLA: paste ignores forged created_by', r.data.tokens[0].created_by === gm.id);
   ok('BOPLA: paste ignores forged scene_id', r.data.tokens[0].scene_id === vScene.id);
   ok('BOPLA: paste forces locked=false', r.data.tokens[0].locked === false);
+
+  // All-or-nothing. Paste validates every spec BEFORE touching the DB, so one
+  // bad spec must reject the whole request rather than half-applying it — the
+  // bad spec is deliberately placed in the MIDDLE, so a route that validated
+  // lazily would already have written Good1 by the time it reached it.
+  r = await gm.req('POST', `${vPath}/tokens/copy`, {
+    tokens: [{ name: 'Good1' }, { name: 'Bad', actor_id: player.id }, { name: 'Good2' }],
+  });
+  ok('BOPLA: one unresolvable actor_id rejects the whole paste (404)', r.status === 404, `got ${r.status}`);
+  const partial = await knex('tokens').where({ scene_id: vScene.id }).whereIn('name', ['Good1', 'Good2']);
+  ok('BOPLA: no token from the rejected paste was created', partial.length === 0, `${partial.length} rows`);
 
   // ============ Hidden-token confidentiality ============
   await gm.req('PATCH', `${vPath}/tokens/${vTok.id}`, { hidden: true });
@@ -214,19 +240,56 @@ const waitFor = (s, ev, ms=900) => new Promise((r) => { const t=setTimeout(()=>{
   ok('DoS: oversized img_url rejected', r.status === 400, `got ${r.status}`);
 
   // AMPLIFICATION: how many tokens can one authenticated GM create per request,
-  // and is there any rate limit on repeating it?
+  // and does the per-scene ceiling ADMIT its full quota before it stops?
+  //
+  // Both working scenes are created HERE, before the scene-creation flood below
+  // exhausts the campaign's 100-scene cap. The earlier version created the
+  // parallel-race scene AFTER that flood, so it received a 409, `capScene` was
+  // undefined, and an `if (capScene)` guard skipped the entire 40-parallel-paste
+  // probe with no output at all — a probe that disappears instead of failing.
+  const floodScene = (await gm.req('POST', `/api/campaigns/${victim.id}/scenes`, { name: 'Flood' })).data.scene;
+  const capScene = (await gm.req('POST', `/api/campaigns/${victim.id}/scenes`, { name: 'CapRace' })).data.scene;
+  ok('setup: both cap-probe scenes were created', !!floodScene && !!capScene,
+     'without them the cap probes below cannot run — do not let this skip silently');
+  const floodPath = `/api/campaigns/${victim.id}/scenes/${floodScene.id}`;
+
+  // Runs on its own scene. The earlier version flooded vScene, which already
+  // held 3 tokens from previous probes, so the first 500-spec paste asked for
+  // 503, was refused, and the loop broke with created = 0 — while the assertion
+  // (`total <= 500`) passed on a scene that had never been flooded. A CEILING
+  // assertion cannot tell "the cap works" from "the write path is broken". This
+  // file already records that lesson for the player-cap probe below; it is
+  // applied here now, and the quota is asserted EXACTLY.
   const t0 = Date.now();
   let created = 0;
-  for (let i = 0; i < 12; i++) {
-    const res = await gm.req('POST', `${vPath}/tokens/copy`,
-      { tokens: Array.from({ length: 500 }, (_, k) => ({ name: 'flood' + k, x: k % 50, y: (k / 50) | 0 })) });
-    if (res.status === 201) created += res.data.tokens.length; else break;
+  for (let i = 0; i < 12 && created < 500; i++) {
+    const room = 500 - created;
+    const res = await gm.req('POST', `${floodPath}/tokens/copy`,
+      { tokens: Array.from({ length: Math.min(500, room) }, (_, k) => ({ name: 'flood' + k, x: k % 50, y: (k / 50) | 0 })) });
+    if (res.status !== 201) break;
+    created += res.data.tokens.length;
   }
   const elapsed = Date.now() - t0;
-  const total = await knex('tokens').where({ scene_id: vScene.id }).count({ n: '*' }).first();
-  ok('DoS: token flood is capped per scene', created < 6000 && Number(total.n) <= 500,
-     `created ${created} tokens in ${elapsed}ms; scene now holds ${total.n}`);
-  note('scene token count after flood', `${total.n} rows (cap is 500)`);
+  const floodTotal = Number((await knex('tokens').where({ scene_id: floodScene.id }).count({ n: '*' }).first()).n);
+  ok('DoS: the scene admits EXACTLY its 500-token quota', floodTotal === 500, `scene holds ${floodTotal}`);
+  const overflow = await gm.req('POST', `${floodPath}/tokens`, { name: 'one too many' });
+  ok('DoS: the token past the cap is refused (409)', overflow.status === 409, `got ${overflow.status}`);
+  const afterOverflow = Number((await knex('tokens').where({ scene_id: floodScene.id }).count({ n: '*' }).first()).n);
+  ok('DoS: the refused token was not created', afterOverflow === 500, `${afterOverflow} rows`);
+  note('flood timing', `${created} tokens created in ${elapsed}ms; scene holds ${floodTotal} (cap 500)`);
+
+  // The cap must hold under PARALLEL load too (standing constraint: atomic,
+  // never read-then-write). Fresh scene, 40 concurrent 20-token pastes = 800
+  // attempted against a 500 ceiling. This is the probe that exercises
+  // withAtomicCap's INSERT path under contention; it asserts the exact landing
+  // count, not a ceiling, so a path that refused everything would fail here.
+  const capPath = `/api/campaigns/${victim.id}/scenes/${capScene.id}`;
+  await Promise.all(Array.from({ length: 40 }, (_, i) =>
+    gm.req('POST', `${capPath}/tokens/copy`,
+      { tokens: Array.from({ length: 20 }, (_, k) => ({ name: `p${i}-${k}` })) })));
+  const capCount = Number((await knex('tokens').where({ scene_id: capScene.id }).count({ n: '*' }).first()).n);
+  ok('TOCTOU: scene token cap lands on EXACTLY 500 under 40 parallel pastes (800 attempted)',
+    capCount === 500, `cap=500 but DB has ${capCount}`);
 
   // Scene creation flood — any cap?
   // Push past the documented cap (100) to prove the ceiling actually stops it.
@@ -236,22 +299,9 @@ const waitFor = (s, ev, ms=900) => new Promise((r) => { const t=setTimeout(()=>{
     if (res.status === 201) scenes++; else { sceneStop = res.status; break; }
   }
   const sceneRows = await knex('scenes').where({ campaign_id: victim.id }).count({ n: '*' }).first();
-  ok('DoS: scene creation is capped per campaign',
-    Number(sceneRows.n) <= 100 && sceneStop === 409,
+  ok('DoS: scene creation stops on EXACTLY the 100-scene cap',
+    Number(sceneRows.n) === 100 && sceneStop === 409,
     `campaign holds ${sceneRows.n} scenes; stopped with ${sceneStop || 'no rejection'}`);
-
-  // The caps must hold under PARALLEL load too (standing constraint: atomic,
-  // never read-then-write). Fresh scene, 40 concurrent single placements.
-  const capScene = (await gm.req('POST', `/api/campaigns/${victim.id}/scenes`, { name: 'CapRace' })).data.scene;
-  if (capScene) {
-    const capPath = `/api/campaigns/${victim.id}/scenes/${capScene.id}`;
-    await Promise.all(Array.from({ length: 40 }, (_, i) =>
-      gm.req('POST', `${capPath}/tokens/copy`,
-        { tokens: Array.from({ length: 20 }, (_, k) => ({ name: `p${i}-${k}` })) })));
-    const capCount = await knex('tokens').where({ scene_id: capScene.id }).count({ n: '*' }).first();
-    ok('TOCTOU: scene token cap holds under 40 parallel pastes (800 attempted)',
-      Number(capCount.n) <= 500, `cap=500 but DB has ${capCount.n}`);
-  }
 
   // ============ TOCTOU: the player 1-token cap under parallel load ============
   const victim2 = (await gm.req('POST', '/api/campaigns', { name: 'Race', is_public: true })).data.campaign;

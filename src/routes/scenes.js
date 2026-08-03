@@ -24,6 +24,15 @@ const {
   validateFogType, validateFogPoints,
 } = require('../services/validators');
 const { contentWriteLimiter } = require('../middleware/rateLimit');
+// Moved to services/ in M4: actors, items and inventory attunement now share
+// this primitive, and leaving it here would create a require cycle between the
+// scene and actor routers. Behaviour is unchanged for every call site below.
+const { withAtomicCap } = require('../services/atomicCap');
+// M4: a token may now be LINKED to an actor. The actor router owns the
+// projection (what a player may see of a character), and this router imports it
+// rather than reimplementing it — one definition, so the scene load and the
+// actor endpoints cannot disagree about what an NPC discloses.
+const { shapeActorFor, loadActorInCampaign } = require('./actors');
 
 // mergeParams: this router is mounted at .../:id/scenes, and :id (the campaign)
 // lives on the parent router's params.
@@ -75,32 +84,6 @@ const MAX_SCENES_PER_CAMPAIGN = 100; // a long campaign is tens of maps
 // is a small number of requests that poisons every future scene load, and no row
 // cap would catch it. Both numbers are chosen as sane abuse bounds, not measured.
 const MAX_FOG_REGIONS_PER_SCENE = 200;
-
-// Run a count-then-write as one serialisable transaction with bounded retry, so
-// N concurrent requests cannot all read "count < MAX" before any of them commits.
-// `capError` is thrown (and surfaced as 409) when the cap is already reached.
-async function withAtomicCap({ table, where, max, capMessage, insert }) {
-  let attempt = 0;
-  // eslint-disable-next-line no-constant-condition
-  while (true) {
-    try {
-      return await knex.transaction(async (trx) => {
-        await trx.raw('SET TRANSACTION ISOLATION LEVEL SERIALIZABLE');
-        const cur = await trx(table).where(where).count({ n: '*' }).first();
-        const have = Number(cur.n);
-        const adding = Array.isArray(insert) ? insert.length : 1;
-        if (have + adding > max) {
-          const e = new Error(capMessage); e.capExceeded = true; e.have = have; throw e;
-        }
-        return await trx(table).insert(insert).returning('*');
-      });
-    } catch (err) {
-      if (err.capExceeded) throw err;
-      if (err.code === '40001' && attempt < 5) { attempt += 1; continue; }
-      throw err;
-    }
-  }
-}
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const validUuid = (v) => typeof v === 'string' && UUID_RE.test(v);
@@ -208,6 +191,52 @@ async function loadFogInScene(fogId, sceneId) {
 function tokenMovePolicy({ campaign, token, userId }) {
   if (campaign.owner_id === userId) return true;
   return token.created_by === userId;
+}
+
+// M4 — resolve a body-supplied actor_id into an actor this user may put on the
+// board, or an error. Used by placement, PATCH and paste, so the rule exists in
+// one place across all three write paths.
+//
+// Until M4 every one of those paths forced actor_id to NULL, and three suites
+// assert exactly that. Relaxing it is a deliberate, narrow weakening of an
+// existing hardening — pasting five goblin tokens that all point at one Goblin
+// actor is the entire point of linking — so the replacement guarantee has to be
+// stated precisely:
+//
+//   BEFORE: actor_id is always NULL.
+//   AFTER : actor_id is NULL unless the body named an actor that (a) exists,
+//           (b) belongs to THIS campaign, and (c) the caller may put on the
+//           board. A forged id from another campaign is still refused.
+//
+// (c) differs by role, and the reason is the same one behind the per-player
+// token cap: the GM runs the board and may place any character or monster; a
+// player may only place a character they control. Without that a player could
+// place the GM's dragon, or link their token to an NPC and — since a linked
+// token derives its bar from the actor — read hit points the projection is
+// specifically designed to withhold.
+//
+// A player aiming at an actor they do not control gets 404, not 403. The M4
+// audit note predicted this coupling exactly: the 403 was tolerable only while
+// GET /actors listed every NPC to players, because then the refusal confirmed
+// nothing they could not already read. V1 removed that listing, so a 403 here
+// would have become the enumeration oracle the list no longer offers — probe the
+// placement endpoint with candidate ids and the GM's prep answers back.
+async function resolveTokenActor({ req, rawActorId }) {
+  if (rawActorId === undefined || rawActorId === null || rawActorId === '') {
+    return { actor: null };
+  }
+  if (!validUuid(rawActorId)) return { error: 'actor_id must be a valid id' };
+
+  const actor = await loadActorInCampaign(rawActorId, req.campaign.id);
+  // 404-shaped refusal rather than "wrong campaign": a member of campaign A
+  // must not be able to confirm that an actor id exists in campaign B.
+  if (!actor) return { error: 'actor not found' };
+
+  const isOwner = req.campaign.owner_id === req.user.id;
+  if (!isOwner && actor.user_id !== req.user.id) {
+    return { error: 'actor not found' };
+  }
+  return { actor };
 }
 
 // ---- scenes ----
@@ -351,10 +380,36 @@ router.get('/:sceneId', requireMember, async (req, res, next) => {
       .where({ scene_id: scene.id })
       .orderBy('created_at', 'asc');
 
+    // M4: the characters behind the tokens. Additive — pre-M4 clients that
+    // ignore this key are unaffected.
+    //
+    // The list is built from the ALREADY-FILTERED tokens above, not from the
+    // campaign's full actor table, and that ordering is doing real work: a
+    // hidden token has been removed from `tokens` before this line, so a player
+    // never receives even the projected row of a character whose token the GM
+    // is keeping off their board. Confidentiality falls out of the filtering
+    // that was already there rather than needing a second rule.
+    //
+    // The bar on an actor-linked token is DERIVED from these rows
+    // (hp_current / hp_max), which is why tokens.bar1_* stays untouched for
+    // linked tokens and stays meaningful only for unlinked ones. A player's copy
+    // of an NPC carries no hit points at all, so a monster token simply renders
+    // no bar for them — no per-token toggle needed.
+    const actorIds = [...new Set(tokens.map((t) => t.actor_id).filter(Boolean))];
+    let actors = [];
+    if (actorIds.length) {
+      const rows = await knex('actors')
+        .whereIn('id', actorIds)
+        .andWhere({ campaign_id: req.campaign.id })
+        .orderBy('created_at', 'asc');
+      actors = rows.map((a) => shapeActorFor(isOwner, a));
+    }
+
     return res.json({
       scene: publicScene(scene),
       tokens: tokens.map(publicToken),
       fog: fog.map(publicFog),
+      actors,
     });
   } catch (err) {
     return next(err);
@@ -433,6 +488,17 @@ router.post('/:sceneId/tokens', requireMember, async (req, res, next) => {
     const body = req.body || {};
     const isOwner = req.campaign.owner_id === req.user.id;
 
+    // M4: an optional actor link. Resolved BEFORE the other fields so its name,
+    // portrait and size can supply their defaults below.
+    const linked = await resolveTokenActor({ req, rawActorId: body.actor_id });
+    if (linked.error) {
+      // Always 404: resolveTokenActor no longer distinguishes "does not exist"
+      // from "not yours" (see its header — closing the enumeration oracle V1
+      // opened).
+      return res.status(404).json({ error: linked.error });
+    }
+    const actor = linked.actor;
+
     const name = validateTokenName(body.name);
     if (name.error) return res.status(400).json({ error: name.error });
 
@@ -466,16 +532,38 @@ router.post('/:sceneId/tokens', requireMember, async (req, res, next) => {
       hidden = h.value;
     }
 
+    // A linked token INHERITS the character's name, portrait and footprint when
+    // the request does not override them — placing a Goblin actor should give a
+    // token called "Goblin" wearing the goblin's picture, not an unnamed square.
+    // An explicit body value still wins, so a GM can drop the same actor twice
+    // as "Guard A" and "Guard B". actors.size maps through the SAME 5e size
+    // presets the token router already uses (Large -> 2x2), which is the job
+    // that column was described as having in SCHEMA_REFERENCE.
+    let tokenName = name.value;
+    let tokenImg = img.value;
+    let tokenW = width.value;
+    let tokenH = height.value;
+    if (actor) {
+      if (body.name === undefined) tokenName = actor.name;
+      if (body.img_url === undefined) tokenImg = actor.img_url;
+      const preset = SIZE_PRESETS[String(actor.size || '').toLowerCase()];
+      if (preset !== undefined) {
+        if (body.width === undefined) tokenW = preset;
+        if (body.height === undefined) tokenH = preset;
+      }
+    }
+
     const insertRow = {
       scene_id: scene.id,
-      actor_id: null,
+      // Server-resolved, never the raw body value: a forged id was refused above.
+      actor_id: actor ? actor.id : null,
       created_by: req.user.id,
-      name: name.value,
-      img_url: img.value,
+      name: tokenName,
+      img_url: tokenImg,
       x: x.value,
       y: y.value,
-      width: width.value,
-      height: height.value,
+      width: tokenW,
+      height: tokenH,
       hidden,
     };
 
@@ -539,10 +627,25 @@ router.post('/:sceneId/tokens', requireMember, async (req, res, next) => {
     // scene load and on move. The scene-aware helper then applies the second
     // gate: players hear nothing at all about a non-active scene.
     const sockets = req.app.get('campaignSockets');
+    // A linked token arrives on a client that may never have seen the actor —
+    // a GM placing a monster for the first time. Send the actor FIRST, shaped per
+    // tier, so no client ever holds a token pointing at a character it does not
+    // have. This reuses the actor:updated event rather than inventing a second
+    // one: same payload shape, same two-tier projection, one handler client-side.
+    if (sockets && actor) {
+      await sockets.broadcastToOwner(req.campaign.id, 'actor:updated', shapeActorFor(true, actor));
+      // Only players who may see this scene need it, and only if the token
+      // itself is reaching them — a hidden token discloses nothing.
+      if (!shaped.hidden) {
+        await sockets.broadcastScenePlayers(
+          req.campaign.id, scene.id, 'actor:updated', shapeActorFor(false, actor),
+        );
+      }
+    }
     if (shaped.hidden) await sockets?.broadcastToOwner(req.campaign.id, 'token:created', shaped);
     else await sockets?.broadcastScene(req.campaign.id, scene.id, 'token:created', shaped);
 
-    return res.status(201).json({ token: shaped });
+    return res.status(201).json({ token: shaped, actor: actor ? shapeActorFor(true, actor) : null });
   } catch (err) {
     return next(err);
   }
@@ -596,6 +699,13 @@ router.delete('/:sceneId/tokens/:tokenId', requireMember, async (req, res, next)
 //   height  — explicit grid-unit height (alternative to size)
 //   hidden  — hide/show from players
 //   locked  — lock/unlock (a locked token refuses moves; see socket.js)
+//   actor_id — link this token to a character, or null to unlink it (M4)
+//
+// Linking is available here as well as at placement because a GM populates a map
+// before deciding what everything is: drop the squares, then say which one is
+// the boss. Unlinking (null) leaves the token on the board as a plain marker —
+// the same end state the ON DELETE SET NULL foreign key produces when the actor
+// itself is deleted.
 router.patch('/:sceneId/tokens/:tokenId', requireOwner, async (req, res, next) => {
   try {
     const scene = await loadSceneInCampaign(req.params.sceneId, req.campaign.id);
@@ -634,6 +744,20 @@ router.patch('/:sceneId/tokens/:tokenId', requireOwner, async (req, res, next) =
       }
     }
 
+    // Link / unlink. This route is requireOwner, so resolveTokenActor's per-role
+    // branch always takes the GM path; it is still routed through the shared
+    // resolver so the campaign-scoping check has exactly one implementation.
+    let linkedActor = null;
+    if (body.actor_id !== undefined) {
+      const linked = await resolveTokenActor({ req, rawActorId: body.actor_id });
+      if (linked.error) {
+        // Always 404 — see resolveTokenActor's header.
+        return res.status(404).json({ error: linked.error });
+      }
+      linkedActor = linked.actor;
+      updates.actor_id = linked.actor ? linked.actor.id : null;
+    }
+
     if (body.hidden !== undefined) {
       const b = validateBool(body.hidden, 'hidden');
       if (b.error) return res.status(400).json({ error: b.error });
@@ -657,6 +781,16 @@ router.patch('/:sceneId/tokens/:tokenId', requireOwner, async (req, res, next) =
     // learn its state; players must not receive it. If it just became visible, a
     // full 'token:created' to players re-materialises it on their canvas.
     const sockets = req.app.get('campaignSockets');
+    if (sockets && linkedActor) {
+      // Newly linked: recipients need the character before the token update
+      // that references it.
+      await sockets.broadcastToOwner(req.campaign.id, 'actor:updated', shapeActorFor(true, linkedActor));
+      if (!row.hidden) {
+        await sockets.broadcastScenePlayers(
+          req.campaign.id, scene.id, 'actor:updated', shapeActorFor(false, linkedActor),
+        );
+      }
+    }
     if (sockets) {
       const becameHidden = row.hidden === true;
       const becameVisible = token.hidden === true && row.hidden === false;
@@ -730,10 +864,20 @@ router.post('/:sceneId/tokens/batch-delete', requireOwner, async (req, res, next
 // gone. Holding the data client-side is what makes cut work at all.
 //
 // Trusting client-supplied data here is safe because nothing is trusted: every
-// field is validated exactly as it is on placement, `created_by` and `scene_id`
-// are set server-side (never from the body), and actor_id is forced NULL. The
-// worst a hostile client can do is create tokens it is already allowed to create
-// via the normal placement endpoint.
+// field is validated exactly as it is on placement, and `created_by` and
+// `scene_id` are set server-side, never from the body. The worst a hostile
+// client can do is create tokens it is already allowed to create via the normal
+// placement endpoint.
+//
+// M4 CHANGED ONE THING HERE, and it is worth recording because it relaxes an
+// existing hardening. Until now actor_id was forced NULL on this path, which
+// meant copying a linked token produced an unlinked one — copy/paste and
+// duplicate are how a GM populates an encounter, so pasting five goblins that
+// all point at the one Goblin actor is precisely what the feature is for.
+// actor_id is now taken from the spec and put through resolveTokenActor(), the
+// SAME resolver placement uses: it must be a real actor in THIS campaign that
+// this caller may place. A forged id from another campaign is still refused, so
+// what changed is "always NULL" -> "NULL unless validated", not "trusted".
 router.post('/:sceneId/tokens/copy', requireOwner, async (req, res, next) => {
   try {
     const scene = await loadSceneInCampaign(req.params.sceneId, req.campaign.id);
@@ -747,6 +891,9 @@ router.post('/:sceneId/tokens/copy', requireOwner, async (req, res, next) => {
     // Validate every field of every spec before touching the DB — one bad spec
     // rejects the whole paste rather than half-applying it.
     const rows = [];
+    // Distinct actors referenced by this paste, so the broadcast below sends
+    // each one once rather than once per pasted token.
+    const linkedActors = new Map();
     for (const spec of specs) {
       if (!spec || typeof spec !== 'object') return res.status(400).json({ error: 'invalid token spec' });
 
@@ -770,11 +917,21 @@ router.post('/:sceneId/tokens/copy', requireOwner, async (req, res, next) => {
         hidden = b.value;
       }
 
-      // Hand-listed columns only. scene_id / created_by / actor_id come from the
-      // server, never from the body — a forged value in the spec is ignored.
+      // Same resolver as placement. One bad spec rejects the whole paste rather
+      // than half-applying it, consistent with every other field here.
+      const linked = await resolveTokenActor({ req, rawActorId: spec.actor_id });
+      if (linked.error) {
+        // Always 404 — see resolveTokenActor's header.
+        return res.status(404).json({ error: linked.error });
+      }
+      if (linked.actor) linkedActors.set(linked.actor.id, linked.actor);
+
+      // Hand-listed columns only. scene_id / created_by come from the server,
+      // never from the body; actor_id is the RESOLVED actor, not the raw spec
+      // value — a forged or foreign id was refused above.
       rows.push({
         scene_id: scene.id,
-        actor_id: null,
+        actor_id: linked.actor ? linked.actor.id : null,
         created_by: req.user.id,
         name: name.value,
         img_url: img.value,
@@ -807,6 +964,17 @@ router.post('/:sceneId/tokens/copy', requireOwner, async (req, res, next) => {
 
     const sockets = req.app.get('campaignSockets');
     if (sockets) {
+      // Actors first, once each, so no client receives a token pointing at a
+      // character it does not yet hold.
+      const anyVisible = shaped.some((t) => !t.hidden);
+      for (const a of linkedActors.values()) {
+        await sockets.broadcastToOwner(req.campaign.id, 'actor:updated', shapeActorFor(true, a));
+        if (anyVisible) {
+          await sockets.broadcastScenePlayers(
+            req.campaign.id, scene.id, 'actor:updated', shapeActorFor(false, a),
+          );
+        }
+      }
       for (const t of shaped) {
         if (t.hidden) sockets.broadcastToOwner(req.campaign.id, 'token:created', t);
         else sockets.broadcastScene(req.campaign.id, scene.id, 'token:created', t);

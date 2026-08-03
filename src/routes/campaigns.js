@@ -9,6 +9,8 @@ const {
 } = require('../services/validators');
 
 const { router: sceneRoutes } = require('./scenes');
+const { router: actorRoutes } = require('./actors');
+const { router: itemRoutes } = require('./items');
 
 const router = express.Router();
 
@@ -21,6 +23,13 @@ router.use(requireAuth);
 // as req.params.id via mergeParams, and the requireMember/requireOwner guards
 // inside scenes.js resolve that campaign exactly as the campaign routes do.
 router.use('/:id/scenes', sceneRoutes);
+
+// Actors (characters) + inventory, and the item catalogue. Same reasoning as the
+// scene mount above: they inherit requireAuth, receive :id via mergeParams, and
+// resolve the campaign through the identical requireMember/requireOwner guards,
+// so there is one definition of campaign membership across every game resource.
+router.use('/:id/actors', actorRoutes);
+router.use('/:id/items', itemRoutes);
 
 // Abuse-prevention caps, enforced in application logic (consistent with the
 // attunement cap). NOT memory protection: campaigns are rows in Postgres, not

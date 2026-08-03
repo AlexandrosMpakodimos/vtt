@@ -5,10 +5,19 @@
   "main": "src/server.js",
   "scripts": {
     "dev": "nodemon src/server.js",
+    "dev:test": "RL_LOGIN_MAX=100000 RL_REGISTER_MAX=100000 RL_RESEND_MAX=100000 RL_FORGOT_MAX=100000 RL_RESET_MAX=100000 RL_CHANGE_EMAIL_MAX=100000 RL_CAMPAIGN_JOIN_MAX=100000 RL_CAMPAIGN_SEARCH_MAX=100000 RL_CAMPAIGN_CREATE_MAX=100000 RL_CONTENT_WRITE_MAX=100000 nodemon src/server.js",
     "start": "node src/server.js",
     "migrate": "knex migrate:latest",
     "migrate:make": "knex migrate:make",
     "seed": "knex seed:run"
+  },
+  "nodemonConfig": {
+    "ignore": [
+      "test-*.js",
+      "break-*.js",
+      "public/**",
+      "*.md"
+    ]
   },
   "keywords": [],
   "author": "",

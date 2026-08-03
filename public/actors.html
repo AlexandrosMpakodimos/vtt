@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>VTT — Actors / Items / Inventory (dev)</title>
+  <style>
+    body { font-family: monospace; max-width: 980px; margin: 40px auto; padding: 0 16px; }
+    fieldset { margin-bottom: 16px; border: 1px solid #999; }
+    legend { font-weight: bold; }
+    label { display: block; margin: 6px 0 2px; font-size: 12px; }
+    input, select, textarea { width: 100%; padding: 5px; box-sizing: border-box; font-family: monospace; }
+    button { margin-top: 8px; padding: 5px 10px; cursor: pointer; }
+    .row { display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap; }
+    .row > * { margin-top: 0; }
+    .row > div { flex: 1; min-width: 90px; }
+    .cols { display: flex; gap: 16px; align-items: flex-start; }
+    .cols > * { flex: 1; min-width: 0; }
+    hr { border: none; border-top: 1px dashed #ccc; margin: 14px 0; }
+    .card { border: 1px solid #ccc; padding: 8px; margin: 6px 0; border-radius: 4px; }
+    .card.sel { border-color: #06c; background: #f0f6ff; }
+    .card b { font-size: 14px; }
+    .tag { font-size: 11px; padding: 1px 5px; border: 1px solid #999; border-radius: 3px; margin-left: 4px; }
+    .tag.npc { border-color: #a40; color: #a40; }
+    .tag.mine { border-color: #070; color: #070; }
+    .tag.secret { border-color: #808; color: #808; }
+    .muted { color: #777; font-size: 12px; }
+    .stats { font-size: 12px; color: #333; margin-top: 4px; }
+    .bar { height: 6px; background: #ddd; border-radius: 3px; overflow: hidden; margin-top: 4px; }
+    .bar > i { display: block; height: 100%; background: #3a3; }
+    .bar > i.low { background: #c33; }
+    #out { background: #111; color: #6f6; padding: 10px; white-space: pre-wrap;
+           min-height: 40px; max-height: 200px; overflow-y: auto; border-radius: 4px; font-size: 12px; }
+    #log { background: #111; color: #9cf; padding: 8px; white-space: pre-wrap;
+           height: 180px; overflow-y: auto; border-radius: 4px; font-size: 11px; }
+    .sheet-head { margin-bottom: 6px; }
+    .sheet-group { border: 1px solid #ddd; margin: 8px 0; }
+    .sheet-group legend { font-size: 12px; }
+    .sheet-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+    .sheet-cell { flex: 1; min-width: 92px; }
+    .sheet-cell.wide { flex-basis: 100%; }
+    .sheet-cell.narrow { flex: 0 0 auto; min-width: 0; }
+    .sheet-cell.narrow input[type=text] { width: 52px; text-align: center; }
+    .sheet-cell.narrow input[type=checkbox] { width: auto; margin: 0 0 0 2px; }
+    .sheet-cell.narrow label { white-space: nowrap; font-size: 11px; }
+    .sheet-group .sheet-grid { align-items: flex-end; }
+    .sheet-cell label .tag { margin-left: 4px; opacity: .7; }
+    .field-error { color: #c00; font-size: 11px; min-height: 12px; }
+    .sheet-error { color: #c00; font-size: 12px; }
+    textarea:disabled, input:disabled, select:disabled { background: #f4f4f4; color: #555; }
+    .gm-only { display: none; }
+    body.is-gm .gm-only { display: block; }
+    body.is-gm .player-only { display: none; }
+  </style>
+</head>
+<body>
+  <h1>VTT actors / items / inventory (dev harness)</h1>
+  <p class="muted">
+    Log in via <a href="/auth.html">/auth.html</a>, pick a campaign on
+    <a href="/dashboard.html">/dashboard.html</a>. <span id="whoami">checking…</span>
+  </p>
+  <p class="muted">
+    Open this page as the GM in one browser and as a player in another, against the same
+    campaign. The socket log below prints every payload verbatim, so the difference between
+    what the two roles receive is visible rather than asserted.
+  </p>
+
+  <fieldset>
+    <legend>campaign</legend>
+    <div class="row">
+      <div style="flex:3">
+        <label for="campaignId">campaign id</label>
+        <input id="campaignId" placeholder="uuid" />
+      </div>
+      <button id="loadCampaign">load</button>
+    </div>
+    <p class="muted" id="campaignInfo">no campaign loaded</p>
+  </fieldset>
+
+  <div class="cols">
+    <fieldset style="flex:1.2">
+      <legend>characters</legend>
+
+      <div class="row">
+        <div style="flex:2"><label for="acName">name</label><input id="acName" placeholder="Aria" /></div>
+        <div><label for="acImg">img url</label><input id="acImg" placeholder="https://…" /></div>
+        <div><label for="acHp">hp</label><input id="acHp" type="number" value="10" /></div>
+      </div>
+      <p class="muted player-only">
+        You create a character shell — the GM fills in its capabilities (size, max HP,
+        level, ability scores) afterwards. Those fields are refused here, not silently
+        discarded.
+      </p>
+
+      <!-- Fields only the GM may write. Hidden for players rather than shown and
+           discarded: since 2026-08-02 the server refuses them on BOTH create and
+           PATCH, so offering them to a player would promise something neither
+           path keeps. `size` and `hp_max` moved in here for the same reason —
+           they are capabilities, and a player choosing Gargantuan would be
+           choosing their own token's footprint on the GM's board. -->
+      <div class="gm-only">
+        <div class="row">
+          <div><label for="acSize">size</label>
+            <select id="acSize">
+              <option>Tiny</option><option>Small</option>
+              <option selected>Medium</option><option>Large</option>
+              <option>Huge</option><option>Gargantuan</option>
+            </select>
+          </div>
+          <div><label for="acHpMax">hp max</label><input id="acHpMax" type="number" value="10" /></div>
+          <div><label for="acAc">AC</label><input id="acAc" type="number" value="10" /></div>
+          <div><label for="acLevel">level</label><input id="acLevel" type="number" value="1" /></div>
+          <div><label for="acSpeed">speed</label><input id="acSpeed" type="number" value="30" /></div>
+        </div>
+        <div class="row">
+          <div><label for="acStr">STR</label><input id="acStr" type="number" value="10" /></div>
+          <div><label for="acDex">DEX</label><input id="acDex" type="number" value="10" /></div>
+          <div><label for="acCon">CON</label><input id="acCon" type="number" value="10" /></div>
+          <div><label for="acInt">INT</label><input id="acInt" type="number" value="10" /></div>
+          <div><label for="acWis">WIS</label><input id="acWis" type="number" value="10" /></div>
+          <div><label for="acCha">CHA</label><input id="acCha" type="number" value="10" /></div>
+        </div>
+        <div class="row">
+          <div>
+            <label for="acIsNpc">is NPC (its statistics stay GM-only)</label>
+            <select id="acIsNpc"><option value="false">no — player character</option><option value="true">yes — NPC</option></select>
+          </div>
+          <div>
+            <label for="acOwner">controlled by</label>
+            <select id="acOwner"><option value="">nobody (GM runs it)</option></select>
+          </div>
+        </div>
+      </div>
+
+      <button id="createActor">create character</button>
+      <span class="muted" id="actorCap"></span>
+
+      <hr />
+      <div id="actorList"></div>
+    </fieldset>
+
+    <fieldset style="flex:1">
+      <legend>items</legend>
+      <div class="gm-only">
+        <button id="newItem">+ new item</button>
+      </div>
+      <p class="muted player-only">Only the GM authors items. You see the catalogue; unidentified entries show their category and picture only.</p>
+
+      <hr />
+      <div id="itemList"></div>
+    </fieldset>
+  </div>
+
+  <fieldset class="gm-only">
+    <legend>item editor — <span id="itemWho" class="muted">none selected</span></legend>
+    <div id="itemEditor"><p class="muted">pick an item, or “+ new item”</p></div>
+  </fieldset>
+
+  <fieldset>
+    <legend>character sheet — <span id="sheetWho" class="muted">none selected</span></legend>
+    <div id="sheetPanel"><p class="muted">select a character above</p></div>
+  </fieldset>
+
+  <fieldset>
+    <legend>inventory — <span id="invWho" class="muted">select a character above</span></legend>
+    <div class="row">
+      <div style="flex:3">
+        <label for="invItem">item</label>
+        <select id="invItem"></select>
+      </div>
+      <div><label for="invQty">qty</label><input id="invQty" type="number" value="1" min="1" /></div>
+      <button id="addToBag">add to bag</button>
+    </div>
+    <p class="muted">Attunement is capped at 3 per character, enforced atomically — a fourth returns 409.</p>
+    <div id="invList"></div>
+  </fieldset>
+
+  <fieldset>
+    <legend>last response</legend>
+    <div id="out">—</div>
+  </fieldset>
+
+  <fieldset>
+    <legend>socket log — every payload this account receives, verbatim</legend>
+    <div id="log"></div>
+    <button id="clearLog">clear</button>
+  </fieldset>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/js/sheet.js"></script>
+  <script src="/js/itemsheet.js"></script>
+  <script src="/js/actors.js"></script>
+</body>
+</html>

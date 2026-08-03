@@ -135,7 +135,7 @@ function waitFor(s, event, ms = 1200) {
   check('GM places token (201)', t1.status === 201, JSON.stringify(t1.data));
   const gmTokenId = t1.data.token && t1.data.token.id;
   check('token created_by = GM', t1.data.token && t1.data.token.created_by === gm.id);
-  check('token actor_id is null this pass', t1.data.token && t1.data.token.actor_id === null);
+  check('a token placed with no actor_id is unlinked', t1.data.token && t1.data.token.actor_id === null);
   check('token coords are numbers', t1.data.token && typeof t1.data.token.x === 'number' && t1.data.token.x === 2);
 
   // GM can place many.
@@ -161,21 +161,40 @@ function waitFor(s, event, ms = 1200) {
   const zeroSize = await gm.req('POST', `/api/campaigns/${campaignId}/scenes/${sceneId}/tokens`, { name: 'zero', width: 0 });
   check('zero width rejected (400)', zeroSize.status === 400, JSON.stringify(zeroSize.data));
 
-  // mass-assignment: try to force created_by / id / actor_id
+  // mass-assignment: try to force created_by / id. actor_id is NOT tested here
+  // any more: since M4 it is a validated INPUT field, not a server-owned column
+  // a client might forge, so it gets its own probe below.
   const forge = await player.req('POST', `/api/campaigns/${campaignId}/scenes/${sceneId}/tokens`, {
-    name: 'forge', id: '00000000-0000-0000-0000-000000000000', created_by: gm.id, actor_id: gm.id,
+    name: 'forge', id: '00000000-0000-0000-0000-000000000000', created_by: gm.id,
   });
   // player already has 1 token, so this hits the cap first (409) — the point is
   // it does NOT succeed with forged fields. Delete player's token, retry, assert
   // forged fields ignored.
   await player.req('DELETE', `/api/campaigns/${campaignId}/scenes/${sceneId}/tokens/${playerTokenId}`);
   const forge2 = await player.req('POST', `/api/campaigns/${campaignId}/scenes/${sceneId}/tokens`, {
-    name: 'forge', id: '00000000-0000-0000-0000-000000000000', created_by: gm.id, actor_id: gm.id,
+    name: 'forge', id: '00000000-0000-0000-0000-000000000000', created_by: gm.id,
   });
   check('mass-assignment ignored: created_by stays caller', forge2.status === 201 && forge2.data.token.created_by === player.id, JSON.stringify(forge2.data));
   check('mass-assignment ignored: id not forced', forge2.status === 201 && forge2.data.token.id !== '00000000-0000-0000-0000-000000000000');
-  check('mass-assignment ignored: actor_id still null', forge2.status === 201 && forge2.data.token.actor_id === null);
+  check('an unlinked token still has actor_id null', forge2.status === 201 && forge2.data.token.actor_id === null);
   const playerToken2 = forge2.data.token.id;
+
+  // ---- M4 CONTRACT CHANGE ----
+  // Before M4 every write path forced actor_id to NULL, so a forged value was
+  // silently dropped and the write succeeded. actor_id is now a validated field:
+  // a uuid that is not an actor in THIS campaign refuses the write outright, so
+  // a caller is never told a link was made when it was not. (Under the old
+  // behaviour a GM pasting twenty goblins with one stale actor id would have got
+  // twenty silently unlinked squares and a 201 saying it worked.)
+  //
+  // Sent as the GM, who has no per-token cap, so the 404 cannot be confused with
+  // a 409 from the player's 1-token limit.
+  const badLink = await gm.req('POST', `/api/campaigns/${campaignId}/scenes/${sceneId}/tokens`, {
+    name: 'ghost', actor_id: gm.id,
+  });
+  check('unresolvable actor_id is REFUSED, not ignored (404)', badLink.status === 404, `got ${badLink.status}`);
+  const ghosts = await knex('tokens').where({ scene_id: sceneId, name: 'ghost' });
+  check('the refused token was not created at all', ghosts.length === 0, `${ghosts.length} rows`);
 
   // ---- cross-campaign IDOR ----
   const other = await gm.req('POST', '/api/campaigns', { name: 'Other', is_public: true });

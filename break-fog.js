@@ -209,8 +209,14 @@ const circle = (cx, cy, r) => [{ x: cx, y: cy }, { x: cx + r, y: cy }];
   const created = raceResults.filter((r) => r.status === 201).length;
   const refused = raceResults.filter((r) => r.status === 409).length;
   const finalCount = Number((await knex('fog_of_war').where({ scene_id: capScene.id }).count({ n: '*' }).first()).n);
-  ok('TOCTOU: fog region cap holds under 40 parallel creates',
-    finalCount <= 200, `${finalCount} rows (cap 200), ${created} created / ${refused} refused`);
+  // Asserted EXACTLY, not as a ceiling. This is the probe that verifies
+  // withAtomicCap's insert path under contention, so a ceiling would let a
+  // write path that refused everything pass at 190 — the same way the canvas
+  // flood probe passed on zero. 190 preloaded + 40 racers against 10 free slots
+  // must land on 200 with exactly 10 accepted and 30 refused.
+  ok('TOCTOU: fog region cap lands on EXACTLY 200 under 40 parallel creates',
+    finalCount === 200 && created === 10 && refused === 30,
+    `${finalCount} rows (cap 200), ${created} created / ${refused} refused`);
   note('cap race outcome', `${finalCount} rows after the race, ${created} created, ${refused} refused with 409`);
 
   // ---------- clear-all blast radius ----------
