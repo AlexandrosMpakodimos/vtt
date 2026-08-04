@@ -35,8 +35,12 @@ const src = fs.readFileSync('./public/js/dice3d.js', 'utf8')
   .replace(/window\.VTTDice[\s\S]*$/m, '');    // the global bridge + dispatchEvent
 
 // eslint-disable-next-line no-eval
-const sandbox = eval(`(function () { ${src}; return { notationFor, isRenderable, colorsets, nearestWithin }; })()`);
-const { notationFor, isRenderable, colorsets, nearestWithin } = sandbox;
+const sandbox = eval(`(function () { ${src}; return { notationFor, isRenderable, colorsets, nearestWithin,
+    normalizeHex, contrastFor, shade, stableColorFor, colorsetFor }; })()`);
+const {
+  notationFor, isRenderable, colorsets, nearestWithin,
+  normalizeHex, contrastFor, shade, stableColorFor, colorsetFor,
+} = sandbox;
 
 // roll_data as the server now writes it: flat results PLUS groups.
 const rd = (formula, results, groups) => ({
@@ -243,6 +247,138 @@ t('diagonal distance is euclidean, not a bounding box',
   'dx=30, dy=30 is 42px away — inside a box, outside a circle');
 t('index is returned, not array position',
   nearestWithin([{ index: 5, x: 10, y: 10 }], 10, 10, 20) === 5);
+
+console.log('\n--- per-player colour: hex normalisation ---');
+t('#RRGGBB accepted', normalizeHex('#A1B2C3') === '#a1b2c3');
+t('lowercased', normalizeHex('#FFFFFF') === '#ffffff');
+t('trimmed', normalizeHex('  #123456  ') === '#123456');
+t('#abc shorthand expanded', normalizeHex('#f00') === '#ff0000');
+t('missing hash refused', normalizeHex('a1b2c3') === null);
+t('short hex refused', normalizeHex('#12345') === null);
+t('long hex refused', normalizeHex('#1234567') === null);
+t('non-hex chars refused', normalizeHex('#gggggg') === null);
+t('non-string refused', normalizeHex(0xa1b2c3) === null);
+t('null refused', normalizeHex(null) === null);
+t('array refused (type confusion)', normalizeHex(['#a1b2c3']) === null);
+
+console.log('\n--- per-player colour: legibility is the real failure mode ---');
+// Numerals unreadable on a player's dice is worse than no colour at all, so the
+// contrast rule uses sRGB relative luminance (WCAG) rather than a naive channel
+// average — #00ff00 and #0000ff differ hugely in perceived brightness despite
+// identical arithmetic under an average.
+t('white face gets black numerals', contrastFor('#ffffff') === '#000000');
+t('black face gets white numerals', contrastFor('#000000') === '#ffffff');
+t('bright green is a LIGHT colour -> black numerals', contrastFor('#00ff00') === '#000000');
+t('pure blue is a DARK colour -> white numerals', contrastFor('#0000ff') === '#ffffff',
+  'an average of the channels would wrongly treat these two as equally bright');
+// [CORRECTED] This probe originally asserted WHITE on red, on intuition. The
+// maths disagrees and the maths is right: pure red has luminance 0.2126, giving
+// 5.25:1 against black text versus only 4.00:1 against white. Red sits just
+// above the 0.179 crossover, so it is a LIGHT colour for contrast purposes even
+// though it does not look like one. Recorded rather than quietly flipped,
+// because "the test was wrong" is worth exactly as much scrutiny as "the code
+// was wrong" — and here the suite caught the author, not the implementation.
+t('pure red -> BLACK numerals (5.25:1 vs 4.00:1, not intuition)',
+  contrastFor('#ff0000') === '#000000');
+t('a DARK red does get white numerals', contrastFor('#800000') === '#ffffff');
+t('bright yellow -> black numerals', contrastFor('#ffff00') === '#000000');
+t('mid grey resolves either way, but deterministically',
+  contrastFor('#808080') === contrastFor('#808080'));
+t('an invalid colour still returns a usable value', contrastFor('nonsense') === '#000000');
+
+console.log('\n--- per-player colour: outline shading ---');
+t('darkening moves toward black', shade('#ffffff', -1) === '#000000');
+t('lightening moves toward white', shade('#000000', 1) === '#ffffff');
+t('zero is a no-op', shade('#a1b2c3', 0) === '#a1b2c3');
+t('a half-darkened mid colour stays in range', /^#[0-9a-f]{6}$/.test(shade('#3366cc', -0.45)));
+t('the outline actually DIFFERS from the face',
+  shade('#3366cc', -0.45) !== '#3366cc',
+  'an outline the same colour as the face is no outline at all');
+t('an invalid colour still returns a hex', /^#[0-9a-f]{6}$/.test(shade('nope', -0.4)));
+
+console.log('\n--- per-player colour: the fallback for members with no colour ---');
+// campaign_members.color is nullable and nothing forces it at join time, so the
+// fallback is the COMMON path, not an edge case.
+t('a stable colour is produced', /^#[0-9a-f]{6}$/.test(stableColorFor('abc')));
+t('the SAME id gives the SAME colour every time',
+  stableColorFor('user-1') === stableColorFor('user-1'),
+  'every browser at the table must agree without server coordination');
+t('different ids give different colours',
+  stableColorFor('user-1') !== stableColorFor('user-2'));
+t('a realistic uuid works',
+  /^#[0-9a-f]{6}$/.test(stableColorFor('11111111-1111-4111-8111-111111111111')));
+t('empty id still returns a colour', /^#[0-9a-f]{6}$/.test(stableColorFor('')));
+t('undefined id still returns a colour', /^#[0-9a-f]{6}$/.test(stableColorFor(undefined)));
+// Spread matters: a hash that collapsed everyone onto one hue would pass every
+// probe above and still defeat the feature.
+const spread = new Set(Array.from({ length: 40 }, (_, i) => stableColorFor(`u${i}`)));
+t('40 ids produce many distinct colours', spread.size >= 30, `got ${spread.size}`);
+
+console.log('\n--- per-player colour: the library colorset ---');
+const cs = colorsetFor('#3366cc');
+t('background is the player colour', cs.background[0] === '#3366cc');
+t('foreground is a contrast choice', cs.foreground === contrastFor('#3366cc'));
+t('outline is a shade of the player colour', cs.outline === shade('#3366cc', -0.45));
+t('texture is none (no image to load)', cs.texture === 'none');
+t('name is DERIVED from the colour, so the library can cache it',
+  colorsetFor('#3366cc').name === colorsetFor('#3366cc').name,
+  'a per-roll unique name would reload the texture on every throw');
+t('different colours get different cache names',
+  colorsetFor('#3366cc').name !== colorsetFor('#cc3366').name);
+t('an invalid colour still yields a usable colorset',
+  /^#[0-9a-f]{6}$/.test(colorsetFor('nonsense').background[0]));
+
+console.log('\n--- DoS: the total-dice ceiling (finding, 2026-08-03) ---');
+// notationFor validated each group and bounded the group COUNT at 20, but never
+// the total. 20 groups x 5,000 dice passed everything and produced a 200 KB
+// notation for 100,000 physics bodies. Not reachable today — roll_data is
+// server-written and the server caps at 100 — but the two bounds were three
+// orders of magnitude apart while this file claimed to check at the boundary.
+const bulk = (groups, per) => {
+  const g = []; const flat = [];
+  for (let i = 0; i < groups; i += 1) {
+    const res = Array.from({ length: per }, () => 1);
+    g.push({ count: per, sides: 6, results: res });
+    flat.push(...res);
+  }
+  return { formula: 'x', results: flat, total: 0, groups: g };
+};
+t('100 dice in one group is accepted (matches the server MAX_DICE)',
+  notationFor(bulk(1, 100)) !== null);
+t('101 dice in one group is REFUSED', notationFor(bulk(1, 101)) === null);
+t('5,000 dice in one group is REFUSED', notationFor(bulk(1, 5000)) === null);
+t('20 groups x 1,000 is REFUSED (the total, not just the group count)',
+  notationFor(bulk(20, 1000)) === null);
+t('20 groups x 5,000 is REFUSED', notationFor(bulk(20, 5000)) === null);
+t('10 groups x 10 = 100 is still fine', notationFor(bulk(10, 10)) !== null);
+t('10 groups x 11 = 110 is refused', notationFor(bulk(10, 11)) === null);
+
+console.log('\n--- SOURCE INVARIANT: nothing may gate on the library promise ---');
+// This bug has recurred TWICE with different disguises — a `busy` boolean, then
+// a promise chain with a counter — and both times the mechanism was identical:
+// `await` on the promise returned by box.roll()/box.add(). When that promise
+// never settles, the await never returns, shared state is never released, and
+// the dice silently stop appearing while the chat log keeps working.
+//
+// A behavioural probe cannot catch it (it needs WebGL and a hung physics
+// simulation), so this is a SOURCE-LEVEL guard instead. Crude, and worth it:
+// a rule that has been broken twice needs something that fails loudly when it is
+// broken a third time.
+const raw = fs.readFileSync('./public/js/dice3d.js', 'utf8');
+const code = raw.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
+t('no `await box.roll(...)`', !/await\s+box\s*\.\s*roll\s*\(/.test(code));
+t('no `await box.add(...)`', !/await\s+box\s*\.\s*add\s*\(/.test(code));
+t('no `await rolling` style indirection',
+  !/await\s+(rolling|throwing|thrown)\b/.test(code));
+t('the throw path is not an async function',
+  !/async\s+function\s+throwNow/.test(code),
+  'throwNow must be fire-and-forget; making it async invites an await back in');
+t('no busy/queued latch variable survives',
+  !/\blet\s+(busy|queued)\b/.test(code));
+t('drag re-enablement uses a timer, which cannot fail to fire',
+  /setTimeout\(\(\)\s*=>\s*\{\s*settled\s*=\s*true/.test(code));
+t('box.rolling is cleared before add(), so a mid-air add does not sweep',
+  /box\.rolling\s*=\s*false/.test(code));
 
 console.log('\n--- colour sets ---');
 t('colorsets returns a non-empty list', colorsets().length > 0);

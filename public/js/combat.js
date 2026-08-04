@@ -35,11 +35,26 @@ const logEl = document.getElementById('log');
 const stripEl = document.getElementById('strip');
 const chatEl = document.getElementById('chat');
 
+// Rendered chat rows kept in the DOM. The server's history endpoint caps a page
+// at 100, so this is comfortably more than one page.
+const MAX_CHAT_ROWS = 300;
+
 function show(label, r) {
   out.textContent = `${label}  →  ${r.status}\n` + JSON.stringify(r.data, null, 2);
 }
+// [FINDING, fixed 2026-08-03] The socket log grew without bound: every event
+// appended to one string that was never trimmed. 50,000 events is ~3 MB of
+// string, re-rendered and re-scrolled on every append. A long session at a busy
+// table degrades the page on its own, with no attacker involved — and the log is
+// the harness's main diagnostic surface, so it dying quietly is the worst way
+// for it to fail.
+const MAX_LOG_LINES = 500;
+let logLines = [];
 function log(msg) {
-  logEl.textContent += `[${new Date().toLocaleTimeString()}] ${msg}\n`;
+  logLines.push(`[${new Date().toLocaleTimeString()}] ${msg}`);
+  // Keep the most RECENT: when diagnosing, the tail is what matters.
+  if (logLines.length > MAX_LOG_LINES) logLines = logLines.slice(-MAX_LOG_LINES);
+  logEl.textContent = logLines.join('\n') + '\n';
   logEl.scrollTop = logEl.scrollHeight;
 }
 
@@ -389,7 +404,13 @@ function renderTokens() {
 // rule does that work, not this code.
 function animateRoll(m) {
   if (!dice3dOn || !dice3d || !m || !m.roll_data) return;
-  dice3d.showRoll(m.roll_data);
+  // The roller's colour, joined client-side from the member list. A message
+  // whose author has left the campaign has no member row, so the colour falls
+  // back to the id-derived one rather than the dice silently going grey.
+  const api = diceApi();
+  const color = colorForUser(m.user_id)
+    || (m.user_id && api ? api.stableColorFor(m.user_id) : null);
+  dice3d.showRoll(m.roll_data, color);
 }
 
 function renderMessage(m) {
@@ -397,7 +418,12 @@ function renderMessage(m) {
     + (m.whisper_to && m.whisper_to.length ? ' whisper' : '')
     + (m.roll_data ? ' roll' : '');
   const row = el('div', { cls });
-  row.appendChild(el('span', { cls: 'who', text: `${m.speaker_name || 'someone'}: ` }));
+  const who = el('span', { cls: 'who', text: `${m.speaker_name || 'someone'}: ` });
+  // Same colour in the log as on the dice, so the two agree and the mapping is
+  // learnable without consulting the legend every time.
+  const c = colorForUser(m.user_id);
+  if (c) who.style.color = c;
+  row.appendChild(who);
   if (m.content) row.appendChild(el('span', { text: m.content }));
   if (m.roll_data) {
     row.appendChild(el('span', {
@@ -409,6 +435,11 @@ function renderMessage(m) {
     row.appendChild(el('span', { cls: 'meta', text: `  (whisper ×${m.whisper_to.length})` }));
   }
   chatEl.appendChild(row);
+  // [FINDING, fixed 2026-08-03] Same unbounded-growth problem as the socket log:
+  // one <div> per message, never trimmed. History loads 50 and every live
+  // message adds another for as long as the page is open. Trimmed from the top,
+  // since chat is read from the bottom.
+  while (chatEl.children.length > MAX_CHAT_ROWS) chatEl.removeChild(chatEl.firstChild);
   chatEl.scrollTop = chatEl.scrollHeight;
 }
 
@@ -458,19 +489,54 @@ async function loadCampaign() {
 }
 
 async function loadMembers() {
-  // Whisper targets. A player cannot read manage-players, so fall back to the
-  // people who have actually spoken — enough for a harness, and it avoids
-  // inventing a members endpoint the milestone does not have.
+  // GET /api/campaigns/:id is requireMember and already returns every ACTIVE
+  // member with their `color`. The earlier version used manage-players, which is
+  // requireOwner — so a player got an empty member list, could not whisper to
+  // anyone, and would have had no colours either. Fixed here rather than by
+  // adding an endpoint, because the data was already reachable.
   members = [];
-  if (isGm) {
-    const r = await api('GET', `/api/campaigns/${campaign.id}/manage-players`);
-    if (r.status === 200) members = (r.data.members || []).map((m) => ({ id: m.user_id, name: m.username }));
+  const r = await api('GET', `/api/campaigns/${campaign.id}`);
+  if (r.status === 200) {
+    members = (r.data.members || []).map((m) => ({
+      id: m.user_id,
+      name: m.username,
+      // campaign_members.color is nullable and nothing forces it at join time,
+      // so most members have none. The fallback is derived from the user id, so
+      // it is identical in every browser at the table with no coordination.
+      color: memberColor(m),
+      is_gm: m.is_gm,
+    }));
   }
   renderWhisperTargets();
+  renderLegend();
 }
 
+// Read the bridge at CALL TIME rather than through the `dice3d` variable, which
+// is only assigned once `vtt-dice-ready` fires. The ES module is deferred and
+// combat.js is not, so the two are ordered only by accident: loadCampaign
+// happens to run after a `whoami` round trip today, and a faster cache or a
+// reordered <script> would flip it. Load-order luck is not a mechanism.
+//
+// Caught by test-combat-ui.js on its first run — every member came back grey.
+function diceApi() { return window.VTTDice || null; }
+
+function memberColor(m) {
+  const api = diceApi();
+  if (!api) return '#b0b0b0';
+  return api.normalizeHex(m.color) || api.stableColorFor(m.user_id) || '#b0b0b0';
+}
+
+function colorForUser(userId) {
+  const m = members.find((x) => x.id === userId);
+  return m ? m.color : null;
+}
+
+// Whisper recipients. Selections are preserved across a re-render so that a
+// member list refreshing mid-compose does not silently drop who you were
+// whispering to.
 function renderWhisperTargets() {
   const sel = document.getElementById('whisperTo');
+  if (!sel) return;
   const chosen = new Set([...sel.selectedOptions].map((o) => o.value));
   sel.textContent = '';
   for (const m of members) {
@@ -480,6 +546,23 @@ function renderWhisperTargets() {
     o.textContent = m.name || m.id;
     if (chosen.has(m.id)) o.selected = true;
     sel.appendChild(o);
+  }
+}
+
+// Who is which colour. Without this the dice are pretty but unreadable — a
+// colour only identifies someone if you can look up what it means.
+function renderLegend() {
+  const box = document.getElementById('diceLegend');
+  if (!box) return;
+  box.textContent = '';
+  if (!members.length) { box.textContent = '—'; return; }
+  for (const m of members) {
+    const chip = el('span', { cls: 'swatch' });
+    const dot = el('i');
+    dot.style.background = m.color;
+    chip.appendChild(dot);
+    chip.appendChild(el('span', { text: m.name + (m.is_gm ? ' (GM)' : '') }));
+    box.appendChild(chip);
   }
 }
 
@@ -669,7 +752,10 @@ document.getElementById('deleteCombat').addEventListener('click', deleteCombat);
 document.getElementById('placeToken').addEventListener('click', placeToken);
 document.getElementById('sendChat').addEventListener('click', sendChat);
 document.getElementById('sendRoll').addEventListener('click', sendRoll);
-document.getElementById('clearLog').addEventListener('click', () => { logEl.textContent = ''; });
+document.getElementById('clearLog').addEventListener('click', () => {
+  logLines = [];
+  logEl.textContent = '';
+});
 document.getElementById('scrollLeft').addEventListener('click', () => page(-1));
 document.getElementById('scrollRight').addEventListener('click', () => page(1));
 document.getElementById('chatText').addEventListener('keydown', (e) => {
@@ -777,6 +863,13 @@ document.getElementById('diceGrab').addEventListener('change', (e) => {
   if (dice3d) dice3d.setInteractive(e.target.checked);
 });
 
+// How long dice sit before clearing themselves. 0 keeps them indefinitely, which
+// matters because auto-fade is what makes simultaneous rolls sustainable — with
+// add() never sweeping, something has to take the dice away.
+document.getElementById('diceFade').addEventListener('change', (e) => {
+  if (dice3d) dice3d.setFadeSeconds(e.target.value);
+});
+
 document.getElementById('diceColor').addEventListener('change', (e) => {
   if (dice3d) dice3d.setColorset(e.target.value);
 });
@@ -786,6 +879,13 @@ document.getElementById('diceColor').addEventListener('change', (e) => {
 // rest of the page working instead of throwing on first roll.
 document.addEventListener('vtt-dice-ready', async () => {
   dice3d = window.VTTDice;
+  // If a campaign loaded before the module announced itself, its members were
+  // coloured with the fallback. Recompute now rather than leaving the table grey
+  // until the next reload.
+  if (campaign && members.length) {
+    for (const m of members) m.color = memberColor({ color: m.color, user_id: m.id });
+    renderLegend();
+  }
 
   const sel = document.getElementById('diceColor');
   sel.textContent = '';

@@ -92,6 +92,10 @@
     .dice-bar { display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap; }
     .dice-bar > * { margin-top: 0; }
     .quick { padding: 4px 8px; }
+    .swatch { display: inline-flex; align-items: center; gap: 4px; margin-right: 10px;
+              font-size: 11px; }
+    .swatch > i { width: 11px; height: 11px; border-radius: 50%; display: inline-block;
+                  border: 1px solid #0003; }
     .pool { border: 1px solid #ddd; border-radius: 3px; padding: 5px; min-height: 24px;
             font-size: 12px; background: #fafafa; }
     .pool .chip { display: inline-block; border: 1px solid #06c; color: #06c;
@@ -234,7 +238,15 @@
           <label for="diceGrab">grab dice</label>
           <input id="diceGrab" type="checkbox" style="width:auto" checked />
         </div>
+        <div style="flex:0 0 auto">
+          <label for="diceFade">fade after (s)</label>
+          <input id="diceFade" type="number" value="6" min="0" max="60" style="width:70px" />
+        </div>
         <button id="diceClear">clear tray</button>
+        <div style="flex:0 0 100%; margin-top:6px">
+          <label>whose dice are whose</label>
+          <div id="diceLegend" class="muted">—</div>
+        </div>
       </div>
       <p class="muted">
         The dice animate a result the <b>server</b> already rolled — they never decide

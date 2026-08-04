@@ -74,6 +74,23 @@ import DiceBox from '/vendor/dice/dice-box-threejs.es.js';
 // library.
 const RENDERABLE = new Set([2, 3, 4, 6, 8, 10, 12, 20, 100]);
 
+// [FINDING, fixed 2026-08-03] A ceiling on how many dice one payload may animate.
+//
+// notationFor validated each group — count against results length, sides against
+// the renderable set, every face against its die — and bounded the number of
+// GROUPS at 20. It never bounded the TOTAL. A payload of 20 groups x 5,000 dice
+// passed every check and produced a 200 KB notation for 100,000 physics bodies,
+// which hangs the browser hard.
+//
+// Not reachable today: roll_data is written only by the server, whose MAX_DICE
+// is 100. But the server's bound and this module's implicit one were three
+// ORDERS OF MAGNITUDE apart, and this file's own header claims it checks at the
+// boundary "the same discipline the server applies to client input, applied in
+// the other direction". It was not doing that. Matched to the server's MAX_DICE
+// so the two agree; if they ever diverge the animation falls back to text, which
+// is the correct failure.
+const MAX_ANIMATED_DICE = 100;
+
 // Colour sets shipped by the library. Exposed so the tray is a toy the GM can
 // fiddle with — it changes nothing but the pixels.
 const COLORSETS = [
@@ -154,9 +171,9 @@ export async function initDice(selector) {
   ready = true;
   attachDragHandlers();
   if (pendingBeforeReady) {
-    const n = pendingBeforeReady;
+    const p = pendingBeforeReady;
     pendingBeforeReady = null;
-    throwNow(n);
+    throwNow(p.notation, p.color);
   }
   return box;
 }
@@ -224,72 +241,352 @@ export function notationFor(rollData) {
 
   // The flat array and the groups must describe the same throw.
   if (counted !== rollData.results.length) return null;
+  // ...and the throw must be one a browser can actually render. See
+  // MAX_ANIMATED_DICE above.
+  if (counted > MAX_ANIMATED_DICE) return null;
 
   return `${parts.join('+')}@${faces.join(',')}`;
 }
 
+// ---------------------------------------------------------------------------
+// PER-PLAYER DICE COLOUR
+// ---------------------------------------------------------------------------
+//
+// Needed NO server change and NO migration, which is worth recording because the
+// instinct was to add a column. `campaign_members.color` (VARCHAR(7)) has existed
+// since the M2 campaigns migration, is validated by validateColor as #rrggbb, is
+// set at join time — and `GET /api/campaigns/:id` already returns every active
+// member's colour to ANY member, not just the GM. So the whole feature is a
+// client-side join of `message.user_id` against a list the client already holds.
+//
+// It also introduces no disclosure question. Every recipient of a message can
+// already see its `user_id` and `speaker_name`; a colour they could fetch from
+// the campaign detail endpoint anyway adds nothing new. Whispers still animate
+// only where the message lands, because that is decided upstream in the socket
+// fan-out rather than here.
+//
+// WHY A GLOBAL THEME SWITCH IS ENOUGH. The library themes the whole box, not
+// individual dice — but since rolls are latest-wins, only one person's dice are
+// ever on the table at a time. Switching the box theme before each throw is
+// therefore exactly equivalent to per-die colouring, without fighting the
+// library's design.
+//
+// AND IT IS CHEAP. makeColorSet caches by `name`, so a colour used before is a
+// cache hit inside the library; and updateConfig is skipped entirely when the
+// incoming colour matches what is already loaded, which is the common case of one
+// person rolling repeatedly.
+
+const HEX_RE = /^#[0-9a-f]{6}$/i;
+
+export function normalizeHex(hex) {
+  if (typeof hex !== 'string') return null;
+  let h = hex.trim().toLowerCase();
+  // Accept the #abc shorthand a person might type, since validateColor on the
+  // server does not — being lenient about INPUT while the server stays strict
+  // about what it STORES is the right way round.
+  if (/^#[0-9a-f]{3}$/.test(h)) h = `#${h[1]}${h[1]}${h[2]}${h[2]}${h[3]}${h[3]}`;
+  return HEX_RE.test(h) ? h : null;
+}
+
+// Black or white numerals, whichever stays legible on the given face colour.
+// sRGB relative luminance (WCAG), not a naive average: #00ff00 and #0000ff have
+// very different perceived brightness despite identical channel arithmetic, and
+// getting this wrong makes a player's dice unreadable rather than merely ugly.
+export function contrastFor(hex) {
+  const h = normalizeHex(hex);
+  if (!h) return '#000000';
+  const chan = (i) => {
+    const c = parseInt(h.slice(1 + i * 2, 3 + i * 2), 16) / 255;
+    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  };
+  const L = 0.2126 * chan(0) + 0.7152 * chan(1) + 0.0722 * chan(2);
+  return L > 0.179 ? '#000000' : '#ffffff';
+}
+
+// Lighten (amt > 0) or darken (amt < 0) toward white/black. Used for the outline
+// so the edge reads against the face rather than vanishing into it.
+export function shade(hex, amt) {
+  const h = normalizeHex(hex);
+  if (!h) return '#000000';
+  const mix = (c) => {
+    const target = amt < 0 ? 0 : 255;
+    return Math.round(c + (target - c) * Math.abs(amt));
+  };
+  const out = [0, 1, 2]
+    .map((i) => mix(parseInt(h.slice(1 + i * 2, 3 + i * 2), 16)))
+    .map((c) => c.toString(16).padStart(2, '0'))
+    .join('');
+  return `#${out}`;
+}
+
+// A stable colour for a member who never picked one. `campaign_members.color` is
+// nullable and nothing in the join flow forces it, so most members have NULL —
+// falling back to grey for everybody would defeat the whole feature. Derived from
+// the user id, so it is the same in every browser at the table without any
+// server involvement or coordination.
+export function stableColorFor(id) {
+  const str = String(id || '');
+  let hash = 0;
+  for (let i = 0; i < str.length; i += 1) {
+    hash = (hash * 31 + str.charCodeAt(i)) >>> 0;
+  }
+  // Fixed saturation and lightness so every generated colour is legible and no
+  // two players get one that is merely muddy.
+  const hue = hash % 360;
+  return hslToHex(hue, 0.62, 0.5);
+}
+
+function hslToHex(h, s, l) {
+  const c = (1 - Math.abs(2 * l - 1)) * s;
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+  const m = l - c / 2;
+  let r = 0; let g = 0; let b = 0;
+  if (h < 60) { r = c; g = x; } else if (h < 120) { r = x; g = c; } else if (h < 180) { g = c; b = x; } else if (h < 240) { g = x; b = c; } else if (h < 300) { r = x; b = c; } else { r = c; b = x; }
+  const hex = (v) => Math.round((v + m) * 255).toString(16).padStart(2, '0');
+  return `#${hex(r)}${hex(g)}${hex(b)}`;
+}
+
+// The library's colorset shape. `name` is what makeColorSet caches on, so it must
+// be derived from the colour and nothing else — a per-roll unique name would
+// defeat that cache and reload the texture on every throw.
+export function colorsetFor(hex) {
+  const base = normalizeHex(hex) || '#b0b0b0';
+  return {
+    name: `vtt${base.slice(1)}`,
+    background: [base],
+    foreground: contrastFor(base),
+    outline: shade(base, -0.45),
+    texture: 'none',
+  };
+}
+
+let currentColor = null;
+
+async function applyColor(hex) {
+  const wanted = normalizeHex(hex);
+  if (!wanted || wanted === currentColor) return;
+  try {
+    await box.updateConfig({ theme_customColorset: colorsetFor(wanted) });
+    currentColor = wanted;
+  } catch (err) {
+    // A theme that fails to load must not stop the dice appearing. They roll in
+    // whatever colour is already loaded, which is wrong but visible — strictly
+    // better than a silent nothing.
+    console.warn('dice colour failed', err);
+  }
+}
+
 // Show a roll. Returns true if it will be animated, false if the caller should
 // rely on the text line alone.
-export function showRoll(rollData) {
+export function showRoll(rollData, color) {
   const notation = notationFor(rollData);
   if (!notation) return false;
-  if (!ready) { pendingBeforeReady = notation; return true; }
-  throwNow(notation);
+  if (!ready) { pendingBeforeReady = { notation, color }; return true; }
+  throwNow(notation, color);
   return true;
 }
 
 // ---------------------------------------------------------------------------
-// LATEST ROLL WINS — and why this replaced a queue
+// SIMULTANEOUS ROLLS — immediate, never queued
 // ---------------------------------------------------------------------------
-// The first version queued rolls and played them one at a time, waiting for each
-// to settle. Two problems, one cosmetic and one structural:
 //
-//   1. Pressing roll three times in quick succession produced three animations
-//      played back-to-back, so the dice you were waiting for arrived seconds
-//      after you asked, and kept arriving after you had stopped caring. Worse,
-//      the backlog looked like the app rolling on its own.
-//   2. The queue needed a `busy` latch to serialise it, and that latch WAS the
-//      bug fixed earlier today: any path that failed to release it wedged every
-//      future roll. A watchdog patched the symptom.
+// THIS IS THE THIRD ATTEMPT AT THIS FUNCTION AND THE FIRST TWO FAILED THE SAME
+// WAY, so the rule that came out of it is worth stating before the code:
 //
-// Removing the queue removes the latch, and removing the latch removes that
-// entire bug class rather than guarding it. There is now no state that can be
-// left in a wrong position, because there is no state: a roll sweeps the table
-// and throws immediately, every time.
+//     NOTHING SHARED MAY GATE ON THE LIBRARY'S PROMISE.
 //
-// THE TRADE-OFF, stated rather than discovered: at a fast table, one player's
-// dice can be swept away by another's before they have settled. That is what a
-// physical table does when someone scoops up the dice to throw their own, and
-// the chat log still carries every result in order — the authoritative surface
-// is unaffected. Immediacy is worth more here than completeness, because the
-// animation is a flourish and the log is the record.
-async function throwNow(notation) {
-  const gen = ++generation;
-  // A tumbling die cannot be picked up: the animation loop copies mesh position
-  // and rotation from the physics body every frame, so anything set here would
-  // be overwritten on the next tick.
+// Attempt 1 used a `busy` boolean released from an `onRollComplete` callback the
+// library does not always fire. Attempt 2 replaced it with a promise chain and a
+// `queued` counter, which looked safer — a chain cannot latch — but both still
+// `await`ed the promise returned by roll()/add(). When that promise never
+// settles, the await never returns: the counter never decrements, the chain
+// never advances, and after a few rolls the dice stop appearing while the chat
+// log keeps working perfectly. Same symptom, same cause, dressed differently.
+//
+// So this version does not await it at all. A throw is fire-and-forget; every
+// piece of state it needs is captured SYNCHRONOUSLY, and the only thing that
+// re-enables dragging is a timer, which always fires. There is no path by which
+// one bad throw can affect the next.
+//
+// HOW SIMULTANEITY WORKS. roll() always sweeps — its rollDice() opens with
+// clearDice(). add() does not, and it still applies the "@" predetermined faces.
+// Per-player colour survives for free: a mesh's materials are fixed when it is
+// created, so a later theme change only affects dice spawned after it.
+//
+// The one obstacle is that add() calls startClickThrow, which opens with
+//
+//     this.rolling && (this.clearDice(), this.rolling = !1);
+//
+// so adding while a throw is still airborne would sweep the table. The previous
+// version solved that by WAITING for the previous throw to land, which is
+// exactly where the delay came from. Instead, `box.rolling` is set false
+// immediately beforehand: the clear is skipped, add() re-simulates every body
+// including the ones still moving, and starts one fresh animation loop with a
+// new `running` timestamp so the old loop retires itself. Dice already in the
+// air are perturbed slightly, which is invisible because they were tumbling
+// anyway.
+//
+// Both spawn paths run synchronously — neither roll() nor add() awaits anything
+// before spawning — so diceList is already grown by the time the call returns
+// and the batch's start index can be read straight away.
+
+// How long to treat a throw as "in the air" for the purposes of dragging. A
+// TIMER rather than the promise, deliberately: a timer cannot fail to fire, so
+// dragging can never be permanently disabled by a throw that hangs.
+const SETTLE_MS = 2200;
+let settleTimer = null;
+
+function throwNow(notation, color) {
+  generation += 1;
   settled = false;
   onPointerUp();
-  try {
-    // Sweep the table first. The library also clears inside its own rollDice(),
-    // but doing it here means the old dice vanish on the same frame as the
-    // click rather than after the notation has been parsed and the physics set
-    // up — which is the difference between "instant" and "laggy".
-    try { box.clearDice(); } catch { /* nothing on the table yet */ }
+  clearTimeout(settleTimer);
+  settleTimer = setTimeout(() => { settled = true; }, SETTLE_MS);
 
-    const rolling = box.roll(notation);
-    // roll() returns undefined when the library refuses the notation outright,
-    // so the `.then` guard is load-bearing rather than defensive noise.
-    if (rolling && typeof rolling.then === 'function') await rolling;
-  } catch (err) {
-    // A rendering failure must never break the chat log, which is the
-    // authoritative surface. Fail quiet, fall back to text.
-    if (gen === generation) console.warn('dice render failed', err);
+  // Colour first, but never block the throw on it. applyColor is cached by the
+  // library after first use, so this resolves immediately in the common case;
+  // when it does not, the dice still appear on time in whatever colour is
+  // already loaded rather than waiting for a texture.
+  const go = () => {
+    try {
+      if (liveDice() + 8 > MAX_TABLE_DICE) sweepOldest();
+
+      const startIndex = box.diceList.length;
+      const populated = liveDice() > 0;
+      // Defeat add()'s clear-if-rolling. Harmless when nothing is in flight.
+      if (populated) box.rolling = false;
+
+      // Fire and forget. The returned promise is deliberately ignored: it is
+      // where both previous versions of this function went wrong.
+      if (populated) box.add(notation); else box.roll(notation);
+
+      // Recorded AFTER the call, which is safe because spawning is synchronous.
+      // A batch owns every die from its start index to the next batch's, so no
+      // index arithmetic has to survive an await.
+      batches.push({ startIndex, timer: null, fading: false });
+      scheduleFade(batches[batches.length - 1]);
+    } catch (err) {
+      // A rendering failure must never break the chat log, which is the
+      // authoritative surface.
+      console.warn('dice render failed', err);
+    }
+  };
+
+  if (color) applyColor(color).then(go, go); else go();
+}
+
+// Dice currently on the table, grouped by the throw that created them. Grouping
+// is what lets one player's dice fade on their own schedule while another's stay.
+let batches = [];
+
+// Total meshes allowed on the table. Beyond this the oldest batch is swept
+// immediately rather than waiting out its timer — a table buried in dice is
+// worse than a slightly abrupt exit. This is also what bounds a player holding
+// the roll button down.
+const MAX_TABLE_DICE = 60;
+
+// A batch owns diceList[startIndex .. nextBatch.startIndex), or to the end if it
+// is the newest. Derived rather than stored, so it stays correct no matter how
+// many dice a throw actually spawned.
+function batchRange(batch) {
+  const i = batches.indexOf(batch);
+  if (i < 0) return [];
+  const end = i + 1 < batches.length ? batches[i + 1].startIndex : box.diceList.length;
+  const out = [];
+  for (let k = batch.startIndex; k < end; k += 1) out.push(k);
+  return out;
+}
+
+function liveDice() {
+  // remove() detaches a mesh from the scene but leaves its slot in diceList, so
+  // a null parent is how a removed die is recognised.
+  let n = 0;
+  for (let i = 0; i < box.diceList.length; i += 1) {
+    const d = box.diceList[i];
+    if (d && d.parent) n += 1;
   }
-  // Only the NEWEST throw may declare the table settled. A stale completion
-  // arriving after a newer roll started would otherwise mark dice grabbable
-  // while they are still in the air.
-  if (gen === generation) settled = true;
+  return n;
+}
+
+function batchOf(index) {
+  for (const b of batches) if (batchRange(b).includes(index)) return b;
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// AUTO-FADE
+// ---------------------------------------------------------------------------
+//
+// Dice clear themselves a few seconds after they land, which is what makes
+// simultaneous rolls sustainable: `add()` never sweeps, so without this the
+// table would fill up and stay full.
+//
+// The fade is driven here rather than by the library, because after a throw
+// settles the library sets `running = false` and its animation loop stops — so
+// nothing re-renders unless this module asks for a frame. Same reason dragging a
+// die needs its own render call.
+let fadeAfterMs = 6000;
+const FADE_MS = 900;
+
+function setDieOpacity(die, o) {
+  const mats = Array.isArray(die.material) ? die.material : [die.material];
+  for (const m of mats) {
+    if (!m) continue;
+    m.transparent = true;
+    m.opacity = o;
+    m.needsUpdate = true;
+  }
+  // A solid shadow under a half-invisible die looks like a rendering fault.
+  if (o < 1) die.castShadow = false;
+}
+
+function scheduleFade(batch) {
+  clearTimeout(batch.timer);
+  if (!fadeAfterMs) { batch.timer = null; return; }
+  batch.timer = setTimeout(() => fadeOut(batch), fadeAfterMs);
+}
+
+function fadeOut(batch) {
+  if (batch.fading) return;
+  batch.fading = true;
+  const t0 = (window.performance || Date).now();
+
+  const step = () => {
+    // A drag, a clear or a new sweep can retire a batch mid-fade.
+    if (!batches.includes(batch)) return;
+    const p = Math.min(1, ((window.performance || Date).now() - t0) / FADE_MS);
+    for (const i of batchRange(batch)) {
+      const d = box.diceList[i];
+      if (d && d.parent) setDieOpacity(d, 1 - p);
+    }
+    render();
+    if (p < 1) window.requestAnimationFrame(step);
+    else retire(batch);
+  };
+  window.requestAnimationFrame(step);
+}
+
+function retire(batch) {
+  // Range FIRST: batchRange is derived from this batch's position in `batches`,
+  // so computing it after the filter below would return an empty list and the
+  // dice would fade to invisible and then stay on the table forever.
+  const live = batchRange(batch).filter((i) => box.diceList[i] && box.diceList[i].parent);
+  batches = batches.filter((b) => b !== batch);
+  clearTimeout(batch.timer);
+  try { if (live.length) box.remove(live); } catch { /* already gone */ }
+
+  // Once the table is empty, reset properly. `remove()` leaves dead slots in
+  // diceList forever, so without this a long session would grow it without
+  // bound — and the next throw would take the add() path onto an empty table.
+  if (!batches.length) {
+    try { box.clearDice(); } catch { /* nothing to clear */ }
+  }
+  render();
+}
+
+function sweepOldest() {
+  const oldest = batches[0];
+  if (oldest) retire(oldest);
 }
 
 // ---------------------------------------------------------------------------
@@ -327,7 +624,10 @@ function dieScreenPositions() {
   const out = [];
   for (let i = 0; i < box.diceList.length; i += 1) {
     const die = box.diceList[i];
-    if (!die || !die.position) continue;
+    // A die removed by the auto-fade keeps its slot in diceList but is detached
+    // from the scene, so a null parent means "not on the table any more". Without
+    // this check an invisible die would still be grabbable.
+    if (!die || !die.position || !die.parent) continue;
     // .project() is an instance method on the Vector3 the library already gave
     // us, so no THREE import is needed to reach it.
     const ndc = die.position.clone().project(box.camera);
@@ -381,8 +681,14 @@ function onPointerDown(e) {
   e.preventDefault();
   e.stopPropagation();
 
+  // Hold the die's batch open — a result you have picked up to look at should
+  // not evaporate in your hand.
+  const batch = batchOf(i);
+  if (batch) { clearTimeout(batch.timer); batch.timer = null; }
+
   drag = {
     die,
+    batch,
     startX: e.clientX,
     startY: e.clientY,
     // NDC of the die at grab time. Its z (depth) is preserved on every move, so
@@ -443,6 +749,11 @@ function onPointerMove(e) {
 
 function onPointerUp() {
   if (!drag) return;
+  // Release restarts the FULL delay rather than the remainder, so putting a die
+  // down does not make it vanish a moment later.
+  if (drag.batch && batches.includes(drag.batch) && !drag.batch.fading) {
+    scheduleFade(drag.batch);
+  }
   drag = null;
   document.body.style.cursor = '';
 }
@@ -462,22 +773,43 @@ export function setInteractive(on) {
   if (!interactive) onPointerUp();
 }
 
+// The manual colour picker. Clearing theme_customColorset is load-bearing:
+// loadTheme prefers the custom set whenever one is present, so without this the
+// named set would be silently ignored and the picker would look broken.
+//
+// Also resets currentColor, so the NEXT per-player roll re-applies its colour
+// rather than believing it is already loaded.
 export function setColorset(name) {
   if (!box || !COLORSETS.includes(name)) return;
   localStorage_set('vtt.dice.colorset', name);
-  box.updateConfig({ theme_colorset: name });
+  currentColor = null;
+  box.updateConfig({ theme_customColorset: null, theme_colorset: name });
 }
 
 export function clearDice() {
   pendingBeforeReady = null;
   settled = false;
-  onPointerUp();
+  drag = null;
+  document.body.style.cursor = '';
   // Bump the generation so an in-flight throw's completion is treated as stale.
   generation += 1;
+  for (const b of batches) clearTimeout(b.timer);
+  batches = [];
   if (box && ready) { try { box.clearDice(); } catch { /* not rolling */ } }
 }
 
 export function colorsets() { return [...COLORSETS]; }
+
+// Seconds a batch sits on the table before fading. 0 disables the fade entirely,
+// which is what the harness checkbox does — some tables want the dice to stay.
+export function setFadeSeconds(sec) {
+  const n = Number(sec);
+  fadeAfterMs = Number.isFinite(n) && n > 0 ? n * 1000 : 0;
+  for (const b of batches) {
+    clearTimeout(b.timer);
+    if (fadeAfterMs) scheduleFade(b);
+  }
+}
 export function isRenderable(sides) { return RENDERABLE.has(sides); }
 
 // Hand the module to the classic-script harness. combat.js is not a module and
@@ -485,6 +817,7 @@ export function isRenderable(sides) { return RENDERABLE.has(sides); }
 // rather than a scatter of window.* assignments.
 window.VTTDice = {
   initDice, showRoll, notationFor, setColorset, clearDice, colorsets, isRenderable,
-  setInteractive, nearestWithin,
+  setInteractive, nearestWithin, setFadeSeconds,
+  normalizeHex, contrastFor, shade, stableColorFor, colorsetFor,
 };
 document.dispatchEvent(new CustomEvent('vtt-dice-ready'));
