@@ -41,7 +41,14 @@ function validateCampaignDescription(description) {
 // so HTML-significant characters are percent-encoded before they are ever stored.
 function validateImageUrl(url, field = 'img_url') {
   if (url === undefined || url === null || url === '') return { value: null };
-  let u = String(url).trim();
+  // [FIXED 2026-08-04] typeof BEFORE coercion. String(['https://x/y.png'])
+  // returns 'https://x/y.png', so a single-element array coerced straight
+  // through this validator. Same defect class the M2 canvas audit found with
+  // Number([[5]]) === 5 — but that audit fixed only the NUMERIC validators and
+  // left the string ones, which is the "lock fitted to some of the doors"
+  // pattern applied to a defect class rather than to a resource.
+  if (typeof url !== 'string') return { error: `${field} must be text` };
+  let u = url.trim();
   if (!u) return { value: null };
   if (u.length > 2000) return { error: `${field} is too long (max 2000 characters)` };
   let parsed;
@@ -67,7 +74,11 @@ function validateCampaignPassword(password) {
 const HEX_COLOR_RE = /^#[0-9a-fA-F]{6}$/;
 function validateColor(color) {
   if (color === undefined || color === null || color === '') return { value: null };
-  const c = String(color).trim();
+  // [FIXED 2026-08-04] Same as validateImageUrl above: String(['#ffffff'])
+  // returns '#ffffff'. Found by a probe written for the M6 colour picker, in
+  // code that has been in place since M1.
+  if (typeof color !== 'string') return { error: 'color must be a hex value like #A1B2C3' };
+  const c = color.trim();
   if (!HEX_COLOR_RE.test(c)) return { error: 'color must be a hex value like #A1B2C3' };
   return { value: c.toLowerCase() };
 }
@@ -459,6 +470,139 @@ function validateSortOrder(v) {
 }
 
 // ---------------------------------------------------------------------------
+// M6 — spells
+// ---------------------------------------------------------------------------
+
+function validateSpellName(v) {
+  if (typeof v !== 'string' || !v.trim()) return { error: 'name is required' };
+  const t = v.trim();
+  if (t.length > 100) return { error: 'name is too long (max 100 characters)' };
+  return { value: t };
+}
+
+// 0 is a cantrip, 9 the highest level. A BOUND, not a rule — nothing derives
+// slots, save DCs or preparation limits from it, and nothing may start.
+function validateSpellLevel(v) {
+  if (v === undefined) return { value: undefined };
+  if (v === null || v === '') return { value: 0 };
+  return validateInt(v, { min: 0, max: 9, field: 'level' });
+}
+
+// Where the spell came from. Recorded and NOT interpreted: SCHEMA_REFERENCE
+// notes that race spells do not count against preparation limits in the source
+// game, and implementing that counting is exactly the rules engine this project
+// excludes. The column exists so a player can sort their own list.
+const SPELL_SOURCES = ['class', 'race', 'item', 'other'];
+function validateSpellSource(v) {
+  if (v === undefined) return { value: undefined };
+  if (v === null || v === '') return { value: null };
+  if (typeof v !== 'string') return { error: 'source must be text' };
+  const t = v.trim().toLowerCase();
+  if (!SPELL_SOURCES.includes(t)) {
+    return { error: `source must be one of: ${SPELL_SOURCES.join(', ')}` };
+  }
+  return { value: t };
+}
+
+// ---------------------------------------------------------------------------
+// M6 — grid alignment and image framing
+// ---------------------------------------------------------------------------
+
+// The grid descriptor on a scene. SCHEMA_REFERENCE describes `grid` as JSONB
+// and "flexible without schema changes", and alignment is exactly the change it
+// was left flexible for — offset_x/offset_y are added here with no migration.
+//
+// JSONB is defensible for this ONE reason: the blob drives RENDERING and
+// nothing else. No authorisation, no bound, no cap reads it. That is the line
+// campaigns.settings crossed and the reason fog `type` did not, and it is worth
+// restating because a later feature that derives anything load-bearing from a
+// grid value would break it.
+//
+// Every key is nonetheless validated and allow-listed. "Flexible" means the
+// schema does not need a migration, not that the server accepts whatever
+// arrives — a client-writable blob with no validation is how an unbounded
+// payload gets stored.
+const GRID_TYPES = ['square', 'hex', 'none'];
+
+// The alignment offsets are in PIXELS, and bounded generously rather than
+// tightly: aligning a grid to a scanned map legitimately needs a shift of up to
+// one full cell in either direction, and cells can be large.
+const MAX_GRID_OFFSET = 2000;
+
+function validateGrid(v) {
+  if (v === undefined) return { value: undefined };
+  if (v === null) return { value: {} };
+  // An array is an object to typeof, and this is the type-confusion class the
+  // M2 canvas audit found. Refused explicitly.
+  if (typeof v !== 'object' || Array.isArray(v)) {
+    return { error: 'grid must be an object' };
+  }
+
+  const out = {};
+
+  if (v.size !== undefined && v.size !== null) {
+    const n = validateInt(v.size, { min: 5, max: 500, field: 'grid.size' });
+    if (n.error) return { error: n.error };
+    out.size = n.value;
+  }
+  if (v.type !== undefined && v.type !== null && v.type !== '') {
+    if (typeof v.type !== 'string') return { error: 'grid.type must be text' };
+    const ty = v.type.trim().toLowerCase();
+    if (!GRID_TYPES.includes(ty)) {
+      return { error: `grid.type must be one of: ${GRID_TYPES.join(', ')}` };
+    }
+    out.type = ty;
+  }
+  if (v.color !== undefined && v.color !== null && v.color !== '') {
+    const c = validateColor(v.color);
+    if (c.error) return { error: 'grid.color must be a hex value like #A1B2C3' };
+    out.color = c.value;
+  }
+  if (v.opacity !== undefined && v.opacity !== null) {
+    const o = finiteInRange(v.opacity, { min: 0, max: 1, field: 'grid.opacity' });
+    if (o.error) return { error: o.error };
+    out.opacity = o.value;
+  }
+  for (const axis of ['offset_x', 'offset_y']) {
+    if (v[axis] !== undefined && v[axis] !== null) {
+      const n = finiteInRange(v[axis], {
+        min: -MAX_GRID_OFFSET, max: MAX_GRID_OFFSET, field: `grid.${axis}`,
+      });
+      if (n.error) return { error: n.error };
+      out[axis] = n.value;
+    }
+  }
+
+  // Unknown keys are DROPPED rather than refused. The blob is presentational, so
+  // an unrecognised key is a client from a different version rather than an
+  // attack — but it is not stored either, which keeps the payload bounded
+  // without an explicit size check.
+  return { value: out };
+}
+
+// Framing for an image inside its square. Offsets are a FRACTION of the frame
+// rather than pixels, so the same values render correctly at any zoom or token
+// size — a pixel offset would be wrong the moment a Large creature used the same
+// portrait as a Medium one.
+function validateImgFrame(v, field) {
+  if (v === undefined) return { value: undefined };
+  if (v === null || v === '') return { value: 0 };
+  const n = finiteInRange(v, { min: -2, max: 2, field });
+  if (n.error) return { error: n.error };
+  return { value: n.value };
+}
+
+function validateImgScale(v) {
+  if (v === undefined) return { value: undefined };
+  if (v === null || v === '') return { value: 1 };
+  // Below 0.1 the art is a dot; above 5 it is a single pixel enlarged. Chosen,
+  // not measured — the same basis as MAX_FOG_POINTS.
+  const n = finiteInRange(v, { min: 0.1, max: 5, field: 'img_scale' });
+  if (n.error) return { error: n.error };
+  return { value: n.value };
+}
+
+// ---------------------------------------------------------------------------
 // M5 — combat and chat
 // ---------------------------------------------------------------------------
 
@@ -549,6 +693,9 @@ module.exports = {
   validateJsonBlob, MAX_JSON_BYTES, MAX_JSON_DEPTH, MAX_JSON_KEYS,
   validateItemType, ITEM_TYPES, validateItemWeight,
   validateQuantity, validateSortOrder,
+  validateSpellName, validateSpellLevel, validateSpellSource, SPELL_SOURCES,
+  validateGrid, GRID_TYPES, MAX_GRID_OFFSET,
+  validateImgFrame, validateImgScale,
   validateCombatName, validateHpOverride,
   validateMessageType, MESSAGE_TYPES,
   validateMessageContent, MAX_MESSAGE_LENGTH,

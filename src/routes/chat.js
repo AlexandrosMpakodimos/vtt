@@ -51,6 +51,7 @@ const {
   validateInt,
 } = require('../services/validators');
 const { roll } = require('../services/dice');
+const { loadActorInCampaign } = require('./actors');
 
 const router = express.Router({ mergeParams: true });
 
@@ -77,6 +78,11 @@ function publicMessage(m) {
     campaign_id: m.campaign_id,
     user_id: m.user_id,
     speaker_name: m.speaker_name,
+    // Who they were when they said it, recorded rather than derived — ownership
+    // can be transferred, and a log that relabels its own history is worse than
+    // a duplicated fact. See the migration header.
+    speaker_role: m.speaker_role,
+    speaker_as: m.speaker_as,
     content: m.content,
     type: m.type,
     roll_data: m.roll_data,
@@ -209,6 +215,36 @@ router.post('/', requireMember, async (req, res, next) => {
     // anyone speak as anyone.
     const speakerName = req.user.username;
 
+    // The role, stamped at send time. Derived from campaigns.owner_id — which
+    // remains the single source of truth for who the GM IS — but STORED, because
+    // a message is an immutable record and ownership can move.
+    const speakerRole = req.isOwner === true ? 'gm' : 'player';
+
+    // "Speaking as" a character. Optional, per message, and NOT a mode: M4
+    // rejected an active-character column, and this needs none because the
+    // choice is a property of the line rather than of the character. The client
+    // remembers the last pick locally, which is the client state M4 predicted.
+    let speakerAs = null;
+    if (body.actor_id !== undefined && body.actor_id !== null && body.actor_id !== '') {
+      const actor = await loadActorInCampaign(body.actor_id, req.campaign.id);
+      // 404 rather than 403 for BOTH "no such character" and "not yours", so
+      // this route cannot be used to enumerate the GM's prepared NPCs — the same
+      // refusal shape resolveTokenActor was flattened to during M4.
+      if (!actor) return res.status(404).json({ error: 'character not found' });
+
+      // A player may speak only as a character they control. The GM may speak as
+      // any character in the campaign, which is what running NPCs requires.
+      const mine = actor.user_id === req.user.id;
+      if (!req.isOwner && !mine) return res.status(404).json({ error: 'character not found' });
+
+      // The NAME is copied, not referenced. No actor_id is stored: a foreign key
+      // here would be a new door onto actors from a table every member can read,
+      // and answering "may this reader resolve that id" is a disclosure question
+      // this feature does not need to open. A copied name says everything the
+      // log has to say, and it keeps saying it after the character is deleted.
+      speakerAs = actor.name;
+    }
+
     // A roll is typed 'roll' unless the caller asked for something else; an
     // explicit whisper_to makes it 'whisper' for rendering. Neither affects who
     // receives it — recipientsOf reads whisper_to and nothing else.
@@ -220,6 +256,8 @@ router.post('/', requireMember, async (req, res, next) => {
       campaign_id: req.campaign.id,
       user_id: req.user.id,
       speaker_name: speakerName,
+      speaker_role: speakerRole,
+      speaker_as: speakerAs,
       content,
       type: finalType,
       roll_data: rollData ? JSON.stringify(rollData) : null,

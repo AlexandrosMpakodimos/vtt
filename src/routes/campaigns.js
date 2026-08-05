@@ -13,6 +13,7 @@ const { router: actorRoutes } = require('./actors');
 const { router: itemRoutes } = require('./items');
 const { router: combatRoutes } = require('./combat');
 const { router: chatRoutes } = require('./chat');
+const { router: spellRoutes } = require('./spells');
 
 const router = express.Router();
 
@@ -37,6 +38,7 @@ router.use('/:id/items', itemRoutes);
 // unchanged and none of them has to be re-implemented.
 router.use('/:id/combat', combatRoutes);
 router.use('/:id/messages', chatRoutes);
+router.use('/:id/spells', spellRoutes);
 
 // Abuse-prevention caps, enforced in application logic (consistent with the
 // attunement cap). NOT memory protection: campaigns are rows in Postgres, not
@@ -416,6 +418,69 @@ router.post('/:id/join', async (req, res, next) => {
 });
 
 // POST /api/campaigns/:id/leave — status -> 'left'. The owner cannot leave.
+// PATCH /api/campaigns/:id/me — a member sets their own display colour.
+//
+// SELF-SERVICE by design. The colour identifies you at the table, so it is yours
+// to choose; requireMember rather than requireOwner, and the row updated is
+// always the CALLER's — there is no user id in the path, so this route cannot be
+// pointed at somebody else no matter what the body says.
+//
+// The owner is covered by the same route because campaign creation inserts a
+// membership row for them, and an ownership transfer targets an existing active
+// member, so every participant has a row to update.
+//
+// UNIQUENESS IS ENFORCED BY THE DATABASE, not by checking first. A partial
+// unique index on (campaign_id, color) means two members clicking the same
+// swatch simultaneously race at the index and exactly one wins — there is no
+// read-then-write for a TOCTOU to live in, which is the standing atomic-cap
+// constraint satisfied natively rather than through withAtomicCap. The 23505
+// below is that race being lost, and it is a 409 rather than a 500 because
+// losing it is an ordinary outcome, not an error.
+router.patch('/:id/me', requireMember, async (req, res, next) => {
+  try {
+    const body = req.body || {};
+    if (body.color === undefined) {
+      return res.status(400).json({ error: 'nothing to update' });
+    }
+    const c = validateColor(body.color);
+    if (c.error) return res.status(400).json({ error: c.error });
+
+    let row;
+    try {
+      // Explicit column list, and the WHERE names the caller: an update that
+      // could be aimed elsewhere is the shape of every BOLA defect in this
+      // project's audits.
+      [row] = await knex('campaign_members')
+        .where({ campaign_id: req.campaign.id, user_id: req.user.id })
+        .update({ color: c.value })
+        .returning(['user_id', 'status', 'color', 'joined_at']);
+    } catch (err) {
+      if (err.code === '23505') {
+        return res.status(409).json({ error: 'somebody at this table already has that colour' });
+      }
+      throw err;
+    }
+    if (!row) return res.status(404).json({ error: 'membership not found' });
+
+    const user = await knex('users').where({ id: req.user.id }).first();
+    const shaped = publicMember({
+      ...row,
+      username: user && user.username,
+      avatar_url: user && user.avatar_url,
+      is_gm: req.user.id === req.campaign.owner_id,
+    });
+
+    // Everyone at the table needs to know, or the legend disagrees between
+    // browsers. Room-wide because a colour is not scene-scoped and discloses
+    // nothing — every member can already read the member list.
+    req.app.get('campaignSockets')?.broadcastRoom(req.campaign.id, 'member:updated', shaped);
+
+    return res.json({ member: shaped });
+  } catch (err) {
+    return next(err);
+  }
+});
+
 router.post('/:id/leave', requireMember, async (req, res, next) => {
   try {
     // Deliberate: this kills the orphaned-campaign bug at the source.

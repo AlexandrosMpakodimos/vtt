@@ -57,6 +57,7 @@
 
 const express = require('express');
 const knex = require('../db');
+const { validateImgFrame, validateImgScale, validateSpellSource } = require('../services/validators');
 const { requireMember } = require('../middleware/campaignAuth');
 const {
   validUuid, validateImageUrl, validateBool,
@@ -95,6 +96,10 @@ const MAX_ACTORS_PER_CAMPAIGN = 200;
 // via tokens.actor_id, and whose turn it is is combat.turn_index in M5.
 const MAX_PLAYER_ACTORS_PER_CAMPAIGN = 3;
 const MAX_INVENTORY_ROWS_PER_ACTOR = 200;
+
+// Spellbook rows per character. Chosen, not measured — a full 5e caster's known
+// list is dozens; 300 is abuse prevention with room to spare.
+const MAX_SPELLBOOK_ROWS_PER_ACTOR = 300;
 // database-decisions.md names the 3-item attunement cap as application logic,
 // not a DB constraint. It is the first cap in this project scoped to a single
 // row's owner rather than to a campaign or a scene.
@@ -118,6 +123,14 @@ function publicActor(a) {
     folder_id: a.folder_id,
     name: a.name,
     img_url: a.img_url,
+    // M6 framing. Postgres returns DECIMAL as a string; coerced so the client
+    // can apply the transform without parsing. Alongside img_url in BOTH the
+    // full row and the projection, because a player who receives the picture
+    // must receive how it is framed or it renders differently for them than for
+    // the GM.
+    img_offset_x: a.img_offset_x === undefined ? undefined : Number(a.img_offset_x),
+    img_offset_y: a.img_offset_y === undefined ? undefined : Number(a.img_offset_y),
+    img_scale: a.img_scale === undefined ? undefined : Number(a.img_scale),
     is_npc: a.is_npc,
     level: a.level,
     class: a.class,
@@ -154,6 +167,14 @@ function projectedActor(a) {
     user_id: a.user_id,
     name: a.name,
     img_url: a.img_url,
+    // Framing travels WITH the picture. The projection already discloses
+    // img_url — a monster's token has to render — so withholding how that
+    // picture is framed would disclose nothing extra and would make the same
+    // token look different on a player's screen than on the GM's. It describes
+    // the image, not the creature.
+    img_offset_x: a.img_offset_x === undefined ? undefined : Number(a.img_offset_x),
+    img_offset_y: a.img_offset_y === undefined ? undefined : Number(a.img_offset_y),
+    img_scale: a.img_scale === undefined ? undefined : Number(a.img_scale),
     is_npc: a.is_npc,
     size: a.size,
   };
@@ -202,6 +223,7 @@ const GM_WRITABLE = [
   'hp_current', 'hp_max', 'hp_temp', 'armor_class', 'speed',
   'strength', 'dexterity', 'constitution', 'intelligence', 'wisdom', 'charisma',
   'death_save_successes', 'death_save_failures', 'notes', 'data',
+  'img_offset_x', 'img_offset_y', 'img_scale',
 ];
 
 // Fields a PLAYER may write on their own actor. A restricted list, not
@@ -227,6 +249,8 @@ const GM_WRITABLE = [
 const PLAYER_WRITABLE = [
   'name', 'img_url', 'hp_current', 'hp_temp',
   'death_save_successes', 'death_save_failures', 'notes', 'data',
+  // Framing follows img_url: a player who may set the portrait may frame it.
+  'img_offset_x', 'img_offset_y', 'img_scale',
 ];
 
 // Validate one allow-listed actor field. Returns { column, value } or { error }.
@@ -244,6 +268,20 @@ async function validateActorField(field, raw, campaignId) {
     case 'img_url': {
       const r = validateImageUrl(raw, 'img_url');
       return r.error ? r : { column: 'img_url', value: r.value };
+    }
+    // M6 image framing. On BOTH allow-lists, because whoever may set the
+    // portrait may frame it — a player who can upload their own character's
+    // picture and then cannot stop it cropping their head off has been given
+    // half a feature. It also discloses nothing: framing describes the picture,
+    // and the picture is already whatever the projection allows.
+    case 'img_offset_x':
+    case 'img_offset_y': {
+      const r = validateImgFrame(raw, field);
+      return r.error ? r : { column: field, value: r.value };
+    }
+    case 'img_scale': {
+      const r = validateImgScale(raw);
+      return r.error ? r : { column: 'img_scale', value: r.value };
     }
     case 'class':
     case 'race': {
@@ -598,6 +636,14 @@ router.delete('/:actorId', requireMember, async (req, res, next) => {
       .where({ actor_id: actor.id })
       .select('id', 'scene_id', 'hidden');
 
+    // M6: the spellbook cascades away with the character. Counted here with the
+    // rest of the blast radius, because SCHEMA_REFERENCE flagged this cascade
+    // when the spell tables were still unbuilt, and a route whose whole design
+    // is to NAME what it destroys would otherwise have gained a silent third
+    // casualty — the same gap DELETE /:sceneId had when combats landed.
+    const spellbookRows = Number((await knex('actor_spells')
+      .where({ actor_id: actor.id }).count({ n: '*' }).first()).n);
+
     await knex('actors').where({ id: actor.id }).del();
 
     const sockets = req.app.get('campaignSockets');
@@ -622,7 +668,14 @@ router.delete('/:actorId', requireMember, async (req, res, next) => {
       }
     }
 
-    return res.json({ deleted: true, id: actor.id, tokens_unlinked: affected.length });
+    // spellbook_entries is ADDITIVE: tokens_unlinked keeps its name and meaning,
+    // so the existing probe reading it is untouched.
+    return res.json({
+      deleted: true,
+      id: actor.id,
+      tokens_unlinked: affected.length,
+      spellbook_entries: spellbookRows,
+    });
   } catch (err) {
     return next(err);
   }
@@ -972,6 +1025,222 @@ router.delete('/:actorId/inventory/:invId', requireMember, async (req, res, next
   }
 });
 
+// ---------------------------------------------------------------------------
+// SPELLBOOK (M6)
+// ---------------------------------------------------------------------------
+//
+// These live HERE, beside inventory, rather than in routes/spells.js, and that
+// placement is the design rather than an accident of convenience.
+//
+// A spellbook row reaches `actors` through a new door, and the rule it must not
+// bypass is the one M4's V2 was: a player may read a PLAYER CHARACTER's
+// spellbook — the party shares a table, an already-recorded non-claim — and
+// never an NPC's. Knowing which spells the lich has prepared is the Game
+// Master's preparation in exactly the sense a monster's pockets are.
+//
+// `loadActorForInventory` is already that gate, written for bags. Reusing it
+// unchanged is the whole point: the alternative is exporting it into another
+// router or re-deriving the rule there, and re-deriving an authorisation rule is
+// what produced M3's V2 and what Section "three copies of one rule" had to undo
+// during M5. One definition, four callers.
+//
+// The function's name is now narrower than its job. Renaming it would touch
+// audited code and its probes for a cosmetic gain, so it keeps the name and this
+// comment records why.
+
+// GET .../spells — a character's spellbook, with each spell attached.
+router.get('/:actorId/spells', requireMember, async (req, res, next) => {
+  try {
+    const actor = await loadActorForInventory(req, res, { write: false });
+    if (!actor) return undefined;
+
+    // Explicit column lists on the join — never select *, which would pull every
+    // column of both tables into scope and invite one into a payload.
+    const rows = await knex('actor_spells as as_')
+      .join('spells as s', 's.id', 'as_.spell_id')
+      .where('as_.actor_id', actor.id)
+      .orderBy([{ column: 's.level' }, { column: 's.name' }])
+      .select(
+        'as_.actor_id', 'as_.spell_id', 'as_.prepared', 'as_.source',
+        'as_.created_at', 'as_.updated_at',
+        's.name as s_name', 's.level as s_level', 's.description as s_description',
+        's.properties as s_properties', 's.campaign_id as s_campaign_id',
+        's.created_at as s_created_at', 's.updated_at as s_updated_at',
+      );
+
+    return res.json({
+      spells: rows.map((r) => ({
+        actor_id: r.actor_id,
+        spell_id: r.spell_id,
+        prepared: r.prepared,
+        source: r.source,
+        created_at: r.created_at,
+        updated_at: r.updated_at,
+        // The catalogue row has no tier variant — there is no `identified`
+        // equivalent for spells, deliberately. See the spells migration header.
+        spell: {
+          id: r.spell_id,
+          campaign_id: r.s_campaign_id,
+          name: r.s_name,
+          level: r.s_level,
+          description: r.s_description,
+          properties: r.s_properties,
+          created_at: r.s_created_at,
+          updated_at: r.s_updated_at,
+        },
+      })),
+    });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// POST .../spells — a character learns a spell.
+//
+// requireMember with a per-actor write check, exactly as inventory does: a
+// player fills their own spellbook, the GM fills anybody's.
+router.post('/:actorId/spells', requireMember, async (req, res, next) => {
+  try {
+    const actor = await loadActorForInventory(req, res, { write: true });
+    if (!actor) return undefined;
+
+    const body = req.body || {};
+    if (!validUuid(body.spell_id)) return res.status(400).json({ error: 'spell_id is required' });
+
+    // Scoped to THIS campaign, so a spell id from another campaign is a 404
+    // rather than a cross-campaign read.
+    const spell = await knex('spells')
+      .where({ id: body.spell_id, campaign_id: req.campaign.id }).first();
+    if (!spell) return res.status(404).json({ error: 'spell not found' });
+
+    const prep = body.prepared === undefined
+      ? { value: false } : validateBool(body.prepared, 'prepared');
+    if (prep.error) return res.status(400).json({ error: prep.error });
+    const src = validateSpellSource(body.source);
+    if (src.error) return res.status(400).json({ error: src.error });
+
+    let row;
+    try {
+      const rows = await withAtomicCap({
+        table: 'actor_spells',
+        where: { actor_id: actor.id },
+        max: MAX_SPELLBOOK_ROWS_PER_ACTOR,
+        capMessage: `a character may know at most ${MAX_SPELLBOOK_ROWS_PER_ACTOR} spells`,
+        insert: {
+          actor_id: actor.id,
+          spell_id: spell.id,
+          prepared: prep.value,
+          source: src.value === undefined ? null : src.value,
+        },
+        // The composite primary key makes learning a known spell a no-op rather
+        // than a duplicate row or a 500. Counted as adding zero, which is
+        // correct: nothing new enters the capped set.
+        conflict: {
+          columns: ['actor_id', 'spell_id'],
+          match: { actor_id: actor.id, spell_id: spell.id },
+          merge: ['updated_at'],
+        },
+      });
+      row = rows[0];
+    } catch (err) {
+      if (err.capExceeded) return res.status(409).json({ error: err.message });
+      throw err;
+    }
+
+    // Carries NO spell data, only ids. The M4 inventory decision, for the same
+    // reason: clients re-fetch through the authorised path, so this event cannot
+    // become a second disclosure channel that drifts from the first.
+    req.app.get('campaignSockets')?.broadcastRoom(req.campaign.id, 'spellbook:changed', {
+      actor_id: actor.id,
+    });
+
+    return res.status(201).json({ entry: shapeSpellbookRow(row) });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// PATCH .../spells/:spellId — tick or untick "prepared", or correct the source.
+//
+// `prepared` is a CHECKBOX. The server does not count prepared spells, does not
+// validate them against a limit, and does not care that race spells are exempt
+// from that limit in the source game. Counting would be the 5e rules engine this
+// project excludes; the flag is stored and the Game Master interprets it.
+router.patch('/:actorId/spells/:spellId', requireMember, async (req, res, next) => {
+  try {
+    const actor = await loadActorForInventory(req, res, { write: true });
+    if (!actor) return undefined;
+    if (!validUuid(req.params.spellId)) return res.status(404).json({ error: 'spell not found' });
+
+    const existing = await knex('actor_spells')
+      .where({ actor_id: actor.id, spell_id: req.params.spellId }).first();
+    if (!existing) return res.status(404).json({ error: 'spell not found' });
+
+    const body = req.body || {};
+    const updates = {};
+    if (body.prepared !== undefined) {
+      const b = validateBool(body.prepared, 'prepared');
+      if (b.error) return res.status(400).json({ error: b.error });
+      updates.prepared = b.value;
+    }
+    if (body.source !== undefined) {
+      const src = validateSpellSource(body.source);
+      if (src.error) return res.status(400).json({ error: src.error });
+      updates.source = src.value;
+    }
+    if (!Object.keys(updates).length) {
+      return res.status(400).json({ error: 'nothing to update' });
+    }
+    updates.updated_at = knex.fn.now();
+
+    const [row] = await knex('actor_spells')
+      .where({ actor_id: actor.id, spell_id: req.params.spellId })
+      .update(updates)
+      .returning('*');
+
+    req.app.get('campaignSockets')?.broadcastRoom(req.campaign.id, 'spellbook:changed', {
+      actor_id: actor.id,
+    });
+
+    return res.json({ entry: shapeSpellbookRow(row) });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// DELETE .../spells/:spellId — a character forgets a spell.
+router.delete('/:actorId/spells/:spellId', requireMember, async (req, res, next) => {
+  try {
+    const actor = await loadActorForInventory(req, res, { write: true });
+    if (!actor) return undefined;
+    if (!validUuid(req.params.spellId)) return res.status(404).json({ error: 'spell not found' });
+
+    const n = await knex('actor_spells')
+      .where({ actor_id: actor.id, spell_id: req.params.spellId }).del();
+    if (!n) return res.status(404).json({ error: 'spell not found' });
+
+    req.app.get('campaignSockets')?.broadcastRoom(req.campaign.id, 'spellbook:changed', {
+      actor_id: actor.id,
+    });
+
+    return res.json({ ok: true, spell_id: req.params.spellId });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+function shapeSpellbookRow(r) {
+  if (!r) return null;
+  return {
+    actor_id: r.actor_id,
+    spell_id: r.spell_id,
+    prepared: r.prepared,
+    source: r.source,
+    created_at: r.created_at,
+    updated_at: r.updated_at,
+  };
+}
+
 module.exports = {
   router,
   publicActor,
@@ -984,6 +1253,7 @@ module.exports = {
   GM_WRITABLE,
   PLAYER_WRITABLE,
   MAX_ACTORS_PER_CAMPAIGN,
+  MAX_SPELLBOOK_ROWS_PER_ACTOR,
   MAX_PLAYER_ACTORS_PER_CAMPAIGN,
   MAX_INVENTORY_ROWS_PER_ACTOR,
   MAX_ATTUNED_ITEMS,

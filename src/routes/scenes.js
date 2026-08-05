@@ -31,6 +31,7 @@ const { withAtomicCap } = require('../services/atomicCap');
 // M5. Scene access moved to a leaf module to break the routes/scenes <->
 // routes/combat require cycle; see that module's header.
 const { loadSceneInCampaign, mayUseScene } = require('../services/sceneAccess');
+const { validateGrid, validateImgFrame, validateImgScale } = require('../services/validators');
 // M5. Auto-add / auto-remove hooks. A token placed on a scene with a running
 // fight joins the roster; a token deleted leaves it (via the FK cascade, which
 // cannot notify anyone, hence the explicit broadcast).
@@ -136,6 +137,11 @@ function publicToken(t) {
     // players: it is the GM's classification of a token they can already see,
     // and hidden tokens never reach them at all. Same class as `locked`.
     is_prop: t.is_prop,
+    // M6 image framing. Numeric, so the client can apply the transform without
+    // parsing; Postgres returns DECIMAL as a string, hence the coercion.
+    img_offset_x: t.img_offset_x === undefined ? undefined : Number(t.img_offset_x),
+    img_offset_y: t.img_offset_y === undefined ? undefined : Number(t.img_offset_y),
+    img_scale: t.img_scale === undefined ? undefined : Number(t.img_scale),
     bar1_value: t.bar1_value,
     bar1_max: t.bar1_max,
     conditions: t.conditions,
@@ -249,6 +255,8 @@ router.post('/', requireOwner, async (req, res, next) => {
     const img = validateImageUrl(body.img_url, 'img_url');
     if (img.error) return res.status(400).json({ error: img.error });
 
+    const g = validateGrid(body.grid);
+    if (g.error) return res.status(400).json({ error: g.error });
     const w = validateSceneDimension(body.width, 'width', 1400);
     if (w.error) return res.status(400).json({ error: w.error });
 
@@ -270,6 +278,9 @@ router.post('/', requireOwner, async (req, res, next) => {
           img_url: img.value,
           width: w.value,
           height: h.value,
+          // JSON.stringify because knex will not infer jsonb from a plain
+          // object on insert; validateGrid has already allow-listed every key.
+          grid: JSON.stringify(g.value === undefined ? {} : g.value),
         },
       });
     } catch (err) {
@@ -414,6 +425,104 @@ router.get('/:sceneId', requireMember, async (req, res, next) => {
 });
 
 // ---- tokens ----
+
+// PATCH /api/campaigns/:id/scenes/:sceneId — GM edits a scene.
+//
+// This route did not exist before M6 and was a recorded [TODO] from M3: scenes
+// could be created, listed, activated and deleted, but not changed. Grid
+// alignment is the feature that finally needs it — aligning a grid to a scanned
+// battle map is precisely an edit to an existing scene.
+//
+// GM-only. A scene's dimensions and grid are the board itself; a player changing
+// them would move every token on it for everybody.
+//
+// ---------------------------------------------------------------------------
+// THE HAZARD THIS ROUTE CREATES, stated because it is not obvious
+// ---------------------------------------------------------------------------
+// Token coordinates are stored in GRID UNITS, not pixels. Changing `grid.size`
+// therefore does not move any row — and moves every token on screen, because
+// the same grid coordinate now lands somewhere else in the image. Re-aligning a
+// grid under a populated scene silently rearranges the board.
+//
+// The server does NOT rewrite token coordinates to compensate. Doing so would be
+// the server interpreting the game state, and it would be guessing: whether the
+// GM wants the tokens to keep their grid squares (no rewrite) or their positions
+// over the artwork (rewrite) depends on why they are re-aligning. So the
+// response reports the token count on the scene when the grid changed, and the
+// client warns before committing. The rule is the same one that keeps hit points
+// unclamped: the server stores what it is told and lets a human decide what it
+// means.
+router.patch('/:sceneId', requireOwner, async (req, res, next) => {
+  try {
+    const scene = await loadSceneInCampaign(req.params.sceneId, req.campaign.id);
+    if (!scene) return res.status(404).json({ error: 'scene not found' });
+
+    const body = req.body || {};
+    const updates = {};
+
+    if (body.name !== undefined) {
+      const n = validateSceneName(body.name);
+      if (n.error) return res.status(400).json({ error: n.error });
+      updates.name = n.value;
+    }
+    if (body.img_url !== undefined) {
+      const img = validateImageUrl(body.img_url, 'img_url');
+      if (img.error) return res.status(400).json({ error: img.error });
+      updates.img_url = img.value;
+    }
+    if (body.width !== undefined) {
+      const w = validateSceneDimension(body.width, 'width', 1400);
+      if (w.error) return res.status(400).json({ error: w.error });
+      updates.width = w.value;
+    }
+    if (body.height !== undefined) {
+      const h = validateSceneDimension(body.height, 'height', 1050);
+      if (h.error) return res.status(400).json({ error: h.error });
+      updates.height = h.value;
+    }
+
+    let gridChanged = false;
+    if (body.grid !== undefined) {
+      const g = validateGrid(body.grid);
+      if (g.error) return res.status(400).json({ error: g.error });
+      // MERGED over the stored grid, not replaced. An alignment tool sends only
+      // the keys it touched, and a replace would silently reset colour and
+      // opacity every time somebody nudged an offset.
+      const merged = { ...(scene.grid || {}), ...g.value };
+      gridChanged = JSON.stringify(merged) !== JSON.stringify(scene.grid || {});
+      updates.grid = JSON.stringify(merged);
+    }
+
+    if (!Object.keys(updates).length) {
+      return res.status(400).json({ error: 'nothing to update' });
+    }
+    updates.updated_at = knex.fn.now();
+
+    const [row] = await knex('scenes')
+      .where({ id: scene.id, campaign_id: req.campaign.id })
+      .update(updates)
+      .returning('*');
+
+    const shaped = publicScene(row);
+    const sockets = req.app.get('campaignSockets');
+    // Scene-scoped: a player must not learn that a map they cannot open has
+    // changed. broadcastScene applies the active-scene rule for us.
+    await sockets?.broadcastScene(req.campaign.id, scene.id, 'scene:updated', shaped);
+    await sockets?.broadcastToOwner(req.campaign.id, 'scene:updated', shaped);
+
+    // Reported so the client can warn BEFORE a second alignment change, not to
+    // make the server responsible for the consequence.
+    let affectedTokens;
+    if (gridChanged) {
+      affectedTokens = Number((await knex('tokens')
+        .where({ scene_id: scene.id }).count({ n: '*' }).first()).n);
+    }
+
+    return res.json({ scene: shaped, grid_changed: gridChanged, affected_tokens: affectedTokens });
+  } catch (err) {
+    return next(err);
+  }
+});
 
 // DELETE /api/campaigns/:id/scenes/:sceneId — GM destroys a scene.
 //
@@ -574,9 +683,31 @@ router.post('/:sceneId/tokens', requireMember, async (req, res, next) => {
     let tokenImg = img.value;
     let tokenW = width.value;
     let tokenH = height.value;
+    // M6: framing is inherited WITH the picture, not resolved from the actor at
+    // render time.
+    //
+    // The migration header speculated the client would resolve "token's framing,
+    // else its character's". That was written before checking this line, and it
+    // is wrong: img_url is COPIED here at placement, not referenced. If the
+    // picture is copied and the framing is not, a linked token gets the
+    // character's portrait with default framing — the head cropped off — which
+    // is precisely the case framing exists to fix.
+    //
+    // So framing follows the same rule as the image it describes. The
+    // consequence, stated rather than discovered: re-framing a character does
+    // NOT retro-update tokens already on the board, exactly as re-uploading its
+    // portrait does not. One rule, and the token owns what it was given.
+    let tokenFrame = null;
     if (actor) {
       if (body.name === undefined) tokenName = actor.name;
-      if (body.img_url === undefined) tokenImg = actor.img_url;
+      if (body.img_url === undefined) {
+        tokenImg = actor.img_url;
+        tokenFrame = {
+          img_offset_x: actor.img_offset_x,
+          img_offset_y: actor.img_offset_y,
+          img_scale: actor.img_scale,
+        };
+      }
       const preset = SIZE_PRESETS[String(actor.size || '').toLowerCase()];
       if (preset !== undefined) {
         if (body.width === undefined) tokenW = preset;
@@ -597,6 +728,8 @@ router.post('/:sceneId/tokens', requireMember, async (req, res, next) => {
       height: tokenH,
       hidden,
       is_prop: isProp,
+      // Explicit spread of a hand-built object — three known keys, never a body.
+      ...(tokenFrame || {}),
     };
 
     let token;
@@ -823,6 +956,19 @@ router.patch('/:sceneId/tokens/:tokenId', requireOwner, async (req, res, next) =
       if (b.error) return res.status(400).json({ error: b.error });
       updates.is_prop = b.value;
     }
+    // M6 image framing. Placing the art inside its square is presentation, and
+    // this route is requireOwner, so there is no player branch to consider.
+    for (const [field, fn] of [
+      ['img_offset_x', (v) => validateImgFrame(v, 'img_offset_x')],
+      ['img_offset_y', (v) => validateImgFrame(v, 'img_offset_y')],
+      ['img_scale', validateImgScale],
+    ]) {
+      if (body[field] !== undefined) {
+        const r = fn(body[field]);
+        if (r.error) return res.status(400).json({ error: r.error });
+        updates[field] = r.value;
+      }
+    }
 
     if (Object.keys(updates).length === 0) {
       return res.status(400).json({ error: 'nothing to update' });
@@ -991,6 +1137,43 @@ router.post('/:sceneId/tokens/copy', requireOwner, async (req, res, next) => {
       }
       if (linked.actor) linkedActors.set(linked.actor.id, linked.actor);
 
+      // [FIXED M6] This route resolved the actor and then inherited NOTHING
+      // from it, while single placement inherited name, picture, framing and
+      // footprint. Two doors onto the same operation — create a token from a
+      // character — with the rule fitted to one of them, which is this project's
+      // recurring defect shape.
+      //
+      // It went unnoticed because nothing ever sent actor_id here: the paste
+      // path existed for copy/paste of tokens that already had their values
+      // filled in. Adding a character picker to the placement bar made bulk
+      // placement reach this route for the first time, and five goblins would
+      // have arrived nameless, pictureless and 1x1.
+      //
+      // Inheritance is BY ABSENCE, matching placement exactly: a spec that names
+      // a field keeps its own value.
+      let specName = name.value;
+      let specImg = img.value;
+      let specW = width.value;
+      let specH = height.value;
+      let specFrame = null;
+      if (linked.actor) {
+        const a = linked.actor;
+        if (spec.name === undefined) specName = a.name;
+        if (spec.img_url === undefined) {
+          specImg = a.img_url;
+          specFrame = {
+            img_offset_x: a.img_offset_x,
+            img_offset_y: a.img_offset_y,
+            img_scale: a.img_scale,
+          };
+        }
+        const preset = SIZE_PRESETS[String(a.size || '').toLowerCase()];
+        if (preset !== undefined) {
+          if (spec.width === undefined) specW = preset;
+          if (spec.height === undefined) specH = preset;
+        }
+      }
+
       // Hand-listed columns only. scene_id / created_by come from the server,
       // never from the body; actor_id is the RESOLVED actor, not the raw spec
       // value — a forged or foreign id was refused above.
@@ -998,13 +1181,14 @@ router.post('/:sceneId/tokens/copy', requireOwner, async (req, res, next) => {
         scene_id: scene.id,
         actor_id: linked.actor ? linked.actor.id : null,
         created_by: req.user.id,
-        name: name.value,
-        img_url: img.value,
+        name: specName,
+        img_url: specImg,
         x: x.value,
         y: y.value,
-        width: width.value,
-        height: height.value,
+        width: specW,
+        height: specH,
         hidden,
+        ...(specFrame || {}),
         locked: false,          // a pasted token starts unlocked
         // A copied prop stays a prop: pasting a row of trees should not fill the
         // initiative roster. Read from the spec like every other field and

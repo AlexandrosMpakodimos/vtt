@@ -215,6 +215,49 @@ t('over the recipient bound refused',
   !!v.validateWhisperTo(Array.from({ length: v.MAX_WHISPER_RECIPIENTS + 1 },
     (_, i) => `${String(i).padStart(8, '0')}-1111-4111-8111-111111111111`)).error);
 
+console.log('\n--- SHARED validators: coercion before testing (finding 2026-08-04) ---');
+// A validator that COERCES before testing is defeated by a single-element
+// array, because String(['x']) === 'x' and Number([5]) === 5. The M2 canvas
+// audit found this in the NUMERIC validators and fixed those; the STRING ones
+// were left, and stayed wrong until a probe written for the M6 colour picker
+// hit validateColor. Probed here, in the pure suite, so the class cannot come
+// back on any of the four.
+t('validateColor refuses an array', !!v.validateColor(['#ffffff']).error);
+t('validateColor refuses a number', !!v.validateColor(0xffffff).error);
+t('validateColor refuses an object', !!v.validateColor({ hex: '#ffffff' }).error);
+t('validateColor still accepts a hex string', v.validateColor('#A1B2C3').value === '#a1b2c3');
+t('validateColor still treats null as "clear"', v.validateColor(null).value === null);
+t('validateColor still treats empty as "clear"', v.validateColor('').value === null);
+t('validateImageUrl refuses an array', !!v.validateImageUrl(['https://a.test/x.png'], 'img_url').error);
+t('validateImageUrl refuses a number', !!v.validateImageUrl(123, 'img_url').error);
+t('validateImageUrl still accepts a url',
+  v.validateImageUrl('https://a.test/x.png', 'img_url').value === 'https://a.test/x.png');
+t('validateImageUrl still treats null as absent',
+  v.validateImageUrl(null, 'img_url').value === null);
+// The numeric pair, already fixed in M2 — asserted so a refactor cannot undo it.
+t('validateInt refuses a nested array', !!v.validateInt([[5]], { min: 0, max: 10, field: 'x' }).error);
+t('validateGridCoord refuses an array', !!v.validateGridCoord([5], 'x').error);
+
+console.log('\n--- M6 validators: the scene grid ---');
+t('grid accepts a full descriptor',
+  !v.validateGrid({ size: 70, type: 'square', color: '#ABCDEF', opacity: 0.5, offset_x: -3, offset_y: 4 }).error);
+t('grid.color array refused (via validateColor)', !!v.validateGrid({ color: ['#ffffff'] }).error);
+t('grid refuses an array', !!v.validateGrid([1, 2]).error);
+t('grid refuses a string', !!v.validateGrid('square').error);
+t('grid strips unknown keys rather than storing them',
+  Object.keys(v.validateGrid({ size: 70, junk: 'x' }).value).join(',') === 'size');
+t('grid.size bound low', !!v.validateGrid({ size: 4 }).error);
+t('grid.size bound high', !!v.validateGrid({ size: 501 }).error);
+t('grid.opacity bound', !!v.validateGrid({ opacity: 2 }).error);
+t('grid offset bound', !!v.validateGrid({ offset_x: 99999 }).error);
+t('grid.type allow-list', !!v.validateGrid({ type: 'octagon' }).error);
+t('img frame accepts a fraction', v.validateImgFrame(0.25, 'img_offset_x').value === 0.25);
+t('img frame bound', !!v.validateImgFrame(9, 'img_offset_x').error);
+t('img frame refuses an array', !!v.validateImgFrame([[1]], 'img_offset_x').error);
+t('img scale accepts', v.validateImgScale(1.4).value === 1.4);
+t('img scale bound low', !!v.validateImgScale(0.01).error);
+t('img scale bound high', !!v.validateImgScale(99).error);
+
 console.log('\n--- M5 validators: combat name ---');
 t('name optional', v.validateCombatName(undefined).value === null);
 t('name accepted', v.validateCombatName('Ambush at the bridge').value === 'Ambush at the bridge');
