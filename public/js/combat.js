@@ -418,7 +418,18 @@ function renderMessage(m) {
     + (m.whisper_to && m.whisper_to.length ? ' whisper' : '')
     + (m.roll_data ? ' roll' : '');
   const row = el('div', { cls });
-  const who = el('span', { cls: 'who', text: `${m.speaker_name || 'someone'}: ` });
+  // "AlexBako (DM)" / "Maria (Aria)" / "Maria (Player)".
+  //
+  // Read from the ROW, not derived from the current member list: ownership can
+  // be transferred, and deriving would relabel every historical line the moment
+  // the GM changes. The fallback covers rows written before speaker_role
+  // existed — they read as a plain name rather than being asserted to be
+  // something they never recorded.
+  let tag = '';
+  if (m.speaker_role === 'gm') tag = ' (DM)';
+  else if (m.speaker_as) tag = ` (${m.speaker_as})`;
+  else if (m.speaker_role === 'player') tag = ' (Player)';
+  const who = el('span', { cls: 'who', text: `${m.speaker_name || 'someone'}${tag}: ` });
   // Same colour in the log as on the dice, so the two agree and the mapping is
   // learnable without consulting the legend every time.
   const c = colorForUser(m.user_id);
@@ -482,6 +493,7 @@ async function loadCampaign() {
   if (sceneId) sel.value = sceneId;
 
   await loadMembers();
+  await loadSpeakable();
   await loadScene();
   await loadCombat();
   await loadMessages();
@@ -504,11 +516,16 @@ async function loadMembers() {
       // so most members have none. The fallback is derived from the user id, so
       // it is identical in every browser at the table with no coordination.
       color: memberColor(m),
+      // The colour actually stored against the membership, as opposed to the
+      // id-derived fallback above. The palette must show what is CLAIMED — a
+      // generated colour is not a claim and must not grey out a swatch.
+      assigned: (diceApi() && diceApi().normalizeHex(m.color)) || null,
       is_gm: m.is_gm,
     }));
   }
   renderWhisperTargets();
   renderLegend();
+  renderPalette();
 }
 
 // Read the bridge at CALL TIME rather than through the `dice3d` variable, which
@@ -551,6 +568,57 @@ function renderWhisperTargets() {
 
 // Who is which colour. Without this the dice are pretty but unreadable — a
 // colour only identifies someone if you can look up what it means.
+// A fixed palette rather than a free-form colour input. Sixteen well-separated,
+// legible colours against a member cap of 8 means exhaustion is not a real
+// concern, and a swatch grid can show what is TAKEN — which a colour input
+// cannot, and which is the whole point of enforcing uniqueness.
+const PALETTE = [
+  '#e6194b', '#3cb44b', '#4363d8', '#f58231', '#911eb4', '#42d4f4',
+  '#f032e6', '#bfef45', '#fabed4', '#469990', '#dcbeff', '#9a6324',
+  '#800000', '#808000', '#000075', '#a9a9a9',
+];
+
+function renderPalette() {
+  const box = document.getElementById('palette');
+  if (!box) return;
+  box.textContent = '';
+  // A colour is "taken" if any OTHER member holds it. Derived from the member
+  // list every member already receives, so no new endpoint and no new
+  // disclosure — the server re-checks on write regardless, via the unique index.
+  const takenBy = new Map();
+  for (const m of members) if (m.assigned) takenBy.set(m.assigned, m.id);
+
+  for (const hex of PALETTE) {
+    const owner = takenBy.get(hex);
+    const mine = owner === (me && me.id);
+    const b = document.createElement('button');
+    b.style.background = hex;
+    b.className = (owner && !mine ? 'taken' : '') + (mine ? ' mine' : '');
+    b.title = owner ? (mine ? 'yours' : 'taken') : `claim ${hex}`;
+    if (owner && !mine) {
+      b.disabled = true;
+    } else {
+      b.addEventListener('click', () => claimColor(hex));
+    }
+    box.appendChild(b);
+  }
+}
+
+async function claimColor(hex) {
+  const msg = document.getElementById('paletteMsg');
+  const r = await api('PATCH', `/api/campaigns/${campaign.id}/me`, { color: hex });
+  show('PATCH my colour', r);
+  if (r.status === 409) {
+    // Losing the race is an ordinary outcome, not an error: somebody clicked the
+    // same swatch a moment earlier. Refresh so the grid shows the truth.
+    msg.textContent = r.data.error;
+    await loadMembers();
+    return;
+  }
+  msg.textContent = r.status === 200 ? '' : (r.data && r.data.error) || '';
+  await loadMembers();
+}
+
 function renderLegend() {
   const box = document.getElementById('diceLegend');
   if (!box) return;
@@ -565,6 +633,45 @@ function renderLegend() {
     box.appendChild(chip);
   }
 }
+
+// Characters this caller may speak as. A player gets their own; the GM gets
+// every character in the campaign, which is what running NPCs requires. The
+// server re-checks on every message — this list is convenience, not authority.
+let speakable = [];
+
+async function loadSpeakable() {
+  speakable = [];
+  const r = await api('GET', `/api/campaigns/${campaign.id}/actors`);
+  if (r.status === 200) {
+    speakable = (r.data.actors || []).filter((a) => isGm || a.user_id === (me && me.id));
+  }
+  renderSpeakAs();
+}
+
+function renderSpeakAs() {
+  const sel = document.getElementById('speakAs');
+  if (!sel) return;
+  const previous = sel.value;
+  sel.textContent = '';
+  const none = document.createElement('option');
+  none.value = '';
+  none.textContent = 'myself';
+  sel.appendChild(none);
+  for (const a of speakable) {
+    const o = document.createElement('option');
+    o.value = a.id;
+    o.textContent = a.name + (a.is_npc ? ' (NPC)' : '');
+    sel.appendChild(o);
+  }
+  // Restore the last choice. THIS is the "active character" M4 declined to make
+  // a column: a local default, remembered per campaign, with no server state and
+  // no exactly-one invariant to enforce.
+  const remembered = previous || localGet(`vtt.speakAs.${campaign.id}`) || '';
+  if ([...sel.options].some((o) => o.value === remembered)) sel.value = remembered;
+}
+
+function localGet(k) { try { return window.localStorage.getItem(k); } catch { return null; } }
+function localSet(k, v) { try { window.localStorage.setItem(k, v); } catch { /* private mode */ } }
 
 async function loadScene() {
   if (!sceneId) { tokens = []; actorsById = new Map(); renderTokens(); return; }
@@ -657,11 +764,16 @@ function whisperTargets() {
   return ids.length ? ids : undefined;
 }
 
+function speakingAs() {
+  const v = document.getElementById('speakAs').value;
+  return v === '' ? undefined : v;
+}
+
 async function sendChat() {
   const content = str('chatText');
   if (!content) return;
   const r = await api('POST', `/api/campaigns/${campaign.id}/messages`, {
-    content, whisper_to: whisperTargets(),
+    content, whisper_to: whisperTargets(), actor_id: speakingAs(),
   });
   show('POST message', r);
   if (r.status === 201) document.getElementById('chatText').value = '';
@@ -672,6 +784,7 @@ async function sendRoll() {
     formula: str('diceFormula'),
     content: str('diceLabel'),
     whisper_to: whisperTargets(),
+    actor_id: speakingAs(),
   });
   show('POST roll', r);
 }
@@ -707,6 +820,11 @@ function connectSocket() {
     } else {
       loadCombat();
     }
+  });
+
+  socket.on('member:updated', (d) => {
+    log(`member:updated  ${JSON.stringify(d)}`);
+    loadMembers();
   });
 
   socket.on('combat:deleted', (d) => {
@@ -764,6 +882,10 @@ document.getElementById('chatText').addEventListener('keydown', (e) => {
 document.getElementById('diceFormula').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') sendRoll();
 });
+document.getElementById('speakAs').addEventListener('change', (e) => {
+  if (campaign) localSet(`vtt.speakAs.${campaign.id}`, e.target.value);
+});
+
 document.getElementById('sceneSel').addEventListener('change', async (e) => {
   sceneId = e.target.value;
   await loadScene();

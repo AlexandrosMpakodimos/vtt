@@ -240,14 +240,17 @@ async function openScene(sceneId) {
   stage.style.width = scene.width + 'px';
   stage.style.height = scene.height + 'px';
   stageBg.style.backgroundImage = scene.img_url ? `url("${CSS.escape(scene.img_url)}")` : 'none';
-  stage.style.backgroundImage =
-    'linear-gradient(#3a3a3a 1px, transparent 1px), linear-gradient(90deg, #3a3a3a 1px, transparent 1px)';
-  stage.style.backgroundSize = `${GRID_PX}px ${GRID_PX}px`;
+  applyGridAlignment();
+  applyGridOverlay();
 
   for (const { el } of tokens.values()) el.remove();
   tokens.clear();
   selection.clear();
   for (const t of r.data.tokens) upsertToken(t);
+
+  // M6: refresh the character picker. Deliberately NOT from r.data.actors —
+  // see renderActorPicker's header for why that array is the wrong source.
+  loadActorPicker();
 
   // Fog arrives in the same "load heavy" payload as the tokens.
   fog.clear();
@@ -262,11 +265,78 @@ async function openScene(sceneId) {
 }
 
 // --- rendering ---
+// M6: place the map image so its printed grid lines up with OUR grid.
+//
+// The obvious approach is the other way round — read scene.grid.size and render
+// the token grid at that many pixels per unit. It was rejected because GRID_PX
+// is 50 everywhere in this file and in the 134 jsdom assertions covering it;
+// making it dynamic would touch every coordinate conversion and every one of
+// those probes, for a change that is purely presentational.
+//
+// So the IMAGE is scaled to the grid instead of the grid to the image. The
+// result on screen is identical, token coordinates keep meaning exactly what
+// they meant, and nothing in the existing suites is disturbed.
+//
+// scene.grid.size is the cell size measured in the IMAGE's own pixels; the
+// offsets are where that grid begins, also in image pixels. Scaling by
+// GRID_PX / size makes one printed cell exactly one of our cells.
+//
+// Background-size is set from the image's NATURAL dimensions, which means a
+// probe load — CSS has no way to say "scale this background by 1.4" without
+// knowing what it is scaling.
+function applyGridAlignment() {
+  const grid = (scene && scene.grid) || {};
+  const cell = Number(grid.size) || 0;
+
+  if (!scene || !scene.img_url || !cell) {
+    // No alignment set: fall back to the pre-M6 behaviour exactly.
+    stageBg.style.backgroundSize = 'cover';
+    stageBg.style.backgroundPosition = 'center';
+    return;
+  }
+
+  const scale = GRID_PX / cell;
+  const ox = Number(grid.offset_x) || 0;
+  const oy = Number(grid.offset_y) || 0;
+
+  const probe = new Image();
+  probe.onload = () => {
+    // Guard against a slow load resolving after the GM switched scenes.
+    if (!scene || scene.img_url !== probe.src) return;
+    stageBg.style.backgroundSize =
+      `${probe.naturalWidth * scale}px ${probe.naturalHeight * scale}px`;
+    stageBg.style.backgroundPosition = `${-ox * scale}px ${-oy * scale}px`;
+    stageBg.style.backgroundRepeat = 'no-repeat';
+  };
+  probe.src = scene.img_url;
+}
+
+// The grid overlay itself, drawn from the scene's own settings rather than the
+// hardcoded dark lines. Colour and opacity are presentational and validated
+// server-side; type 'none' hides the overlay for a map that has its own printed
+// grid already aligned underneath.
+function applyGridOverlay() {
+  const grid = (scene && scene.grid) || {};
+  if (grid.type === 'none') {
+    stage.style.backgroundImage = 'none';
+    return;
+  }
+  const color = grid.color || '#3a3a3a';
+  stage.style.backgroundImage =
+    `linear-gradient(${color} 1px, transparent 1px), linear-gradient(90deg, ${color} 1px, transparent 1px)`;
+  stage.style.backgroundSize = `${GRID_PX}px ${GRID_PX}px`;
+  stage.style.opacity = '';
+}
+
 function upsertToken(row) {
   let entry = tokens.get(row.id);
   if (!entry) {
     const el = document.createElement('div');
     el.className = 'token';
+    // The art layer sits BEHIND the caption, so framing never moves the name.
+    const art = document.createElement('div');
+    art.className = 'art';
+    el.appendChild(art);
     const cap = document.createElement('div');
     cap.className = 'cap';
     el.appendChild(cap);
@@ -279,12 +349,38 @@ function upsertToken(row) {
   paintToken(entry);
 }
 
+// M6: draw the token's art with its framing applied.
+//
+// Offsets are a FRACTION of the frame, so a CSS percentage translate is the
+// exact primitive: it is already relative to the element's own size, which means
+// the same values render correctly whether the token is 1x1 or 3x3. A pixel
+// offset would have to be rescaled per footprint, and would be wrong the moment
+// a Large creature borrowed a Medium's portrait.
+//
+// Transform order matters. In CSS the RIGHTMOST function applies first, so
+// `translate(...) scale(...)` scales the art and then shifts it by a fraction of
+// the UNSCALED frame — which is what makes an offset of 0.25 mean "a quarter of
+// the square" at every zoom level.
+//
+// At the identity transform this is `translate(0%, 0%) scale(1)`, which renders
+// byte-identically to the pre-M6 build.
+function paintArt(el, row) {
+  const art = el.querySelector('.art');
+  if (!art) return;
+  art.style.backgroundImage = row.img_url ? `url("${CSS.escape(row.img_url)}")` : 'none';
+  const ox = Number(row.img_offset_x) || 0;
+  const oy = Number(row.img_offset_y) || 0;
+  const sc = Number(row.img_scale);
+  const scale = Number.isFinite(sc) && sc > 0 ? sc : 1;
+  art.style.transform = `translate(${ox * 100}%, ${oy * 100}%) scale(${scale})`;
+}
+
 function paintToken({ row, el }) {
   el.style.left = (row.x * GRID_PX) + 'px';
   el.style.top = (row.y * GRID_PX) + 'px';
   el.style.width = (row.width * GRID_PX) + 'px';
   el.style.height = (row.height * GRID_PX) + 'px';
-  el.style.backgroundImage = row.img_url ? `url("${CSS.escape(row.img_url)}")` : 'none';
+  paintArt(el, row);
   el.querySelector('.cap').textContent = row.name || '(token)';
   el.classList.toggle('mine', canMoveRow(row));
   el.classList.toggle('locked', !!row.locked);
@@ -315,6 +411,51 @@ function movableSelection() {
 }
 
 // --- placement ---
+
+// Characters this caller may place a token for.
+//
+// [CORRECTED] The first version populated this from the scene load's `actors`
+// array, which was wrong and visibly so: that array is built from
+// `tokens.map(t => t.actor_id)`, so it contains only characters ALREADY ON THE
+// BOARD. For a picker whose entire purpose is putting a character on the board
+// for the first time, that is exactly backwards — and on an empty scene it is
+// empty, which is how it was noticed.
+//
+// The campaign actor list is the right source, and it is already role-shaped by
+// the server: a GM receives every character, a player receives their own plus
+// any NPC whose token they can already see. Filtering below to the caller's own
+// characters for a player is therefore belt-and-braces — the server refuses a
+// token placed for somebody else's character with a 404 regardless.
+async function loadActorPicker() {
+  const r = await api('GET', `/api/campaigns/${campaignId}/actors`);
+  // Shape, not status code: a refusal has no actors array, and keying on the
+  // exact number 200 makes this brittle for no gain.
+  const list = r.data && Array.isArray(r.data.actors) ? r.data.actors : [];
+  renderActorPicker(list);
+}
+
+function renderActorPicker(list) {
+  const sel = document.getElementById('tok-actor');
+  if (!sel) return;
+  const previous = sel.value;
+  sel.textContent = '';
+
+  const none = document.createElement('option');
+  none.value = '';
+  none.textContent = '— no character —';
+  sel.appendChild(none);
+
+  for (const a of list) {
+    if (!isGm() && !(me && a.user_id === me.id)) continue;
+    const o = document.createElement('option');
+    o.value = a.id;
+    o.textContent = a.name + (a.is_npc ? ' (NPC)' : '');
+    sel.appendChild(o);
+  }
+  if ([...sel.options].some((o) => o.value === previous)) sel.value = previous;
+}
+
+
 
 // D&D 5e creature sizes -> footprint in grid units. Mirrors SIZE_PRESETS on the
 // server (src/routes/scenes.js); the server re-derives its own values, this copy
@@ -356,6 +497,18 @@ document.getElementById('place-token').addEventListener('click', async () => {
   const name = document.getElementById('tok-name').value.trim();
   const img_url = document.getElementById('tok-img').value.trim();
   const sizeKey = document.getElementById('tok-size').value;
+  const actorId = document.getElementById('tok-actor').value;
+
+  // INHERITANCE IS BY ABSENCE. The server fills a token's name, picture, framing
+  // and footprint from the character only when the corresponding field is
+  // MISSING from the body — not when it is empty. So an empty box must be sent
+  // as `undefined`, never as '' or a default, or the character's own values are
+  // silently overwritten with blanks.
+  //
+  // That is why the size select gained an explicit "from character" option: a
+  // <select> always has a value, so there was no way to express "don't send
+  // one" until there was an option that meant it.
+  const inheritSize = actorId && sizeKey === '';
   const footprint = SIZE_UNITS[sizeKey] || 1;
 
   // Bound the count client-side; the server independently bounds the batch too.
@@ -371,24 +524,35 @@ document.getElementById('place-token').addEventListener('click', async () => {
   // endpoint, which is GM-only — a player asking for >1 is told so plainly
   // rather than getting a confusing 403.
   if (count === 1) {
-    const r = await api('POST', `/api/campaigns/${campaignId}/scenes/${scene.id}/tokens`,
-      { name, img_url: img_url || undefined, x: origin.x, y: origin.y,
-        width: footprint, height: footprint });
+    const body = { x: origin.x, y: origin.y };
+    if (actorId) body.actor_id = actorId;
+    // Omitted when blank so the character's own value comes through. With no
+    // character selected this is identical to the pre-M6 behaviour, because the
+    // server treats an absent name on an unlinked token as no name.
+    if (name) body.name = name;
+    if (img_url) body.img_url = img_url;
+    if (!inheritSize) { body.width = footprint; body.height = footprint; }
+
+    const r = await api('POST', `/api/campaigns/${campaignId}/scenes/${scene.id}/tokens`, body);
     show(`place token -> ${r.status}`, r.data);
     return;
   }
   if (!isGm()) return show('only the GM can place multiple tokens at once');
 
+  // Bulk placement inherits per spec, on the same absence rule. Numbering still
+  // applies to an explicitly typed name; a character's own name is left to the
+  // server, so five goblins placed from one character all arrive called
+  // "Goblin" rather than being numbered — the numbering lives here, and here it
+  // has no name to number.
   const offsets = packOffsets(count, footprint);
-  const specs = offsets.map((o, i) => ({
-    name: instanceName(name, i),
-    img_url: img_url || undefined,
-    width: footprint,
-    height: footprint,
-    hidden: false,
-    x: origin.x + o.dx,
-    y: origin.y + o.dy,
-  }));
+  const specs = offsets.map((o, i) => {
+    const spec = { hidden: false, x: origin.x + o.dx, y: origin.y + o.dy };
+    if (actorId) spec.actor_id = actorId;
+    if (name) spec.name = instanceName(name, i);
+    if (img_url) spec.img_url = img_url;
+    if (!inheritSize) { spec.width = footprint; spec.height = footprint; }
+    return spec;
+  });
 
   // Keep the whole block on the canvas: if it would overflow the scene, shift it
   // back rather than dropping tokens off the edge. Scene dimensions are pixels;

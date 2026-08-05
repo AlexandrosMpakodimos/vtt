@@ -56,6 +56,16 @@ window.fetch = async (path, opts = {}) => {
     if (/\/messages/.test(path)) return { messages: [] };
     if (/\/combat\/[^/]+$/.test(path)) return { combat: null, combatants: [], actors: [] };
     if (/\/combat$/.test(path)) return { combats: [] };
+    // Characters offered in the "speaking as" picker. The server re-checks
+    // ownership on every message; this list is convenience, not authority.
+    if (/\/actors$/.test(path)) {
+      return {
+        actors: [
+          { id: 'A1', name: 'Aria', user_id: 'U2', is_npc: false },
+          { id: 'A2', name: 'Goblin', user_id: null, is_npc: true },
+        ],
+      };
+    }
     if (/\/scenes\/[^/]+$/.test(path)) return { scene: {}, tokens: [], fog: [], actors: [] };
     if (/\/scenes$/.test(path)) return { scenes: [{ id: 'S1', name: 'Board' }] };
     // Campaign detail — the endpoint that carries member colours.
@@ -126,6 +136,7 @@ const REQUIRED_IDS = [
   'whisperTo', 'out', 'log', 'clearLog', 'diceTray',
   'dice3d', 'diceColor', 'diceClear', 'diceGrab', 'diceLegend', 'diceFade',
   'trayMod', 'trayPool', 'trayRoll', 'trayClear',
+  'speakAs', 'palette', 'paletteMsg',
 ];
 for (const id of REQUIRED_IDS) {
   t(`#${id} is present`, document.getElementById(id) !== null);
@@ -168,6 +179,27 @@ console.log('\n--- the entry points run without throwing ---');
   t('whisper targets rendered', sel.options.length >= 1, `${sel.options.length} options`);
   t('the caller is not offered as their own whisper target',
     ![...sel.options].some((o) => o.value === 'U1'));
+
+  console.log('\n--- speaking as: the picker, and the local default ---');
+  const spk = document.getElementById('speakAs');
+  t('the picker offers "myself" first', spk.options.length > 0 && spk.options[0].value === '');
+  t('a GM is offered every character including NPCs',
+    [...spk.options].some((o) => o.textContent.includes('Goblin (NPC)')),
+    [...spk.options].map((o) => o.textContent).join(' | '));
+  t('and a player character', [...spk.options].some((o) => o.textContent === 'Aria'));
+
+  console.log('\n--- the colour palette shows what is claimed ---');
+  const pal = document.getElementById('palette');
+  t('a swatch is rendered for every palette colour', pal.children.length === 16,
+    `${pal.children.length}`);
+  // U1 (the caller) holds #3366cc, which is NOT in the palette, so nothing is
+  // "mine"; U2 holds no colour at all, so nothing is taken either.
+  t('a colour nobody claimed is clickable',
+    [...pal.children].every((b) => !b.disabled),
+    'no member holds a palette colour in this fixture');
+  t('a generated fallback colour does NOT grey out a swatch',
+    [...pal.children].filter((b) => b.classList.contains('taken')).length === 0,
+    'only an ASSIGNED colour is a claim');
 
   console.log('\n--- the dice tray builds a formula ---');
   const click = (elm) => elm.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));

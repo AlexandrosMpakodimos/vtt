@@ -11,7 +11,19 @@ window.fetch = async (path, opts) => {
   if (window.__onFetch) window.__onFetch(call);
   // /api/auth/me drives whoami(); return whoever the test currently is, so the
   // load-time whoami() doesn't clobber the identity under test.
-  return { status: 201, json: async () => ({ user: { id: window.__uid }, tokens: [], token: {} }) };
+  // The character picker reads /actors. Two entries so the probe below can show
+  // it renders from THIS endpoint rather than from the scene load's own actors
+  // array — which holds only characters already on the board, and was the
+  // source the first version wrongly used.
+  return { status: 201, json: async () => ({
+    user: { id: window.__uid }, tokens: [], token: {},
+    actors: [
+      // Belongs to whoever the test currently is, so the role filter can be
+      // probed from both sides.
+      { id: 'PA1', name: 'Aria', user_id: window.__uid, is_npc: false },
+      { id: 'PA2', name: 'Goblin', user_id: 'GM', is_npc: true },
+    ],
+  }) };
 };
 window.io = () => ({ on(){}, emit(ev,p,cb){ if(cb) cb({ok:true}); } });
 window.CSS = { escape: s => s };
@@ -127,7 +139,38 @@ window.eval(fs.readFileSync('public/js/scene.js','utf8') + `
     __check('player bulk placement is refused client-side', c === undefined, JSON.stringify(c && c.path));
     // ...but a player CAN still place one
     c = await place('Mine', 1, 'medium', {x:2,y:2});
-    __check('player can still place a single token', c && c.path.endsWith('/tokens'), c && c.path);
+    // --- M6: placing a token FOR a character -------------------------------
+  // The picker is what finally lets the client send actor_id; the server has
+  // accepted it since M4 and nothing ever did.
+  const picker = document.getElementById('tok-actor');
+  __check('the placement bar offers a character picker', !!picker);
+  __check('...defaulting to no character', picker && picker.value === '');
+  // The picker's SOURCE was the defect, so probe the source — and the role
+  // filter, since these lines run while the test is acting as a PLAYER.
+  await window.loadActorPicker();
+  const playerOpts = [...document.getElementById('tok-actor').options].map(o => o.textContent);
+  __check('a player is offered their OWN character',
+    playerOpts.includes('Aria'), playerOpts.join(' | '));
+  __check('...and NOT an NPC belonging to the GM',
+    !playerOpts.some(o => /Goblin/.test(o)), playerOpts.join(' | '));
+  __check('the picker reads /actors, not the scene load',
+    calls.fetch.some(c => c.path.slice(-7) === '/actors'),
+    calls.fetch.map(c => c.path).join(' | '));
+  __check('...and still offers "no character" first',
+    document.getElementById('tok-actor').options[0].value === '');
+
+  // As the GM the same list yields both.
+  asUser('GM');
+  await window.loadActorPicker();
+  const gmOpts = [...document.getElementById('tok-actor').options].map(o => o.textContent);
+  __check('the GM is offered every character, NPCs included',
+    gmOpts.includes('Aria') && gmOpts.includes('Goblin (NPC)'), gmOpts.join(' | '));
+
+  __check('the size select offers "from character"',
+    [...document.getElementById('tok-size').options].some(o => o.value === ''),
+    [...document.getElementById('tok-size').options].map(o=>o.value).join(','));
+
+  __check('player can still place a single token', c && c.path.endsWith('/tokens'), c && c.path);
 
     window.__done();
   })();

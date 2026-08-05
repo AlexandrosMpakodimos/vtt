@@ -114,8 +114,27 @@ async function clickSave(container) {
   check('every sheet field agrees with the server allow-lists', mismatches.length === 0, mismatches.join(' | '));
 
   const onSheet = new Set(columnFields.map((f) => f.key));
-  const missing = GW.filter((k) => !onSheet.has(k) && k !== 'is_npc' && k !== 'user_id');
+  // Columns that are writable but deliberately NOT sheet fields. Each earns its
+  // exemption for a stated reason, and the list is short on purpose — it is the
+  // escape hatch that would otherwise let this probe rot into meaninglessness.
+  //
+  //   is_npc, user_id            campaign management, not description (M4)
+  //   img_offset_x/y, img_scale  presentation, not description (M6). They are
+  //                              set by dragging the picture inside its frame,
+  //                              so rendering them as three numeric inputs
+  //                              beside Strength would be a worse interface AND
+  //                              a false claim that the sheet is where they
+  //                              live.
+  const NOT_SHEET_FIELDS = ['is_npc', 'user_id', 'img_offset_x', 'img_offset_y', 'img_scale'];
+  const missing = GW.filter((k) => !onSheet.has(k) && !NOT_SHEET_FIELDS.includes(k));
   check('no writable column is missing from the sheet', missing.length === 0, missing.join(', '));
+
+  // The exemption must not become a place things are quietly dropped: every
+  // exempt column has to actually exist on the server, or a rename would leave
+  // a stale name here silencing a real gap.
+  const staleExemptions = NOT_SHEET_FIELDS.filter((k) => !GW.includes(k));
+  check('every sheet exemption names a real writable column',
+    staleExemptions.length === 0, staleExemptions.join(', '));
   check('is_npc and user_id are deliberately absent (campaign management, not description)',
     !onSheet.has('is_npc') && !onSheet.has('user_id'));
 

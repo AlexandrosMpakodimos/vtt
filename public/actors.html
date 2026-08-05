@@ -47,6 +47,27 @@
     .sheet-cell label .tag { margin-left: 4px; opacity: .7; }
     .field-error { color: #c00; font-size: 11px; min-height: 12px; }
     .sheet-error { color: #c00; font-size: 12px; }
+
+    /* M6 image framing. The preview is a token-sized square with overflow
+       hidden, so what is seen here is exactly the crop the canvas will draw —
+       the art layer carries the same transform scene.js applies. */
+    #frameModal { position: fixed; inset: 0; background: #0009; z-index: 60;
+                  display: none; align-items: center; justify-content: center; }
+    #frameModal.on { display: flex; }
+    .frame-box { background: #fff; padding: 16px; border-radius: 6px; max-width: 420px; }
+    .frame-stage { width: 220px; height: 220px; margin: 8px auto; position: relative;
+                   overflow: hidden; border: 2px solid #445; border-radius: 6px;
+                   background: #445; cursor: grab; touch-action: none; }
+    .frame-stage.dragging { cursor: grabbing; }
+    .frame-stage > .art { position: absolute; inset: 0; transform-origin: center;
+                          background: center/cover no-repeat; pointer-events: none; }
+    /* A thirds guide, so "centred" is checkable rather than a guess. */
+    .frame-stage::after { content: ''; position: absolute; inset: 0; pointer-events: none;
+      background:
+        linear-gradient(90deg, transparent 33%, #fff6 33%, #fff6 33.5%, transparent 33.5%,
+                        transparent 66%, #fff6 66%, #fff6 66.5%, transparent 66.5%),
+        linear-gradient(transparent 33%, #fff6 33%, #fff6 33.5%, transparent 33.5%,
+                        transparent 66%, #fff6 66%, #fff6 66.5%, transparent 66.5%); }
     textarea:disabled, input:disabled, select:disabled { background: #f4f4f4; color: #555; }
     .gm-only { display: none; }
     body.is-gm .gm-only { display: block; }
@@ -151,6 +172,72 @@
     </fieldset>
   </div>
 
+  <fieldset>
+    <legend>spell catalogue</legend>
+    <div class="row gm-only">
+      <div style="flex:2"><label for="spName">name</label><input id="spName" placeholder="Magic Missile" /></div>
+      <div><label for="spLevel">level</label>
+        <select id="spLevel">
+          <option value="0">cantrip</option>
+          <option value="1">1st</option><option value="2">2nd</option>
+          <option value="3">3rd</option><option value="4">4th</option>
+          <option value="5">5th</option><option value="6">6th</option>
+          <option value="7">7th</option><option value="8">8th</option>
+          <option value="9">9th</option>
+        </select>
+      </div>
+      <div style="flex:3"><label for="spDesc">description</label><input id="spDesc" placeholder="Three darts of force." /></div>
+      <button id="createSpell">add spell</button>
+    </div>
+    <p class="muted">
+      The catalogue is a rules reference, so every member reads it in full —
+      there is no “unidentified” equivalent. What is confidential is which spells
+      a character has <b>prepared</b>, and that lives on the spellbook below.
+    </p>
+    <div class="row">
+      <div style="flex:2">
+        <label for="spFilter">show</label>
+        <select id="spFilter">
+          <option value="">every level</option>
+          <option value="0">cantrips</option>
+          <option value="1">1st</option><option value="2">2nd</option>
+          <option value="3">3rd</option><option value="4">4th</option>
+          <option value="5">5th</option><option value="6">6th</option>
+          <option value="7">7th</option><option value="8">8th</option>
+          <option value="9">9th</option>
+        </select>
+      </div>
+    </div>
+    <div id="spellList"></div>
+  </fieldset>
+
+  <fieldset>
+    <legend>spellbook — <span id="sbWho" class="muted">select a character above</span></legend>
+    <div class="row">
+      <div style="flex:3">
+        <label for="sbSpell">spell</label>
+        <select id="sbSpell"></select>
+      </div>
+      <div>
+        <label for="sbSource">source</label>
+        <select id="sbSource">
+          <option value="">—</option>
+          <option value="class">class</option>
+          <option value="race">race</option>
+          <option value="item">item</option>
+          <option value="other">other</option>
+        </select>
+      </div>
+      <button id="learnSpell">learn</button>
+    </div>
+    <p class="muted">
+      <b>Prepared</b> is a checkbox and nothing more: the server never counts it,
+      never checks it against a limit, and never interprets <b>source</b>. Whether
+      a preparation is legal is the GM’s call, as with every other rule here.
+    </p>
+    <div id="sbList"></div>
+  </fieldset>
+
   <fieldset class="gm-only">
     <legend>item editor — <span id="itemWho" class="muted">none selected</span></legend>
     <div id="itemEditor"><p class="muted">pick an item, or “+ new item”</p></div>
@@ -185,6 +272,28 @@
     <div id="log"></div>
     <button id="clearLog">clear</button>
   </fieldset>
+
+  <div id="frameModal">
+    <div class="frame-box">
+      <b>Frame the picture</b>
+      <p class="muted">Drag to move · scroll to zoom. This is the crop tokens will use.</p>
+      <div class="frame-stage" id="frameStage"><div class="art" id="frameArt"></div></div>
+      <div class="row">
+        <div><label for="frameScale">zoom</label>
+          <input id="frameScale" type="number" step="0.05" min="0.1" max="5" value="1" /></div>
+        <div><label for="frameX">offset x</label>
+          <input id="frameX" type="number" step="0.01" min="-2" max="2" value="0" /></div>
+        <div><label for="frameY">offset y</label>
+          <input id="frameY" type="number" step="0.01" min="-2" max="2" value="0" /></div>
+      </div>
+      <div class="row">
+        <button id="frameReset">reset</button>
+        <button id="frameCancel">cancel</button>
+        <button id="frameSave">save framing</button>
+        <span class="muted" id="frameMsg"></span>
+      </div>
+    </div>
+  </div>
 
   <script src="/socket.io/socket.io.js"></script>
   <script src="/js/sheet.js"></script>

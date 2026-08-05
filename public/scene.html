@@ -30,6 +30,13 @@
              color: #fff; font-size: 10px; text-align: center; cursor: grab;
              display: flex; align-items: flex-end; justify-content: center;
              user-select: none; overflow: hidden; }
+    /* M6 image framing. The art is an INNER layer so a transform can be applied
+       to it without moving the token's border, caption or hit area. Keeping
+       `center/cover` here means the identity transform renders exactly as the
+       pre-M6 build did, and composes with cover without needing the image's
+       natural dimensions. */
+    .token > .art { position: absolute; inset: 0; background: center/cover no-repeat;
+                    transform-origin: center; pointer-events: none; }
     .token.mine { border-color: #6f6; }
     .token.dragging { cursor: grabbing; opacity: 0.8; z-index: 10; }
     .token.selected { outline: 2px dashed #fc6; outline-offset: 2px; }
@@ -94,11 +101,19 @@
   <fieldset>
     <legend>Place a token</legend>
     <div class="row">
+      <select id="tok-actor" title="place a token for a character">
+        <option value="">— no character —</option>
+      </select>
       <input id="tok-name" placeholder="token name" />
       <input id="tok-img" placeholder="https://image… (optional)" style="min-width:220px" />
       <label for="tok-count" style="display:inline;margin:0">×</label>
       <input id="tok-count" type="number" min="1" max="50" value="1" style="width:60px" title="how many to place" />
       <select id="tok-size" title="creature size">
+        <!-- An explicit "inherit" option. The server inherits a field only when
+             it is ABSENT from the body, and a select always has a value, so
+             without this the form could never let a character's own size
+             through. -->
+        <option value="">— from character —</option>
         <option value="medium">Medium (1×1)</option>
         <option value="tiny">Tiny (½×½)</option>
         <option value="small">Small (1×1)</option>

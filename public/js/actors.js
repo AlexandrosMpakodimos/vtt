@@ -148,6 +148,16 @@ function renderActors() {
     row.appendChild(button('open sheet', () => selectActor(a)));
 
     const mayWrite = isGm || (me && a.user_id === me.id);
+
+    // M6 framing. Offered whenever there is a picture AND the caller may write
+    // the character — the same tier as img_url itself, because a player who can
+    // set their portrait and then cannot stop it cropping their head off has
+    // half a feature. Deliberately NOT gated on isProjected: a projected NPC is
+    // read-only for a player anyway, and mayWrite is already false for them.
+    if (mayWrite && a.img_url) {
+      row.appendChild(button('frame picture', () => openFrame(a)));
+    }
+
     if (mayWrite && !isProjected(a)) {
       const dmg = el('input');
       dmg.type = 'number';
@@ -161,6 +171,343 @@ function renderActors() {
     card.appendChild(row);
     list.appendChild(card);
   }
+}
+
+// ---------------------------------------------------------------------------
+// IMAGE FRAMING (M6)
+// ---------------------------------------------------------------------------
+//
+// A portrait is rarely square and rarely centred on its subject, so dropped into
+// a token's square unmodified it crops badly. This positions the art inside the
+// frame once; the values are stored on the character and COPIED onto every token
+// placed from it afterwards.
+//
+// The preview stage is deliberately the same construction scene.js uses — an
+// absolutely-positioned art layer with `center/cover` and a transform — so what
+// is seen here is the crop the canvas will draw, rather than an approximation
+// that agrees by coincidence.
+//
+// The transform is `translate(...) scale(...)`, and the order is load-bearing:
+// CSS applies the rightmost first, so the art is scaled and THEN shifted by a
+// fraction of the unscaled frame. That is what makes an offset of 0.25 mean "a
+// quarter of the square" at any zoom and any token footprint.
+
+let framing = null;   // { actor, ox, oy, scale }
+
+function openFrame(a) {
+  framing = {
+    actor: a,
+    ox: Number(a.img_offset_x) || 0,
+    oy: Number(a.img_offset_y) || 0,
+    scale: Number(a.img_scale) > 0 ? Number(a.img_scale) : 1,
+  };
+  document.getElementById('frameArt').style.backgroundImage =
+    `url("${CSS.escape(a.img_url)}")`;
+  document.getElementById('frameMsg').textContent = '';
+  document.getElementById('frameModal').classList.add('on');
+  paintFrame();
+}
+
+function closeFrame() {
+  framing = null;
+  document.getElementById('frameModal').classList.remove('on');
+}
+
+function paintFrame() {
+  if (!framing) return;
+  document.getElementById('frameArt').style.transform =
+    `translate(${framing.ox * 100}%, ${framing.oy * 100}%) scale(${framing.scale})`;
+  document.getElementById('frameScale').value = String(round3(framing.scale));
+  document.getElementById('frameX').value = String(round3(framing.ox));
+  document.getElementById('frameY').value = String(round3(framing.oy));
+}
+
+const round3 = (n) => Math.round(n * 1000) / 1000;
+const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
+
+let framePan = null;
+function initFraming() {
+  const stage = document.getElementById('frameStage');
+  if (!stage) return;
+
+  stage.addEventListener('pointerdown', (e) => {
+    if (!framing) return;
+    framePan = { x: e.clientX, y: e.clientY, ox: framing.ox, oy: framing.oy };
+    stage.classList.add('dragging');
+    stage.setPointerCapture(e.pointerId);
+  });
+  stage.addEventListener('pointermove', (e) => {
+    if (!framePan || !framing) return;
+    // Screen pixels divided by the stage size give a FRACTION of the frame,
+    // which is the unit the offsets are stored in — so the drag is 1:1 with what
+    // gets saved, at any preview size.
+    const rect = stage.getBoundingClientRect();
+    framing.ox = clamp(framePan.ox + (e.clientX - framePan.x) / rect.width, -2, 2);
+    framing.oy = clamp(framePan.oy + (e.clientY - framePan.y) / rect.height, -2, 2);
+    paintFrame();
+  });
+  const endFramePan = (e) => {
+    if (!framePan) return;
+    framePan = null;
+    stage.classList.remove('dragging');
+    try { stage.releasePointerCapture(e.pointerId); } catch { /* released */ }
+  };
+  stage.addEventListener('pointerup', endFramePan);
+  stage.addEventListener('pointercancel', endFramePan);
+
+  stage.addEventListener('wheel', (e) => {
+    if (!framing) return;
+    e.preventDefault();
+    // Multiplicative, so a step feels the same at 0.5x as at 3x. Bounds match
+    // the server's, so the preview can never show a crop the server refuses.
+    framing.scale = clamp(framing.scale * (e.deltaY < 0 ? 1.06 : 1 / 1.06), 0.1, 5);
+    paintFrame();
+  }, { passive: false });
+
+  for (const [id, key, lo, hi] of [
+    ['frameScale', 'scale', 0.1, 5], ['frameX', 'ox', -2, 2], ['frameY', 'oy', -2, 2],
+  ]) {
+    document.getElementById(id).addEventListener('input', (e) => {
+      if (!framing) return;
+      const v = Number(e.target.value);
+      if (Number.isFinite(v)) { framing[key] = clamp(v, lo, hi); paintFrame(); }
+    });
+  }
+
+  document.getElementById('frameReset').addEventListener('click', () => {
+    if (!framing) return;
+    framing.ox = 0; framing.oy = 0; framing.scale = 1;
+    paintFrame();
+  });
+  document.getElementById('frameCancel').addEventListener('click', closeFrame);
+  document.getElementById('frameSave').addEventListener('click', saveFrame);
+}
+
+async function saveFrame() {
+  if (!framing) return;
+  const msg = document.getElementById('frameMsg');
+  const r = await api('PATCH', `/api/campaigns/${campaign.id}/actors/${framing.actor.id}`, {
+    img_offset_x: round3(framing.ox),
+    img_offset_y: round3(framing.oy),
+    img_scale: round3(framing.scale),
+  });
+  show('PATCH framing', r);
+  if (r.status !== 200) { msg.textContent = (r.data && r.data.error) || 'save failed'; return; }
+  // Stated plainly, because it is the one thing about this feature that
+  // surprises people: framing is COPIED onto a token when it is placed, exactly
+  // as the picture itself is, so tokens already on a board keep the framing they
+  // were given.
+  msg.textContent = 'saved — tokens placed from now on use this framing';
+  closeFrame();
+  await refresh();
+}
+
+// ---------------------------------------------------------------------------
+// SPELLS (M6)
+// ---------------------------------------------------------------------------
+//
+// Two panels, mirroring items and inventory, because the server tables mirror
+// them: a campaign CATALOGUE the GM authors, and a per-character SPELLBOOK.
+//
+// One deliberate difference from items, and it is worth stating because the
+// asymmetry looks like an oversight: there is no "unidentified" projection here.
+// A player must be able to read what a spell does in order to cast it, so the
+// catalogue is public to every member. The confidentiality that matters is which
+// spells a character has PREPARED, and that lives on the spellbook — where the
+// server reuses the same gate that stops a player reading an NPC's bag. A
+// player asking for the lich's spellbook gets a 404, so this file never has to
+// think about it.
+
+let spells = [];
+let spellbook = [];
+
+async function loadSpells() {
+  const level = document.getElementById('spFilter').value;
+  const q = level === '' ? '' : `?level=${encodeURIComponent(level)}`;
+  const r = await api('GET', `/api/campaigns/${campaign.id}/spells${q}`);
+  // Shape, not status code — a refusal has no spells array.
+  spells = r.data && Array.isArray(r.data.spells) ? r.data.spells : [];
+  renderSpells();
+  renderSpellChoices();
+}
+
+const levelLabel = (n) => (n === 0 ? 'cantrip' : `level ${n}`);
+
+function renderSpells() {
+  const list = document.getElementById('spellList');
+  list.textContent = '';
+  if (!spells.length) {
+    list.appendChild(el('p', { cls: 'muted', text: 'no spells in the catalogue' }));
+    return;
+  }
+  for (const sp of spells) {
+    const card = el('div', { cls: 'card' });
+    const head = el('div');
+    head.appendChild(el('b', { text: sp.name }));
+    head.appendChild(el('span', { cls: 'tag', text: levelLabel(sp.level) }));
+    card.appendChild(head);
+    if (sp.description) card.appendChild(el('div', { cls: 'muted', text: sp.description }));
+
+    // properties is a free blob; render its keys rather than assuming a shape,
+    // because the server stores whatever the GM put there.
+    const props = sp.properties && typeof sp.properties === 'object' ? sp.properties : {};
+    const keys = Object.keys(props);
+    if (keys.length) {
+      card.appendChild(el('div', {
+        cls: 'muted',
+        text: keys.map((k) => `${k}: ${props[k]}`).join(' · '),
+      }));
+    }
+
+    if (isGm) {
+      const row = el('div', { cls: 'row' });
+      row.appendChild(button('delete', () => deleteSpell(sp)));
+      card.appendChild(row);
+    }
+    list.appendChild(card);
+  }
+}
+
+// The "learn" picker. Offers everything in the catalogue the character does not
+// already know — a spell already in the book is not a choice.
+function renderSpellChoices() {
+  const sel = document.getElementById('sbSpell');
+  if (!sel) return;
+  const known = new Set(spellbook.map((e) => e.spell_id));
+  const previous = sel.value;
+  sel.textContent = '';
+  for (const sp of spells) {
+    if (known.has(sp.id)) continue;
+    const o = document.createElement('option');
+    o.value = sp.id;
+    o.textContent = `${sp.name} (${levelLabel(sp.level)})`;
+    sel.appendChild(o);
+  }
+  if ([...sel.options].some((o) => o.value === previous)) sel.value = previous;
+}
+
+async function createSpell() {
+  const name = str('spName');
+  if (!name) { show('POST spell', { status: 0, data: { error: 'a spell needs a name' } }); return; }
+  const body = { name, level: Number(document.getElementById('spLevel').value) };
+  const desc = str('spDesc');
+  if (desc) body.description = desc;
+  const r = await api('POST', `/api/campaigns/${campaign.id}/spells`, body);
+  show('POST spell', r);
+  if (r.status === 201) {
+    document.getElementById('spName').value = '';
+    document.getElementById('spDesc').value = '';
+    await loadSpells();
+  }
+}
+
+async function deleteSpell(sp) {
+  const r = await api('DELETE', `/api/campaigns/${campaign.id}/spells/${sp.id}`);
+  show('DELETE spell', r);
+  // The response names its blast radius, exactly as the item and scene deletes
+  // do, so the log says what was emptied rather than just "ok".
+  if (r.status === 200) {
+    log(`spell deleted — removed from ${r.data.deleted.spellbook_entries} spellbook(s)`);
+    await loadSpells();
+    await loadSpellbook();
+  }
+}
+
+// ---- the spellbook ---------------------------------------------------------
+
+async function loadSpellbook() {
+  const who = document.getElementById('sbWho');
+  const list = document.getElementById('sbList');
+  if (!selectedActor) {
+    spellbook = [];
+    who.textContent = 'select a character above';
+    list.textContent = '';
+    renderSpellChoices();
+    return;
+  }
+  const r = await api('GET',
+    `/api/campaigns/${campaign.id}/actors/${selectedActor}/spells`);
+  if (!r.data || !Array.isArray(r.data.spells)) {
+    // A player reading an NPC's spellbook gets a 404 — the same gate that
+    // guards a bag. Say so plainly rather than rendering an empty list, which
+    // would read as "the lich knows no spells".
+    spellbook = [];
+    list.textContent = '';
+    list.appendChild(el('p', { cls: 'muted', text: 'that spellbook is not yours to read' }));
+    renderSpellChoices();
+    return;
+  }
+  spellbook = r.data.spells;
+  const a = actors.find((x) => x.id === selectedActor);
+  who.textContent = a ? a.name : selectedActor;
+  renderSpellbook();
+  renderSpellChoices();
+}
+
+function renderSpellbook() {
+  const list = document.getElementById('sbList');
+  list.textContent = '';
+  if (!spellbook.length) {
+    list.appendChild(el('p', { cls: 'muted', text: 'knows no spells' }));
+    return;
+  }
+  // Grouped by level, which is the only ordering a spell list is ever read in.
+  const byLevel = new Map();
+  for (const e of spellbook) {
+    const lv = e.spell.level;
+    if (!byLevel.has(lv)) byLevel.set(lv, []);
+    byLevel.get(lv).push(e);
+  }
+  for (const lv of [...byLevel.keys()].sort((x, y) => x - y)) {
+    list.appendChild(el('div', { cls: 'muted', text: levelLabel(lv) }));
+    for (const e of byLevel.get(lv)) {
+      const card = el('div', { cls: 'card' });
+      const head = el('div');
+      head.appendChild(el('b', { text: e.spell.name }));
+      if (e.prepared) head.appendChild(el('span', { cls: 'tag mine', text: 'prepared' }));
+      if (e.source) head.appendChild(el('span', { cls: 'tag', text: e.source }));
+      card.appendChild(head);
+      if (e.spell.description) {
+        card.appendChild(el('div', { cls: 'muted', text: e.spell.description }));
+      }
+      const row = el('div', { cls: 'row' });
+      row.appendChild(button(e.prepared ? 'unprepare' : 'prepare',
+        () => patchSpellbook(e, { prepared: !e.prepared })));
+      row.appendChild(button('forget', () => forgetSpell(e)));
+      card.appendChild(row);
+      list.appendChild(card);
+    }
+  }
+}
+
+async function learnSpell() {
+  if (!selectedActor) {
+    show('learn', { status: 0, data: { error: 'select a character first' } });
+    return;
+  }
+  const spellId = document.getElementById('sbSpell').value;
+  if (!spellId) { show('learn', { status: 0, data: { error: 'no spell selected' } }); return; }
+  const body = { spell_id: spellId };
+  const src = document.getElementById('sbSource').value;
+  if (src) body.source = src;
+  const r = await api('POST',
+    `/api/campaigns/${campaign.id}/actors/${selectedActor}/spells`, body);
+  show('POST spellbook', r);
+  if (r.status === 201) await loadSpellbook();
+}
+
+async function patchSpellbook(entry, patch) {
+  const r = await api('PATCH',
+    `/api/campaigns/${campaign.id}/actors/${selectedActor}/spells/${entry.spell_id}`, patch);
+  show('PATCH spellbook', r);
+  if (r.status === 200) await loadSpellbook();
+}
+
+async function forgetSpell(entry) {
+  const r = await api('DELETE',
+    `/api/campaigns/${campaign.id}/actors/${selectedActor}/spells/${entry.spell_id}`);
+  show('DELETE spellbook', r);
+  if (r.status === 200) await loadSpellbook();
 }
 
 function renderItems() {
@@ -304,7 +651,8 @@ async function refresh() {
   items = i.status === 200 ? i.data.items : [];
   renderActors();
   renderItems();
-  if (selectedActor) { renderSheet(); await loadBag(); }
+  await loadSpells();
+  if (selectedActor) { renderSheet(); await loadBag(); await loadSpellbook(); }
   if (isGm && document.getElementById('itemEditor').childElementCount === 0) renderItemEditor();
 
   if (!isGm) {
@@ -369,6 +717,7 @@ async function deleteActor(a) {
     document.getElementById('invWho').textContent = 'select a character above';
     document.getElementById('sheetWho').textContent = 'none selected';
     renderSheet();
+    loadSpellbook();
   }
   await refresh();
 }
@@ -434,6 +783,7 @@ function selectActor(a) {
   renderActors();
   renderSheet();
   loadBag();
+  loadSpellbook();
 }
 
 // The sheet is rendered from the row already in `actors`, which is whatever this
@@ -530,6 +880,21 @@ function connectSocket() {
     if (selectedActor === d.actor_id) loadBag();
   });
 
+  // Carries only an actor_id — the same decision inventory:changed made, so a
+  // spellbook event can never become a second disclosure channel. Clients
+  // re-fetch through the authorised path, which re-applies the NPC gate.
+  socket.on('spellbook:changed', (d) => {
+    log(`spellbook:changed  ${JSON.stringify(d)}`);
+    if (selectedActor === d.actor_id) loadSpellbook();
+  });
+
+  for (const ev of ['spell:created', 'spell:updated', 'spell:deleted']) {
+    socket.on(ev, (d) => {
+      log(`${ev}  ${JSON.stringify(d)}`);
+      loadSpells();
+    });
+  }
+
   socket.on('token:unlinked', (d) => log(`token:unlinked  ${JSON.stringify(d)}`));
   socket.on('disconnect', () => log('socket disconnected'));
 }
@@ -544,6 +909,12 @@ document.getElementById('clearLog').addEventListener('click', () => { logEl.text
 
 // Convenience: /actors.html?campaign=<uuid> preloads, so the GM and player
 // windows can be opened from the same link.
+initFraming();
+
+document.getElementById('createSpell').addEventListener('click', createSpell);
+document.getElementById('learnSpell').addEventListener('click', learnSpell);
+document.getElementById('spFilter').addEventListener('change', loadSpells);
+
 const preset = new URLSearchParams(window.location.search).get('campaign');
 if (preset) document.getElementById('campaignId').value = preset;
 

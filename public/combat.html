@@ -96,6 +96,11 @@
               font-size: 11px; }
     .swatch > i { width: 11px; height: 11px; border-radius: 50%; display: inline-block;
                   border: 1px solid #0003; }
+    .palette { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 5px; }
+    .palette button { margin: 0; width: 26px; height: 26px; padding: 0; border-radius: 4px;
+                      border: 2px solid #0002; cursor: pointer; position: relative; }
+    .palette button.taken { cursor: not-allowed; opacity: .35; }
+    .palette button.mine { border-color: #111; box-shadow: 0 0 0 2px #fff inset; }
     .pool { border: 1px solid #ddd; border-radius: 3px; padding: 5px; min-height: 24px;
             font-size: 12px; background: #fafafa; }
     .pool .chip { display: inline-block; border: 1px solid #06c; color: #06c;
@@ -187,6 +192,10 @@
       <legend>chat &amp; dice</legend>
       <div id="chat"></div>
       <div class="row">
+        <div style="flex:2">
+          <label for="speakAs">speaking as</label>
+          <select id="speakAs"></select>
+        </div>
         <div style="flex:3"><label for="chatText">message</label><input id="chatText" placeholder="I attack the goblin" /></div>
         <button id="sendChat">say</button>
       </div>
@@ -244,8 +253,10 @@
         </div>
         <button id="diceClear">clear tray</button>
         <div style="flex:0 0 100%; margin-top:6px">
-          <label>whose dice are whose</label>
+          <label>whose dice are whose <span class="muted">— click a free swatch to claim it</span></label>
           <div id="diceLegend" class="muted">—</div>
+          <div id="palette" class="palette"></div>
+          <div id="paletteMsg" class="muted"></div>
         </div>
       </div>
       <p class="muted">

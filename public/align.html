@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>VTT — align the grid</title>
+  <style>
+    body { font-family: monospace; max-width: 1200px; margin: 24px auto; padding: 0 16px; }
+    fieldset { margin-bottom: 14px; border: 1px solid #999; }
+    legend { font-weight: bold; }
+    label { display: block; margin: 6px 0 2px; font-size: 12px; }
+    input, select { width: 100%; padding: 5px; box-sizing: border-box; font-family: monospace; }
+    button { margin-top: 8px; padding: 5px 10px; cursor: pointer; font-family: monospace; }
+    .row { display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap; }
+    .row > * { margin-top: 0; }
+    .row > div { flex: 1; min-width: 80px; }
+    .muted { color: #777; font-size: 12px; }
+    .warn { color: #a40; font-size: 12px; font-weight: bold; }
+
+    /* The alignment surface. The map is drawn as a background so it can be
+       scaled and offset independently of the overlay drawn on top of it. */
+    #viewport { position: relative; overflow: hidden; border: 1px solid #999;
+                background: #222; height: 62vh; cursor: grab; touch-action: none; }
+    #viewport.dragging { cursor: grabbing; }
+    #map { position: absolute; inset: 0; background-repeat: no-repeat;
+           background-position: 0 0; transform-origin: 0 0; }
+    /* The reference grid, drawn at the CELL SIZE BEING TESTED. Aligning means
+       making these lines sit on the lines printed in the map underneath. */
+    #overlay { position: absolute; inset: 0; pointer-events: none; }
+    #ruler { position: absolute; inset: 0; pointer-events: none;
+             border: 2px solid #0f0; box-sizing: border-box; opacity: .9; display: none; }
+
+    .hint { background: #f6f6f6; border-left: 3px solid #999; padding: 8px 10px;
+            font-size: 12px; margin: 8px 0; }
+    #out { background: #111; color: #6f6; padding: 8px; white-space: pre-wrap;
+           min-height: 30px; max-height: 130px; overflow-y: auto; border-radius: 4px; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <h1>Align the grid</h1>
+  <p class="muted">
+    GM only. Load a scene, then move and scale the map until the grid printed on
+    it sits under the overlay lines. Tokens are stored in <b>grid units</b>, so
+    aligning does not move any token in the database — it changes where the
+    picture sits beneath them.
+  </p>
+
+  <fieldset>
+    <legend>scene</legend>
+    <div class="row">
+      <div style="flex:3">
+        <label for="campaignId">campaign id</label>
+        <input id="campaignId" placeholder="uuid" />
+      </div>
+      <button id="loadCampaign">load</button>
+      <div style="flex:3">
+        <label for="sceneSel">scene</label>
+        <select id="sceneSel"></select>
+      </div>
+    </div>
+    <div class="row">
+      <div style="flex:5">
+        <label for="mapUrl">map image url</label>
+        <input id="mapUrl" placeholder="https://…/battlemap.jpg" />
+      </div>
+      <button id="setMap">set map</button>
+    </div>
+    <p class="muted" id="info">no scene loaded</p>
+  </fieldset>
+
+  <fieldset>
+    <legend>alignment</legend>
+    <div class="hint">
+      <b>Drag the map</b> to move it · <b>scroll</b> to change the cell size ·
+      arrow keys nudge by 1px, with shift by 10.
+      The overlay shows the grid your tokens will use.
+    </div>
+    <div id="viewport" tabindex="0">
+      <div id="map"></div>
+      <div id="overlay"></div>
+      <div id="ruler"></div>
+    </div>
+    <div class="row">
+      <div>
+        <label for="cellSize">cell size (px in the image)</label>
+        <input id="cellSize" type="number" value="70" min="5" max="500" />
+      </div>
+      <div>
+        <label for="offX">offset x</label>
+        <input id="offX" type="number" value="0" step="0.5" />
+      </div>
+      <div>
+        <label for="offY">offset y</label>
+        <input id="offY" type="number" value="0" step="0.5" />
+      </div>
+      <div>
+        <label for="gridType">overlay</label>
+        <select id="gridType">
+          <option value="square">square</option>
+          <option value="hex">hex</option>
+          <option value="none">none</option>
+        </select>
+      </div>
+      <div>
+        <label for="gridColor">line colour</label>
+        <input id="gridColor" type="color" value="#3a3a3a" />
+      </div>
+      <div>
+        <label for="gridOpacity">opacity</label>
+        <input id="gridOpacity" type="number" value="0.5" min="0" max="1" step="0.05" />
+      </div>
+    </div>
+    <div class="row">
+      <button id="measure">measure two lines instead</button>
+      <button id="reset">reset</button>
+      <button id="save">save alignment</button>
+      <span class="muted" id="saveMsg"></span>
+    </div>
+    <p class="warn" id="hazard"></p>
+  </fieldset>
+
+  <fieldset>
+    <legend>last response</legend>
+    <div id="out">—</div>
+  </fieldset>
+
+  <script src="/js/align.js"></script>
+</body>
+</html>
