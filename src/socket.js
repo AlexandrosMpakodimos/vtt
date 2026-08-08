@@ -27,7 +27,10 @@ const {
 } = require('./routes/scenes');
 // The active-scene rule, in one place. See services/sceneAccess.js for why it
 // moved out of routes/scenes.js during M5.
-const { mayUseSceneFor } = require('./services/sceneAccess');
+// validUuid lives in the leaf module rather than being re-derived here, for the
+// same reason mayUseScene was collapsed into it during M5: an input rule with
+// two definitions is an input rule with two behaviours.
+const { mayUseSceneFor, validUuid } = require('./services/sceneAccess');
 
 const roomName = (campaignId) => `campaign:${campaignId}`;
 
@@ -261,6 +264,30 @@ function initSockets(io) {
           return respond({ ok: false, error: 'join the campaign room first' });
         }
 
+        // [FIXED 2026-08-07] Shape-check the id before it reaches a query.
+        //
+        // Recorded as cosmetic in the M2 canvas audit and left through four
+        // milestones, on the grounds that Postgres rejects a malformed uuid
+        // anyway and the process survives. Both true. What made it worth fixing
+        // is that it appeared in the server log of every full sweep since —
+        // `invalid input syntax for type uuid: ""` — and a log that routinely
+        // carries a harmless error trains its reader to skim past errors.
+        //
+        // Placed AFTER the membership and room checks, deliberately. Answering
+        // "bad token id" to a caller who is not a member would order a
+        // validation error ahead of an authorisation one, which is the shape of
+        // an oracle even where — as here — the disclosed fact is about the
+        // caller's own input. The HTTP routes resolve shape inside
+        // loadSceneInCampaign, after their authorisation middleware; this
+        // matches them.
+        //
+        // A non-string coerces to '' here, so the typeof test the batch handler
+        // performs is necessary but not sufficient: 'not-a-uuid' is a string
+        // and still reaches the database.
+        if (!validUuid(tokenId)) {
+          return respond({ ok: false, error: 'bad token id' });
+        }
+
         const scene = await loadSceneInCampaign(sceneId, campaignId);
         if (!scene) return respond({ ok: false, error: 'scene not found' });
 
@@ -382,7 +409,9 @@ function initSockets(io) {
         await knex.transaction(async (trx) => {
           for (const m of moves) {
             const tokenId = m && m.token_id;
-            if (typeof tokenId !== 'string') { rejected.push({ token_id: tokenId, error: 'bad id' }); continue; }
+            // typeof alone lets 'not-a-uuid' through to the query; the shape
+            // check is what actually keeps a malformed id out of Postgres.
+            if (!validUuid(tokenId)) { rejected.push({ token_id: tokenId, error: 'bad id' }); continue; }
             const token = await trx('tokens').where({ id: tokenId, scene_id: scene.id }).first();
             if (!token) { rejected.push({ token_id: tokenId, error: 'not found' }); continue; }
             if (!tokenMovePolicy({ campaign, token, userId: user.id })) {

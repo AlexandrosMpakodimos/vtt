@@ -224,6 +224,38 @@ const waitFor = (s, ev, ms=900) => new Promise((r) => { const t=setTimeout(()=>{
   const alive = await gm.req('GET', '/api/auth/me');
   ok('DoS: server survives malformed socket payloads', alive.status === 200, `got ${alive.status}`);
 
+  // [ADDED 2026-08-07] A malformed token id must be REFUSED BY SHAPE rather
+  // than handed to Postgres to reject.
+  //
+  // The M2 audit recorded this as cosmetic and it stayed that way for four
+  // milestones: the query fails, the process survives, nothing leaks. What it
+  // did do was write `invalid input syntax for type uuid` into the server log
+  // on every full sweep — and a log that routinely carries a harmless error
+  // teaches its reader to skim past errors, which is the actual cost.
+  //
+  // Note the second case: a non-uuid STRING passes a typeof check and still
+  // reaches the database, so asserting only on the null case would leave the
+  // interesting half untested.
+  for (const badId of [null, undefined, 42, {}, [], 'not-a-uuid', '', '../../etc/passwd', "1' OR '1'='1"]) {
+    // eslint-disable-next-line no-await-in-loop
+    const r = await emit(gmSock, 'token:move', {
+      campaign_id: victim.id, scene_id: vScene.id, token_id: badId, x: 1, y: 1,
+    });
+    ok(`SHAPE: token:move refuses ${JSON.stringify(badId)} without querying`,
+      r && r.ok === false, JSON.stringify(r));
+  }
+  const batchBad = await emit(gmSock, 'token:move-batch', {
+    campaign_id: victim.id,
+    scene_id: vScene.id,
+    moves: [{ token_id: 'not-a-uuid', x: 1, y: 1 }],
+  });
+  ok('SHAPE: token:move-batch rejects a non-uuid string per move',
+    batchBad && Array.isArray(batchBad.rejected) && batchBad.rejected.length === 1,
+    JSON.stringify(batchBad));
+
+  const stillAlive = await gm.req('GET', '/api/auth/me');
+  ok('SHAPE: and the server is still answering afterwards', stillAlive.status === 200);
+
   // ============ API4: Unrestricted Resource Consumption ============
   // Batch bounds.
   const big = Array.from({ length: 501 }, () => ({ name: 'x' }));
