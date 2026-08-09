@@ -31,10 +31,16 @@
 //      scripting vector at the source rather than trying to sanitise markup,
 //      which is a losing game.
 //
-//   2. THE SIGNATURE PINS THE CONSTRAINTS. A presigned PUT can commit the
-//      client to an exact content type and an exact content length. Changing
-//      either invalidates the signature, so "upload five gigabytes" and "upload
-//      HTML labelled as PNG" are both refused by R2 before any of our code runs.
+//   2. THE SIGNATURE PINS THE LENGTH. A presigned PUT commits the client to an
+//      exact content length, so "upload five gigabytes" is refused by the
+//      storage service before any of our code runs.
+//
+//      [CORRECTED 2026-08-09] An earlier version of this comment claimed the
+//      signature pinned the content TYPE as well. It does not: the signed
+//      header list is `content-length;host`, and the type travels unsigned.
+//      Checked rather than assumed only after the claim had already been
+//      written down — which is the reason defence 3 exists and is not
+//      redundant with this one.
 //
 //   3. THE SERVER READS THE BYTES BACK. After the client reports success, the
 //      first bytes are fetched from the bucket and checked against the magic
@@ -72,6 +78,19 @@ const client = configured
       accessKeyId: process.env.R2_ACCESS_KEY_ID,
       secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
     },
+    // [FIXED 2026-08-09] Without this the SDK adds a CRC32 checksum to every
+    // PUT by default — and for a PRESIGNED url it computes that checksum at
+    // SIGNING time, when there is no body. The result is
+    // `x-amz-checksum-crc32=AAAAAA==`, the CRC32 of nothing, baked into the
+    // signature. The real bytes never match it, so the storage service rejects
+    // an upload that is otherwise perfectly valid.
+    //
+    // It survived the suite because the failure is silent until a body is
+    // actually sent, and the first browser upload is what exposed it. Integrity
+    // is not lost: the checksum would only have restated what the transport's
+    // own TLS already guarantees, whereas the byte verification at confirm
+    // checks something the transport cannot — whether the file is an image.
+    requestChecksumCalculation: 'WHEN_REQUIRED',
   })
   : null;
 

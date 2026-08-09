@@ -49,6 +49,42 @@ app.use(helmet({
     directives: {
       ...helmet.contentSecurityPolicy.getDefaultDirectives(),
       'img-src': ["'self'", 'https:', 'data:'],   // allow externally-hosted https avatars
+      // connect-src must be stated EXPLICITLY once the browser uploads directly
+      // to object storage. Without it the fallback is default-src 'self', which
+      // refuses the connection before any CORS preflight is even attempted —
+      // producing a bare "Failed to fetch" that looks exactly like a bucket
+      // misconfiguration and is not one.
+      //
+      // Everything the page connects to must be listed, because naming this
+      // directive overrides the default-src fallback for connections entirely:
+      //
+      //   'self'  the API, and the Socket.IO transport, which is same-origin
+      //   ws/wss  the WebSocket upgrade — some browsers do not treat these as
+      //           covered by 'self', and omitting them silently breaks the
+      //           real-time layer while leaving HTTP working
+      //   R2      the S3 endpoint the presigned PUT is addressed to — in BOTH
+      //           addressing styles, because which one appears depends on the
+      //           SDK rather than on us. The AWS client defaults to
+      //           VIRTUAL-HOSTED style, putting the bucket in the hostname
+      //           (`bucket.account.r2...`), while the account-only host is the
+      //           path style. Listing only the latter produced a CSP refusal
+      //           that read exactly like the first one and had a different
+      //           cause, which cost a round trip to discover.
+      //
+      // The bucket host is read from configuration rather than hardcoded, so a
+      // deployment pointing at a different provider needs no code change — and
+      // an unconfigured install simply does not widen the policy at all.
+      'connect-src': [
+        "'self'", 'ws:', 'wss:',
+        ...(process.env.R2_ACCOUNT_ID
+          ? [
+            `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+            ...(process.env.R2_BUCKET
+              ? [`https://${process.env.R2_BUCKET}.${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`]
+              : []),
+          ]
+          : []),
+      ],
       'style-src': ["'self'", "'unsafe-inline'"], // the dev harness uses an inline <style> block
       // upgrade-insecure-requests only makes sense over HTTPS; dropping it in
       // local http development avoids breaking same-origin sub-resource loading.

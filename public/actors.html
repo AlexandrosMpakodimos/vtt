@@ -48,6 +48,19 @@
     .field-error { color: #c00; font-size: 11px; min-height: 12px; }
     .sheet-error { color: #c00; font-size: 12px; }
 
+    .assets { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+    .asset { width: 116px; border: 1px solid #ccc; border-radius: 4px; padding: 5px;
+             font-size: 11px; text-align: center; background: #fff; }
+    .asset img { width: 100%; height: 74px; object-fit: cover; border-radius: 3px;
+                 background: #eee; display: block; }
+    .asset .k { color: #777; }
+    .asset button { margin-top: 4px; padding: 1px 6px; font-size: 11px; }
+    /* External images are visually marked, because "we host this" and "your
+       browser will contact a stranger" are different things and the interface
+       should not pretend otherwise. */
+    .asset.external { border-color: #a40; }
+    .asset.external .k { color: #a40; }
+
     /* M6 image framing. The preview is a token-sized square with overflow
        hidden, so what is seen here is exactly the crop the canvas will draw —
        the art layer carries the same transform scene.js applies. */
@@ -171,6 +184,43 @@
       <div id="itemList"></div>
     </fieldset>
   </div>
+
+  <fieldset>
+    <legend>image library</legend>
+    <p class="muted">
+      Upload a file, or paste a link. An upload goes <b>straight from your browser
+      to the bucket</b> — it never passes through this server — and the server then
+      reads the first bytes back to check the file really is the image type it
+      claims to be. A pasted link is stored as-is: every player who views it
+      connects directly to that host, which discloses their IP address to it.
+    </p>
+    <div class="row">
+      <div>
+        <label for="assetKind">kind</label>
+        <select id="assetKind">
+          <option value="portrait">portrait</option>
+          <option value="token">token art</option>
+          <option value="item">item art</option>
+          <option value="map">map (GM only)</option>
+          <option value="avatar">my profile picture</option>
+        </select>
+      </div>
+      <div style="flex:2">
+        <label for="assetFile">upload a file</label>
+        <input id="assetFile" type="file" accept="image/png,image/jpeg,image/webp,image/gif" />
+      </div>
+      <button id="assetUpload">upload</button>
+    </div>
+    <div class="row">
+      <div style="flex:3">
+        <label for="assetUrl">…or paste an image link</label>
+        <input id="assetUrl" placeholder="https://example.com/portrait.png" />
+      </div>
+      <button id="assetLink">add link</button>
+    </div>
+    <p class="muted" id="assetMsg"></p>
+    <div id="assetList" class="assets"></div>
+  </fieldset>
 
   <fieldset>
     <legend>spell catalogue</legend>

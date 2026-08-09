@@ -194,10 +194,13 @@ router.post('/presign', requireStorage, async (req, res, next) => {
       upload: {
         url: uploadUrl,
         method: 'PUT',
-        // The client MUST send exactly these. They are part of the signature,
-        // so R2 refuses the PUT if either differs — which is how the size limit
-        // is enforced by the storage provider rather than by trust.
-        headers: { 'Content-Type': mime, 'Content-Length': String(size.value) },
+        // Content-Type only. `Content-Length` is a FORBIDDEN HEADER NAME in
+        // fetch — the browser drops it from a Headers object and sets it
+        // itself from the body — so sending it here is inert at best and
+        // misleading at worst. It is still signed, and the browser still
+        // transmits it, so the size limit is still enforced by the storage
+        // service; it simply is not something the client sets.
+        headers: { 'Content-Type': mime },
         expires_in: storage.UPLOAD_URL_TTL_SECONDS,
       },
     });

@@ -73,6 +73,20 @@ async function mk(name) {
   return a;
 }
 
+// Every asset this suite creates, so the run can clean up after itself.
+//
+// A suite that leaves objects in a real bucket is a suite that costs money and
+// grows a mess every time it runs — and the byte-verification probes cannot be
+// faked, so it genuinely does upload. Recorded here and removed in the teardown
+// below via the application's own DELETE route, which exercises deletion as a
+// side effect of tidying up.
+const created = [];
+function track(res) {
+  const id = res && res.data && res.data.asset && res.data.asset.id;
+  if (id) created.push(id);
+  return res;
+}
+
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
   0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52]);
 const NOT_AN_IMAGE = Buffer.from('<!DOCTYPE html><script>alert(1)</script>', 'ascii');
@@ -86,6 +100,24 @@ async function putToPresigned(upload, buf) {
     body: buf,
   });
   return res.status;
+}
+
+// Remove everything this run created, through the application's own routes.
+//
+// Deliberately NOT `knex('assets').del()`: a direct delete would leave the
+// objects in the bucket, which is the exact orphan this is meant to prevent.
+// Going through DELETE /api/assets/:id removes both, and exercises that route
+// on every run as a side effect.
+async function teardown(gm, pl) {
+  let cleaned = 0;
+  for (const id of created) {
+    for (const who of [gm, pl]) {
+      // eslint-disable-next-line no-await-in-loop
+      const r = await who.req('DELETE', `/api/assets/${id}`);
+      if (r.status === 200) { cleaned += 1; break; }
+    }
+  }
+  return cleaned;
 }
 
 (async () => {
@@ -146,9 +178,9 @@ async function putToPresigned(upload, buf) {
     (await anon.req('POST', '/api/assets/presign', { kind: 'avatar', mime: 'image/png', bytes: 10 })).status === 401);
 
   console.log('\n--- external links need no bucket at all ---');
-  const ext = await pl.req('POST', '/api/assets/external', {
+  const ext = track(await pl.req('POST', '/api/assets/external', {
     kind: 'portrait', campaign_id: camp.id, url: 'https://example.com/aria.png',
-  });
+  }));
   t('a pasted link is recorded', ext.status === 201, `${ext.status}`);
   t('...marked as external', ext.data.asset.source === 'external');
   t('...ready immediately, since there is nothing of ours to verify',
@@ -177,9 +209,9 @@ async function putToPresigned(upload, buf) {
     })).status === 403);
 
   console.log('\n--- avatars are personal, not campaign-scoped ---');
-  const avatar = await pl.req('POST', '/api/assets/external', {
+  const avatar = track(await pl.req('POST', '/api/assets/external', {
     kind: 'avatar', url: 'https://example.com/me.png',
-  });
+  }));
   t('an avatar needs no campaign', avatar.status === 201, `${avatar.status}`);
   t('...and is stored with none', avatar.data.asset.campaign_id === null);
   const avatarInCampaign = await pl.req('POST', '/api/assets/external', {
@@ -200,7 +232,7 @@ async function putToPresigned(upload, buf) {
     (await pl.req('GET', '/api/assets?campaign_id=nonsense')).status === 404);
 
   console.log('\n--- BOPLA: forging the fields the server owns ---');
-  const forged = await pl.req('POST', '/api/assets/external', {
+  const forged = track(await pl.req('POST', '/api/assets/external', {
     kind: 'portrait',
     campaign_id: camp.id,
     url: 'https://example.com/ok.png',
@@ -209,7 +241,7 @@ async function putToPresigned(upload, buf) {
     user_id: gm.id,
     bytes: 999999999,
     mime: 'image/svg+xml',
-  });
+  }));
   t('a forged payload is accepted but ignored', forged.status === 201);
   const stored = await knex('assets').where({ id: forged.data.asset.id }).first();
   t('...the storage key is NOT taken from the body', stored.storage_key === null, `${stored.storage_key}`);
@@ -267,16 +299,66 @@ async function putToPresigned(upload, buf) {
   // ===================================================================
   if (!storageOn) {
     note('storage probes', 'SKIPPED — no bucket configured. Set R2_* to exercise the upload path.');
+    note('teardown', `${await teardown(gm, pl)} asset(s) removed`);
     console.log(results.join('\n'));
     console.log(`\n${pass} passed, ${fail} failed  (storage path not exercised)`);
     await knex.destroy();
     process.exit(fail ? 1 : 0);
   }
 
-  console.log('\n--- the full upload path ---');
-  const pres = await gm.req('POST', '/api/assets/presign', {
-    kind: 'map', campaign_id: camp.id, mime: 'image/png', bytes: PNG.length,
+  console.log('\n--- the presigned url itself ---');
+  // [ADDED 2026-08-09] Two defects found by the first BROWSER upload, neither
+  // of which the Node probes could see:
+  //
+  //   - the SDK baked a CRC32 of an EMPTY body into the signature, so real
+  //     bytes never matched it. Node uploads happened to work because the
+  //     suite's PUT went through a path that recomputed it; a browser's did not.
+  //   - the signed header list is `content-length;host`. The content TYPE is
+  //     NOT pinned by the signature, contradicting a comment that said it was.
+  //
+  // Both are properties of the URL, so they are asserted on the URL.
+  const shape = await gm.req('POST', '/api/assets/presign', {
+    kind: 'portrait', campaign_id: camp.id, mime: 'image/png', bytes: PNG.length,
   });
+  const signed = new URL(shape.data.upload.url);
+  t('the presigned url carries NO precomputed checksum',
+    !signed.searchParams.get('x-amz-checksum-crc32'),
+    'a checksum computed at signing time is the checksum of an empty body');
+  t('the length IS signed', /content-length/.test(signed.searchParams.get('X-Amz-SignedHeaders') || ''),
+    signed.searchParams.get('X-Amz-SignedHeaders'));
+  t('the client is told to send Content-Type and nothing else',
+    Object.keys(shape.data.upload.headers).join(',') === 'Content-Type',
+    Object.keys(shape.data.upload.headers).join(','));
+  t('Content-Length is NOT handed to the client (fetch forbids setting it)',
+    !('Content-Length' in shape.data.upload.headers));
+  t('the url expires quickly', Number(signed.searchParams.get('X-Amz-Expires')) <= 900,
+    signed.searchParams.get('X-Amz-Expires'));
+  track(shape);
+
+  // [ADDED 2026-08-09] The presigned URL and the Content-Security-Policy are
+  // two independent parts of this system that MUST agree, and nothing checked
+  // that they did. They disagreed twice in a row for different reasons: first
+  // connect-src was absent entirely, then it named the wrong addressing style —
+  // the SDK uses virtual-hosted URLs (`bucket.account.r2...`) and the policy
+  // listed only the account host.
+  //
+  // Both failures were invisible to every Node probe, because CSP is enforced
+  // by a browser against a document and a test client has neither. Asserting
+  // the agreement here is the cheapest available substitute for a real browser.
+  const page = await fetch(`${BASE}/actors.html`);
+  const csp = page.headers.get('content-security-policy') || '';
+  const connectSrc = (csp.split(';').find((d) => d.trim().startsWith('connect-src')) || '');
+  t('the page sends a connect-src directive', !!connectSrc,
+    'without it the fallback is default-src, which refuses the upload origin');
+  t('...and it permits the origin the presigned url actually uses',
+    connectSrc.includes(signed.origin), `${signed.origin} not in "${connectSrc.trim()}"`);
+  t('...while still permitting the websocket transport',
+    /ws:|wss:|'self'/.test(connectSrc), connectSrc.trim());
+
+  console.log('\n--- the full upload path ---');
+  const pres = track(await gm.req('POST', '/api/assets/presign', {
+    kind: 'map', campaign_id: camp.id, mime: 'image/png', bytes: PNG.length,
+  }));
   t('the GM is authorised for one upload', pres.status === 201, `${pres.status}`);
   t('...the asset starts pending', pres.data.asset.status === 'pending');
   t('...and the key was chosen by the SERVER, under the campaign',
@@ -298,9 +380,9 @@ async function putToPresigned(upload, buf) {
   console.log('\n--- THE PROBE THAT MATTERS: bytes that lie about their type ---');
   // R2 stores and serves exactly what it is given, unlike an image CDN that
   // transcodes. The declared type is a claim; the bytes are the evidence.
-  const evil = await gm.req('POST', '/api/assets/presign', {
+  const evil = track(await gm.req('POST', '/api/assets/presign', {
     kind: 'map', campaign_id: camp.id, mime: 'image/png', bytes: NOT_AN_IMAGE.length,
-  });
+  }));
   await putToPresigned(evil.data.upload, NOT_AN_IMAGE);
   const rejected = await gm.req('POST', `/api/assets/${evil.data.asset.id}/confirm`);
   t('HTML uploaded as image/png is REFUSED at confirm',
@@ -312,18 +394,18 @@ async function putToPresigned(upload, buf) {
       .data.assets.some((a) => a.id === evil.data.asset.id));
 
   console.log('\n--- BOLA on confirm ---');
-  const victim = await gm.req('POST', '/api/assets/presign', {
+  const victim = track(await gm.req('POST', '/api/assets/presign', {
     kind: 'map', campaign_id: camp.id, mime: 'image/png', bytes: PNG.length,
-  });
+  }));
   t('a different user cannot confirm somebody else upload -> 404',
     (await pl.req('POST', `/api/assets/${victim.data.asset.id}/confirm`)).status === 404);
   t('confirming an upload that never happened -> 409',
     (await gm.req('POST', `/api/assets/${victim.data.asset.id}/confirm`)).status === 409);
 
   console.log('\n--- the signature pins the size ---');
-  const small = await gm.req('POST', '/api/assets/presign', {
+  const small = track(await gm.req('POST', '/api/assets/presign', {
     kind: 'portrait', campaign_id: camp.id, mime: 'image/png', bytes: PNG.length,
-  });
+  }));
   const oversize = await fetch(small.data.upload.url, {
     method: 'PUT',
     headers: { 'Content-Type': 'image/png' },
@@ -331,6 +413,8 @@ async function putToPresigned(upload, buf) {
   });
   t('R2 refuses a body larger than was signed, before our code runs',
     oversize.status >= 400, `${oversize.status} — the length is part of the signature`);
+
+  note('teardown', `${await teardown(gm, pl)} asset(s) removed from the bucket and the database`);
 
   console.log(results.join('\n'));
   console.log(`\n${pass} passed, ${fail} failed`);

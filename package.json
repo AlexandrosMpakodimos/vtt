@@ -13,7 +13,8 @@
     "start": "node src/server.js",
     "migrate": "knex migrate:latest",
     "migrate:make": "knex migrate:make",
-    "seed": "knex seed:run"
+    "seed": "knex seed:run",
+    "clean:bucket": "node scripts/clean-bucket.js"
   },
   "nodemonConfig": {
     "ignore": [

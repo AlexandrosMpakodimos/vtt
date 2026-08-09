@@ -65,6 +65,27 @@ window.fetch = async (path, opts = {}) => {
       };
     }
     if (/\/items$/.test(path)) return { items: [] };
+    // Two SEPARATE scopes, and the client fetches both: campaign images and
+    // personal ones (avatars), which have different quotas and different
+    // owners. A stub returning the same list for each would have hidden that.
+    if (/\/api\/assets\?campaign_id=/.test(path)) {
+      return {
+        assets: [
+          { id: 'AS1', url: 'https://pub-x.r2.dev/c/C1/portrait/a.png', source: 'upload',
+            kind: 'portrait', status: 'ready', campaign_id: 'C1' },
+          { id: 'AS2', url: 'https://elsewhere.example/map.png', source: 'external',
+            kind: 'map', status: 'ready', campaign_id: 'C1' },
+        ],
+      };
+    }
+    if (/\/api\/assets$/.test(path)) {
+      return {
+        assets: [
+          { id: 'AS3', url: 'https://pub-x.r2.dev/u/U1/avatar/me.png', source: 'upload',
+            kind: 'avatar', status: 'ready', campaign_id: null },
+        ],
+      };
+    }
     if (/\/actors\/[^/]+\/spells$/.test(path)) {
       return {
         spells: [
@@ -123,6 +144,7 @@ for (const id of [
   'whoami', 'campaignId', 'loadCampaign', 'campaignInfo', 'actorList',
   'frameModal', 'frameStage', 'frameArt', 'frameScale', 'frameX', 'frameY',
   'frameReset', 'frameCancel', 'frameSave', 'frameMsg',
+  'assetKind', 'assetFile', 'assetUpload', 'assetUrl', 'assetLink', 'assetMsg', 'assetList',
   'spName', 'spLevel', 'spDesc', 'createSpell', 'spFilter', 'spellList',
   'sbSpell', 'sbSource', 'learnSpell', 'sbList', 'sbWho',
 ]) {
@@ -140,6 +162,28 @@ for (const id of [
     runError && `${runError.name}: ${runError.message}`);
   t('characters rendered', document.querySelectorAll('#actorList .card').length === 3,
     String(document.querySelectorAll('#actorList .card').length));
+
+  console.log('\n--- the image library ---');
+  const assetCards = [...document.querySelectorAll("#assetList .asset")];
+  t('the library shows campaign images AND personal ones',
+    assetCards.length === 3, String(assetCards.length));
+  t('...the personal one being the avatar',
+    assetCards[2].textContent.includes('avatar'), assetCards[2].textContent);
+  t('a hosted image is labelled hosted', /hosted/.test(assetCards[0].textContent), assetCards[0].textContent);
+  t('an external link is labelled external', /external link/.test(assetCards[1].textContent),
+    assetCards[1].textContent);
+  t('...and marked visually, because the two are not the same thing',
+    assetCards[1].classList.contains('external'));
+  t('an external image suppresses the referrer',
+    assetCards[1].querySelector('img').referrerPolicy === 'no-referrer',
+    assetCards[1].querySelector('img').referrerPolicy);
+  t('a hosted image does not need to', !assetCards[0].querySelector('img').referrerPolicy);
+  t('the upload accept list excludes SVG',
+    !document.getElementById('assetFile').accept.includes('svg'),
+    document.getElementById('assetFile').accept);
+  t('...and offers exactly the four allowed types',
+    document.getElementById('assetFile').accept.split(',').length === 4);
+  t('every kind is offered', [...document.getElementById('assetKind').options].length === 5);
 
   console.log('\n--- the spell catalogue ---');
   const spellCards = [...document.querySelectorAll('#spellList .card')];

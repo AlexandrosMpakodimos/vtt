@@ -174,6 +174,188 @@ function renderActors() {
 }
 
 // ---------------------------------------------------------------------------
+// IMAGE LIBRARY (M6)
+// ---------------------------------------------------------------------------
+//
+// The upload is a three-step conversation and the middle step does not involve
+// this application at all:
+//
+//   1. ask the server to authorise ONE upload   -> presigned URL + asset id
+//   2. PUT the file straight to the bucket      -> our server sees nothing
+//   3. tell the server it finished              -> it reads the bytes back and
+//                                                  verifies them
+//
+// Step 2 is a plain fetch to a different origin. That is the point: the file
+// never passes through the application, so a large upload costs it no memory
+// and no bandwidth, and the JSON body limit is irrelevant.
+//
+// Step 3 is the one that matters. Everything before it is this client's word,
+// and the bucket stores raw bytes rather than transcoding them — so the server
+// checks the magic numbers before the asset becomes usable. A file that is not
+// what it claims to be is deleted rather than stored, and the interface says so.
+//
+// THE HEADERS IN STEP 2 ARE NOT OPTIONAL. The content type and length are part
+// of the signature the server produced; sending anything else makes the bucket
+// refuse the PUT before our code is involved. That is how the size limit is
+// enforced by the storage provider rather than by trust.
+
+let assets = [];
+
+async function loadAssets() {
+  if (!campaign) { assets = []; renderAssets(); return; }
+  const r = await api('GET', `/api/assets?campaign_id=${campaign.id}`);
+  const campaignAssets = r.data && Array.isArray(r.data.assets) ? r.data.assets : [];
+  // Personal images (avatars) are a separate scope with a separate quota, and
+  // are fetched separately because they belong to the person, not the campaign.
+  const mineRes = await api('GET', '/api/assets');
+  const personal = mineRes.data && Array.isArray(mineRes.data.assets) ? mineRes.data.assets : [];
+  assets = [...campaignAssets, ...personal];
+  renderAssets();
+}
+
+function renderAssets() {
+  const box = document.getElementById('assetList');
+  if (!box) return;
+  box.textContent = '';
+  if (!assets.length) {
+    box.appendChild(el('p', { cls: 'muted', text: 'no images yet' }));
+    return;
+  }
+  for (const a of assets) {
+    const card = el('div', { cls: 'asset' + (a.source === 'external' ? ' external' : '') });
+
+    const img = document.createElement('img');
+    img.src = a.url;
+    img.alt = '';
+    // A pasted link is fetched from a third party by every viewer. Suppressing
+    // the referrer does not hide the viewer's address — nothing can, short of
+    // proxying — but it does stop this application's URLs being handed to that
+    // host along with the request.
+    if (a.source === 'external') img.referrerPolicy = 'no-referrer';
+    card.appendChild(img);
+
+    card.appendChild(el('div', { cls: 'k', text: a.kind }));
+    card.appendChild(el('div', {
+      cls: 'k',
+      text: a.source === 'external' ? 'external link' : 'hosted',
+    }));
+
+    const copy = button('copy url', async () => {
+      try {
+        await navigator.clipboard.writeText(a.url);
+        document.getElementById('assetMsg').textContent = 'url copied';
+      } catch {
+        // Clipboard access can be refused; showing the value is a usable
+        // fallback and better than a silent no-op.
+        document.getElementById('assetMsg').textContent = a.url;
+      }
+    });
+    card.appendChild(copy);
+    card.appendChild(button('delete', () => deleteAsset(a)));
+    box.appendChild(card);
+  }
+}
+
+async function uploadAsset() {
+  const msg = document.getElementById('assetMsg');
+  const input = document.getElementById('assetFile');
+  const file = input.files && input.files[0];
+  if (!file) { msg.textContent = 'choose a file first'; return; }
+
+  const kind = document.getElementById('assetKind').value;
+  // An avatar is personal and has no campaign — the scopes are exclusive, and
+  // sending both is refused by the server.
+  const body = { kind, mime: file.type, bytes: file.size };
+  if (kind !== 'avatar') {
+    if (!campaign) { msg.textContent = 'load a campaign first'; return; }
+    body.campaign_id = campaign.id;
+  }
+
+  msg.textContent = 'requesting authorisation…';
+  const pres = await api('POST', '/api/assets/presign', body);
+  show('POST presign', pres);
+  if (pres.status !== 201) {
+    msg.textContent = (pres.data && pres.data.error) || 'upload was not authorised';
+    return;
+  }
+
+  const { asset, upload } = pres.data;
+
+  msg.textContent = 'uploading…';
+  let put;
+  try {
+    // Straight to the bucket. Note this is NOT the api() helper: it is a
+    // different origin, carries no session cookie, and must send exactly the
+    // headers the signature covers.
+    put = await fetch(upload.url, {
+      method: upload.method,
+      headers: upload.headers,
+      body: file,
+    });
+  } catch (err) {
+    // A network error here is usually the bucket's CORS policy, which is
+    // invisible from the server side — worth naming rather than reporting a
+    // bare failure.
+    msg.textContent = `upload failed (${err.message}) — check the bucket CORS policy`;
+    return;
+  }
+  if (!put.ok) {
+    msg.textContent = `the storage service refused the upload (${put.status})`;
+    return;
+  }
+
+  msg.textContent = 'verifying…';
+  const done = await api('POST', `/api/assets/${asset.id}/confirm`);
+  show('POST confirm', done);
+  if (done.status !== 200) {
+    msg.textContent = (done.data && done.data.error) || 'verification failed';
+    return;
+  }
+
+  msg.textContent = 'uploaded';
+  input.value = '';
+  await loadAssets();
+}
+
+async function addAssetLink() {
+  const msg = document.getElementById('assetMsg');
+  const url = str('assetUrl');
+  if (!url) { msg.textContent = 'paste a url first'; return; }
+
+  const kind = document.getElementById('assetKind').value;
+  const body = { kind, url };
+  if (kind !== 'avatar') {
+    if (!campaign) { msg.textContent = 'load a campaign first'; return; }
+    body.campaign_id = campaign.id;
+  }
+
+  const r = await api('POST', '/api/assets/external', body);
+  show('POST external', r);
+  if (r.status !== 201) {
+    msg.textContent = (r.data && r.data.error) || 'that link was not accepted';
+    return;
+  }
+  msg.textContent = 'link added — players will connect to that host directly';
+  document.getElementById('assetUrl').value = '';
+  await loadAssets();
+}
+
+async function deleteAsset(a) {
+  const r = await api('DELETE', `/api/assets/${a.id}`);
+  show('DELETE asset', r);
+  if (r.status !== 200) {
+    document.getElementById('assetMsg').textContent = (r.data && r.data.error) || 'could not delete';
+    return;
+  }
+  // Stated plainly: the six columns that hold image URLs are not foreign keys
+  // to this table, so nothing was rewritten. Anything still pointing here will
+  // render a broken image rather than silently changing.
+  document.getElementById('assetMsg').textContent =
+    'deleted — anything still using it will now show a broken image';
+  await loadAssets();
+}
+
+// ---------------------------------------------------------------------------
 // IMAGE FRAMING (M6)
 // ---------------------------------------------------------------------------
 //
@@ -652,6 +834,7 @@ async function refresh() {
   renderActors();
   renderItems();
   await loadSpells();
+  await loadAssets();
   if (selectedActor) { renderSheet(); await loadBag(); await loadSpellbook(); }
   if (isGm && document.getElementById('itemEditor').childElementCount === 0) renderItemEditor();
 
@@ -911,6 +1094,8 @@ document.getElementById('clearLog').addEventListener('click', () => { logEl.text
 // windows can be opened from the same link.
 initFraming();
 
+document.getElementById('assetUpload').addEventListener('click', uploadAsset);
+document.getElementById('assetLink').addEventListener('click', addAssetLink);
 document.getElementById('createSpell').addEventListener('click', createSpell);
 document.getElementById('learnSpell').addEventListener('click', learnSpell);
 document.getElementById('spFilter').addEventListener('change', loadSpells);
