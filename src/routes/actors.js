@@ -395,6 +395,47 @@ async function broadcastActor(req, actor) {
   await sockets.broadcastToPlayers(req.campaign.id, 'actor:updated', shapeActorFor(false, actor));
 }
 
+// [FINDING, fixed 2026-08-04] Announce a change to something an actor OWNS —
+// its bag, its spellbook — on the same terms the actor itself is announced on.
+//
+// broadcastActor above is gated by playersMayKnowActor: a player hears nothing
+// about an NPC that is not on the board, and break-actors probes exactly that.
+// `inventory:changed` and `spellbook:changed` were NOT gated. They went
+// broadcastRoom, so every member received the ACTOR ID of an NPC they could not
+// otherwise know existed.
+//
+// The same actor, then: its updates hidden, and "somebody just changed this
+// actor's bag" broadcast to the whole table with its identifier attached. One
+// resource, several doors, the lock fitted to some of them — the M4 defect
+// shape, on the socket layer this time.
+//
+// WHAT IT LEAKED. Not data: the payload has only an id, and every read path
+// answers 404 for an NPC. But a player could enumerate the identifiers of the
+// GM's unplaced NPCs, COUNT how many were being prepared, and watch the timing
+// of that preparation — "the GM equipped something" thirty seconds before an
+// ambush. That is the confidentiality this project claims for a GM's prep.
+//
+// It was not an accepted risk. break-actors' L12 probe reads "inventory events
+// carry only an actor_id, never item data" — it asked whether the payload
+// carried DATA and never asked whether the ID ITSELF was disclosable. A probe
+// that checks the wrong half of a question passes for the wrong reason.
+//
+// A player character is unaffected: playersMayKnowActor returns true for
+// anything that is not an NPC, so the party keeps hearing about each other's
+// bags exactly as before.
+async function broadcastActorOwned(req, actorId, event) {
+  const sockets = req.app.get('campaignSockets');
+  if (!sockets) return;
+  const payload = { actor_id: actorId };
+
+  await sockets.broadcastToOwner(req.campaign.id, event, payload);
+
+  const actor = await knex('actors')
+    .where({ id: actorId, campaign_id: req.campaign.id }).first();
+  if (!(await playersMayKnowActor(req.campaign, actor))) return;
+  await sockets.broadcastToPlayers(req.campaign.id, event, payload);
+}
+
 // ---------------------------------------------------------------------------
 // actors
 // ---------------------------------------------------------------------------
@@ -697,10 +738,8 @@ router.delete('/:actorId', requireMember, async (req, res, next) => {
 // is sheet-only state that changes rarely, so the extra round-trip costs
 // nothing. Actor HP is the opposite case (canvas-visible, changes constantly),
 // which is why actor:updated carries a full projected payload instead.
-function notifyInventory(req, actorId) {
-  const sockets = req.app.get('campaignSockets');
-  if (!sockets) return;
-  sockets.broadcastRoom(req.campaign.id, 'inventory:changed', { actor_id: actorId });
+async function notifyInventory(req, actorId) {
+  await broadcastActorOwned(req, actorId, 'inventory:changed');
 }
 
 // Resolve the actor and check write authority in one place, since all four
@@ -887,7 +926,7 @@ router.post('/:actorId/inventory', requireMember, async (req, res, next) => {
       throw err;
     }
 
-    notifyInventory(req, actor.id);
+    await notifyInventory(req, actor.id);
     return res.status(201).json({
       inventory: {
         id: row.id,
@@ -988,7 +1027,7 @@ router.patch('/:actorId/inventory/:invId', requireMember, async (req, res, next)
       }
     }
 
-    notifyInventory(req, actor.id);
+    await notifyInventory(req, actor.id);
     return res.json({
       inventory: {
         id: updated.id,
@@ -1018,7 +1057,7 @@ router.delete('/:actorId/inventory/:invId', requireMember, async (req, res, next
       .where({ id: req.params.invId, actor_id: actor.id }).del();
     if (!removed) return res.status(404).json({ error: 'inventory row not found' });
 
-    notifyInventory(req, actor.id);
+    await notifyInventory(req, actor.id);
     return res.json({ deleted: true, id: req.params.invId });
   } catch (err) {
     return next(err);
@@ -1150,9 +1189,7 @@ router.post('/:actorId/spells', requireMember, async (req, res, next) => {
     // Carries NO spell data, only ids. The M4 inventory decision, for the same
     // reason: clients re-fetch through the authorised path, so this event cannot
     // become a second disclosure channel that drifts from the first.
-    req.app.get('campaignSockets')?.broadcastRoom(req.campaign.id, 'spellbook:changed', {
-      actor_id: actor.id,
-    });
+    await broadcastActorOwned(req, actor.id, 'spellbook:changed');
 
     return res.status(201).json({ entry: shapeSpellbookRow(row) });
   } catch (err) {
@@ -1198,9 +1235,7 @@ router.patch('/:actorId/spells/:spellId', requireMember, async (req, res, next) 
       .update(updates)
       .returning('*');
 
-    req.app.get('campaignSockets')?.broadcastRoom(req.campaign.id, 'spellbook:changed', {
-      actor_id: actor.id,
-    });
+    await broadcastActorOwned(req, actor.id, 'spellbook:changed');
 
     return res.json({ entry: shapeSpellbookRow(row) });
   } catch (err) {
@@ -1219,9 +1254,7 @@ router.delete('/:actorId/spells/:spellId', requireMember, async (req, res, next)
       .where({ actor_id: actor.id, spell_id: req.params.spellId }).del();
     if (!n) return res.status(404).json({ error: 'spell not found' });
 
-    req.app.get('campaignSockets')?.broadcastRoom(req.campaign.id, 'spellbook:changed', {
-      actor_id: actor.id,
-    });
+    await broadcastActorOwned(req, actor.id, 'spellbook:changed');
 
     return res.json({ ok: true, spell_id: req.params.spellId });
   } catch (err) {

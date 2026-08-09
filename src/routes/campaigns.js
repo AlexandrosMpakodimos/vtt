@@ -2,6 +2,7 @@ const express = require('express');
 const knex = require('../db');
 const { hashPassword, verifyPassword } = require('../services/password');
 const { requireAuth } = require('../middleware/auth');
+const { contentWriteLimiter } = require('../middleware/rateLimit');
 const { requireMember, requireOwner, validCampaignId } = require('../middleware/campaignAuth');
 const {
   validateCampaignName, validateCampaignDescription,
@@ -365,8 +366,10 @@ router.post('/:id/join', async (req, res, next) => {
       if (!ok) return res.status(401).json({ error: 'incorrect campaign password' });
     }
 
-    const c = validateColor(req.body && req.body.color);
-    if (c.error) return res.status(400).json({ error: c.error });
+    // `let`, not `const`: the retry below clears it if the colour is taken.
+    const colour = validateColor(req.body && req.body.color);
+    if (colour.error) return res.status(400).json({ error: colour.error });
+    const c = { value: colour.value };
 
     // Cap + membership write, made ATOMIC to close the same TOCTOU race as
     // create (OWASP A08:2025): without this, N parallel joiners all read
@@ -407,6 +410,26 @@ router.post('/:id/join', async (req, res, next) => {
       } catch (err) {
         if (err.campaignFull) return res.status(409).json({ error: 'this campaign is full' });
         if (err.code === '40001' && attempt < 5) { attempt += 1; continue; }
+        // [FINDING, fixed 2026-08-04] The M6 partial unique index on
+        // (campaign_id, color) made this route able to raise 23505, which it did
+        // not handle — so joining a campaign where somebody already held your
+        // colour returned a 500.
+        //
+        // Worse than the crash: the 500 was an ORACLE. A stranger could probe a
+        // public campaign's palette from outside by joining with each colour in
+        // turn and watching which ones failed.
+        //
+        // The colour is DROPPED rather than the join refused. Refusing would be
+        // absurd — you cannot enter a game because somebody took blue — and a
+        // 409 would leak the same information the 500 did. Joining succeeds
+        // colourless; PATCH /:id/me is where a colour is chosen, and that route
+        // answers 409 honestly because by then the caller is already a member
+        // and the palette is data they can already read.
+        if (err.code === '23505' && c.value && attempt < 5) {
+          c.value = null;
+          attempt += 1;
+          continue;
+        }
         throw err;
       }
     }
@@ -417,7 +440,6 @@ router.post('/:id/join', async (req, res, next) => {
   }
 });
 
-// POST /api/campaigns/:id/leave — status -> 'left'. The owner cannot leave.
 // PATCH /api/campaigns/:id/me — a member sets their own display colour.
 //
 // SELF-SERVICE by design. The colour identifies you at the table, so it is yours
@@ -436,7 +458,18 @@ router.post('/:id/join', async (req, res, next) => {
 // constraint satisfied natively rather than through withAtomicCap. The 23505
 // below is that race being lost, and it is a 409 rather than a 500 because
 // losing it is an ordinary outcome, not an error.
-router.patch('/:id/me', requireMember, async (req, res, next) => {
+// [FINDING, fixed 2026-08-04] This route had NO rate limiter, and it is the only
+// write in the project that both persists and broadcasts ROOM-WIDE without one.
+// Every other resource router — actors, scenes, items, chat, combat, spells —
+// applies contentWriteLimiter; campaigns.js never needed one because its writes
+// are rare (create, join, transfer) and each has its own limiter in server.js.
+// This route broke that pattern: one request fans out to every connected member,
+// so an unlimited caller is an amplifier, not merely a busy writer.
+//
+// Applied to this route ALONE rather than to the router, because mounting it on
+// campaigns.js would silently change the limits on join, search and create,
+// which have their own tuned limiters and their own suites.
+router.patch('/:id/me', requireMember, contentWriteLimiter, async (req, res, next) => {
   try {
     const body = req.body || {};
     if (body.color === undefined) {
@@ -481,6 +514,7 @@ router.patch('/:id/me', requireMember, async (req, res, next) => {
   }
 });
 
+// POST /api/campaigns/:id/leave — status -> 'left'. The owner cannot leave.
 router.post('/:id/leave', requireMember, async (req, res, next) => {
   try {
     // Deliberate: this kills the orphaned-campaign bug at the source.

@@ -40,6 +40,7 @@ const UNIT = [
   'test-fog-ui.js', 'test-fog-validators.js', 'test-sheet-ui.js',
   'test-dice.js', 'test-dice3d.js',
   'test-combat-ui.js', 'test-align-ui.js', 'test-actors-ui.js',
+  'test-storage.js',
 ];
 
 // Functional. Real Postgres, server on npm run dev:test.
@@ -47,7 +48,7 @@ const DB = [
   'test-campaigns.js', 'test-scenes.js', 'test-token-ops.js', 'test-fog.js',
   'test-active-scene.js', 'test-scene-delete.js', 'test-actors.js',
   'test-items-inventory.js', 'test-combat.js', 'test-speaker-color.js',
-  'test-scene-grid.js', 'test-spells.js',
+  'test-scene-grid.js', 'test-spells.js', 'test-assets.js',
 ];
 
 // Adversarial security regressions.

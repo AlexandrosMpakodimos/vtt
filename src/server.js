@@ -11,6 +11,7 @@ const PgSession = require('connect-pg-simple')(session);
 const { Pool } = require('pg');
 
 const knex = require('./db');
+const { router: assetRoutes, PENDING_TTL_MINUTES: PENDING_ASSET_TTL_MINUTES } = require('./routes/assets');
 const passport = require('./config/passport');
 const authRoutes = require('./routes/auth');
 const { router: campaignRoutes, SOFT_DELETE_DAYS } = require('./routes/campaigns');
@@ -76,6 +77,10 @@ app.use('/api/campaigns/:id/join', campaignJoinLimiter);
 app.use('/api/campaigns/search', campaignSearchLimiter);
 app.post('/api/campaigns', campaignCreateLimiter);
 app.use('/api/campaigns', verifyOrigin);
+// Assets are mounted OUTSIDE /api/campaigns because an avatar has no campaign.
+// The consequence is that membership is checked inside the router rather than
+// inherited from the path — see that file's header.
+app.use('/api/assets', assetRoutes);
 app.use('/api/campaigns', campaignRoutes);
 
 io.engine.use(sessionMiddleware);
@@ -125,6 +130,30 @@ async function cleanupDeletedCampaigns() {
 }
 setInterval(cleanupDeletedCampaigns, 60 * 60 * 1000);
 cleanupDeletedCampaigns();
+
+// Reclaim upload authorisations that were issued and never used.
+//
+// A presigned URL creates a `pending` asset row before the bytes exist, because
+// the quota has to be claimed before the authorisation is handed out. A client
+// that asks for a URL and never uploads therefore holds quota indefinitely, and
+// asking repeatedly would exhaust it without storing a single image.
+//
+// Same hourly cadence and fail-soft shape as the token and campaign sweeps
+// above. Rejected rows go too: the object was already deleted at the moment of
+// rejection, so the row is a record of something that no longer exists.
+async function cleanupStaleAssets() {
+  try {
+    const n = await knex('assets')
+      .whereIn('status', ['pending', 'rejected'])
+      .whereRaw(`created_at < now() - interval '${PENDING_ASSET_TTL_MINUTES} minutes'`)
+      .del();
+    if (n) console.log(`Cleared ${n} stale asset row(s)`);
+  } catch (err) {
+    console.error('Asset cleanup failed:', err.message);
+  }
+}
+setInterval(cleanupStaleAssets, 60 * 60 * 1000);
+cleanupStaleAssets();
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => console.log(`Server running at http://localhost:${PORT}`));
