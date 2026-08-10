@@ -55,7 +55,7 @@ const DB = [
 const SEC = [
   'break-campaigns.js', 'break-canvas.js', 'break-fog.js',
   'break-active-scene.js', 'break-actors.js', 'break-combat.js',
-  'break-dice.js', 'break-m6.js',
+  'break-dice.js', 'break-m6.js', 'break-assets.js',
 ];
 
 const BASE = process.env.BASE_URL || 'http://localhost:3000';

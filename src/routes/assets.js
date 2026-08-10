@@ -161,12 +161,32 @@ router.post('/presign', requireStorage, async (req, res, next) => {
     // succeeds. Issuing an authorisation that would exceed the cap and then
     // refusing the result would waste the user's upload and leave an object in
     // the bucket to clean up.
+    //
+    // [FIXED 2026-08-09] The count MUST include `pending`, and originally did
+    // not — it counted only `ready`, which meant a pending row claimed nothing
+    // and the cap did not hold at all:
+    //
+    //   with zero ready rows, request five hundred presigned URLs — every one
+    //   passes a check against zero — then upload and confirm them all. Confirm
+    //   performs no cap check; it only flips a status. Five hundred assets
+    //   against a limit of three hundred.
+    //
+    // The comment directly above described the intent correctly and the code
+    // did something else. An authorisation that has been issued is an allowance
+    // that has been spent, whether or not the bytes ever arrive; the stale-row
+    // sweep is what returns it if they do not.
+    //
+    // Expressed as a callback because the primitive takes a `where` object and
+    // this needs a set membership. Knex groups the callback's conditions, so
+    // the scope and the status test are ANDed as one clause.
     const scope = campaignId ? { campaign_id: campaignId } : { user_id: req.user.id, campaign_id: null };
     let row;
     try {
       const rows = await withAtomicCap({
         table: 'assets',
-        where: { ...scope, status: 'ready' },
+        where: function countsAgainstQuota() {
+          this.where(scope).whereIn('status', ['pending', 'ready']);
+        },
         max: campaignId ? MAX_ASSETS_PER_CAMPAIGN : MAX_ASSETS_PER_USER,
         capMessage: campaignId
           ? `a campaign may hold at most ${MAX_ASSETS_PER_CAMPAIGN} images`
@@ -310,7 +330,13 @@ router.post('/external', async (req, res, next) => {
     try {
       const rows = await withAtomicCap({
         table: 'assets',
-        where: { ...scope, status: 'ready' },
+        // Same scope as presign. An external link is `ready` immediately and has
+        // no pending state of its own, but it must be counted against the SAME
+        // total — otherwise the two routes would enforce two different caps on
+        // one allowance, and the cheaper one would be the way around the other.
+        where: function countsAgainstQuota() {
+          this.where(scope).whereIn('status', ['pending', 'ready']);
+        },
         max: campaignId ? MAX_ASSETS_PER_CAMPAIGN : MAX_ASSETS_PER_USER,
         capMessage: campaignId
           ? `a campaign may hold at most ${MAX_ASSETS_PER_CAMPAIGN} images`
