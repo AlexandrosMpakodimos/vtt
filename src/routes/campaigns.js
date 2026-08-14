@@ -3,10 +3,12 @@ const knex = require('../db');
 const { hashPassword, verifyPassword } = require('../services/password');
 const { requireAuth } = require('../middleware/auth');
 const { contentWriteLimiter } = require('../middleware/rateLimit');
-const { requireMember, requireOwner, validCampaignId } = require('../middleware/campaignAuth');
+const {
+  requireMember, requireMemberAnyState, requireOwner, validCampaignId,
+} = require('../middleware/campaignAuth');
 const {
   validateCampaignName, validateCampaignDescription,
-  validateImageUrl, validateCampaignPassword, validateColor,
+  validateImageUrl, validateCampaignPassword, validateColor, validateBool,
 } = require('../services/validators');
 
 const { router: sceneRoutes } = require('./scenes');
@@ -55,7 +57,7 @@ const SOFT_DELETE_DAYS = 30;
 // can leak it — the same discipline as SAFE_COLUMNS in routes/auth.js.
 const SAFE_COLUMNS = [
   'id', 'owner_id', 'name', 'description', 'img_url',
-  'is_public', 'active_scene_id', 'settings', 'created_at', 'updated_at',
+  'is_public', 'is_open', 'active_scene_id', 'settings', 'created_at', 'updated_at',
 ];
 
 // Shapes a campaign for the client. has_password is exposed as a BOOLEAN (never
@@ -69,6 +71,10 @@ function publicCampaign(c, viewerId) {
     description: c.description,
     img_url: c.img_url,
     is_public: c.is_public,
+    // Whether the game is open. Sent to EVERY member, not just the GM: a player
+    // needs to know why the table is unreachable, and a dashboard that shows a
+    // campaign but cannot say it is closed is worse than one that hides it.
+    is_open: c.is_open !== false,
     has_password: !!c.password_hash,
     is_gm: viewerId != null && c.owner_id === viewerId,
     active_scene_id: c.active_scene_id,
@@ -104,6 +110,7 @@ function searchResult(c) {
     description: c.description,
     img_url: c.img_url,
     is_public: c.is_public,
+    is_open: c.is_open !== false,
     has_password: !!c.password_hash,
     member_count: Number(c.member_count) || 0,
     created_at: c.created_at,
@@ -304,7 +311,7 @@ router.get('/search', async (req, res, next) => {
 });
 
 // GET /api/campaigns/:id — detail, members only.
-router.get('/:id', requireMember, async (req, res, next) => {
+router.get('/:id', requireMemberAnyState, async (req, res, next) => {
   try {
     const members = await knex('campaign_members as m')
       .join('users as u', 'u.id', 'm.user_id')
@@ -469,7 +476,7 @@ router.post('/:id/join', async (req, res, next) => {
 // Applied to this route ALONE rather than to the router, because mounting it on
 // campaigns.js would silently change the limits on join, search and create,
 // which have their own tuned limiters and their own suites.
-router.patch('/:id/me', requireMember, contentWriteLimiter, async (req, res, next) => {
+router.patch('/:id/me', requireMemberAnyState, contentWriteLimiter, async (req, res, next) => {
   try {
     const body = req.body || {};
     if (body.color === undefined) {
@@ -515,7 +522,7 @@ router.patch('/:id/me', requireMember, contentWriteLimiter, async (req, res, nex
 });
 
 // POST /api/campaigns/:id/leave — status -> 'left'. The owner cannot leave.
-router.post('/:id/leave', requireMember, async (req, res, next) => {
+router.post('/:id/leave', requireMemberAnyState, async (req, res, next) => {
   try {
     // Deliberate: this kills the orphaned-campaign bug at the source.
     if (req.isOwner) {
@@ -539,7 +546,7 @@ router.post('/:id/leave', requireMember, async (req, res, next) => {
 // no one else's view. Any active member (owner or player) may archive their view;
 // it is not moderation and does not affect membership or access. requireMember
 // guarantees the caller has a membership row to stamp.
-router.post('/:id/archive', requireMember, async (req, res, next) => {
+router.post('/:id/archive', requireMemberAnyState, async (req, res, next) => {
   try {
     await knex('campaign_members')
       .where({ campaign_id: req.campaign.id, user_id: req.user.id })
@@ -551,7 +558,15 @@ router.post('/:id/archive', requireMember, async (req, res, next) => {
 });
 
 // POST /api/campaigns/:id/unarchive — bring it back into my active dashboard.
-router.post('/:id/unarchive', requireMember, async (req, res, next) => {
+// [FIXED 2026-08-14] requireMemberAnyState, not requireMember.
+//
+// Archiving is dashboard state and was correctly exempted from the open gate;
+// UNarchiving is the same state and was not, so a member who tidied away a
+// closed campaign could not bring it back. One operation, two directions, the
+// exemption applied to one of them — the same shape as several findings already
+// on record in this project, and found here by a probe that tried to undo its
+// own setup.
+router.post('/:id/unarchive', requireMemberAnyState, async (req, res, next) => {
   try {
     await knex('campaign_members')
       .where({ campaign_id: req.campaign.id, user_id: req.user.id })
@@ -572,6 +587,18 @@ router.patch('/:id', requireOwner, async (req, res, next) => {
       const n = validateCampaignName(body.name);
       if (n.error) return res.status(400).json({ error: n.error });
       updates.name = n.value;
+    }
+
+    if (body.is_open !== undefined) {
+      // Open or close the table. GM-only by virtue of requireOwner on this
+      // route — the same guard that governs the map, the NPCs and the fog.
+      //
+      // Strict boolean, not truthiness: `is_open: "false"` is a string and
+      // therefore true, which would silently open a campaign somebody meant to
+      // close. The one direction that matters is the one that grants access.
+      const b = validateBool(body.is_open, 'is_open');
+      if (b.error) return res.status(400).json({ error: b.error });
+      updates.is_open = b.value;
     }
 
     if (body.description !== undefined) {

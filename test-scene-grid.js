@@ -241,47 +241,85 @@ async function mk(name) {
   t('...with its framing', seen && seen.img_scale === 2, JSON.stringify(seen));
   t('...and still NO statistics', seen && seen.hp_max === undefined && seen.hp_current === undefined);
 
-  console.log('\n--- image framing: tokens INHERIT it with the picture ---');
-  // [PROBE CORRECTED] This asserted the identity transform on a new token. It
-  // was written before the placement route was changed to inherit framing, and
-  // the change is the correct one: img_url is COPIED onto a token at placement,
-  // so copying the picture without its framing gives a linked token the
-  // character's portrait with the head cropped off — the exact case framing
-  // exists to fix. The probe now asserts the inheritance instead.
+  console.log('\n--- image framing: tokens INHERIT it, LIVE ---');
+  // [PROBES INVERTED 2026-08-10] These previously asserted copy-at-placement,
+  // including one written specifically to record that re-framing a character
+  // does NOT reach tokens already on the board. That behaviour was reported as
+  // a bug and it was one: the copy made inheritance a one-time event, so a
+  // linked token stopped being linked for display the moment it was created.
   //
-  // npcTok was placed from `npc` AFTER the GM set its scale to 2 above.
-  t('a token placed from a character inherits its framing',
+  // NULL now means "ask the character". These probes assert the relationship
+  // rather than the copy, and the one that recorded the old consequence is
+  // inverted rather than deleted so the change is visible in the diff.
+  t('a token placed from a character shows its framing',
     npcTok.img_scale === 2, `${npcTok.img_scale}`);
 
-  // A token given its own picture must NOT take the character's framing: the
-  // framing describes an image, and this is a different image.
   const ownArt = (await gm.req('POST', `${P}/tokens`, {
     name: 'Custom', actor_id: npc.id, x: 4, y: 4,
     img_url: 'https://example.com/other.png',
   })).data.token;
-  t('...but a token given its OWN picture starts at the identity transform',
+  t('a token given its OWN picture starts at the identity transform',
     ownArt.img_scale === 1 && ownArt.img_offset_x === 0,
     JSON.stringify([ownArt.img_scale, ownArt.img_offset_x]));
 
   const unlinked = (await gm.req('POST', `${P}/tokens`, { name: 'Crate', x: 5, y: 5 })).data.token;
-  t('...and an unlinked token starts at the identity transform',
-    unlinked.img_scale === 1 && unlinked.img_offset_x === 0);
+  t('an unlinked token has no picture to inherit',
+    unlinked.img_url === null, `${unlinked.img_url}`);
+  t('...and gets the identity transform, not an absent one',
+    unlinked.img_offset_x === 0 && unlinked.img_scale === 1,
+    JSON.stringify([unlinked.img_offset_x, unlinked.img_scale]));
 
-  // Re-framing the character afterwards must NOT reach back to placed tokens —
-  // the same way re-uploading its portrait does not.
-  await gm.req('PATCH', `${A}/${npc.id}`, { img_scale: 3 });
-  const stillTwo = await knex('tokens').where({ id: npcTok.id }).first();
-  t('re-framing the character does not retro-update tokens already placed',
-    Number(stillTwo.img_scale) === 2, `${stillTwo.img_scale}`);
-  const tokFramed = await gm.req('PATCH', `${P}/tokens/${npcTok.id}`, {
-    img_offset_x: -0.3, img_scale: 1.2,
-  });
-  t('the GM frames a token\'s own art', tokFramed.status === 200
-    && tokFramed.data.token.img_scale === 1.2, `${tokFramed.status}`);
-  t('a bad token framing value is refused',
-    (await gm.req('PATCH', `${P}/tokens/${npcTok.id}`, { img_scale: 99 })).status === 400);
-  t('a player cannot frame a token (GM-only route)',
-    (await pl.req('PATCH', `${P}/tokens/${npcTok.id}`, { img_scale: 1.1 })).status === 403);
+  console.log('\n--- re-framing a character REACHES its tokens ---');
+  await gm.req('PATCH', `${A}/${npc.id}`, { img_scale: 3, img_offset_x: 0.4 });
+  const afterReframe = (await gm.req('GET', P)).data.tokens.find((x) => x.id === npcTok.id);
+  t('a token that inherits follows the character',
+    afterReframe.img_scale === 3 && afterReframe.img_offset_x === 0.4,
+    JSON.stringify([afterReframe.img_scale, afterReframe.img_offset_x]));
+
+  await gm.req('PATCH', `${A}/${npc.id}`, { img_url: 'https://example.com/newportrait.png' });
+  const afterRepic = (await gm.req('GET', P)).data.tokens.find((x) => x.id === npcTok.id);
+  t('...and so does its picture',
+    afterRepic.img_url === 'https://example.com/newportrait.png', afterRepic.img_url);
+
+  // The override must survive, or the fix would be the opposite bug: a
+  // deliberate per-token picture silently reverting on every character edit.
+  const overridden = (await gm.req('GET', P)).data.tokens.find((x) => x.id === ownArt.id);
+  t('a token with its OWN picture is NOT overwritten',
+    overridden.img_url === 'https://example.com/other.png', overridden.img_url);
+  t('...nor is its own framing',
+    overridden.img_scale === 1, `${overridden.img_scale}`);
+
+  console.log('\n--- the payload SAYS whether it inherited ---');
+  // Resolving on the server erases the distinction: an inherited picture and an
+  // owned copy of the same URL look identical in the payload. A client that has
+  // to repaint the first and leave the second alone therefore needs telling —
+  // and the first version of the canvas handler tested the resolved value for
+  // null, matched nothing, and left every token stale until a reload.
+  const live = (await gm.req('GET', P)).data.tokens;
+  const inheritTok = live.find((x) => x.id === npcTok.id);
+  const ownTok = live.find((x) => x.id === ownArt.id);
+  t('an inheriting token is flagged as inheriting its picture',
+    inheritTok.img_inherited === true, `${inheritTok.img_inherited}`);
+  t('...and its framing', inheritTok.frame_inherited === true);
+  t('a token with its own picture is flagged as NOT inheriting',
+    ownTok.img_inherited === false, `${ownTok.img_inherited}`);
+  t('...nor its framing', ownTok.frame_inherited === false);
+  const unlinkedTok = live.find((x) => x.id === unlinked.id);
+  t('an unlinked token inherits nothing, having nothing to inherit from',
+    unlinkedTok.img_inherited === false && unlinkedTok.frame_inherited === false);
+
+  // The two are independent: re-framing a token that inherits its picture must
+  // stop the framing following while the picture keeps following.
+  await gm.req('PATCH', `${P}/tokens/${npcTok.id}`, { img_scale: 2.5 });
+  const mixed = (await gm.req('GET', P)).data.tokens.find((x) => x.id === npcTok.id);
+  t('a token can inherit the picture and own its framing',
+    mixed.img_inherited === true && mixed.frame_inherited === false,
+    JSON.stringify([mixed.img_inherited, mixed.frame_inherited]));
+  t('...keeping the framing it was given', mixed.img_scale === 2.5, `${mixed.img_scale}`);
+
+  const inheritRow = await knex('tokens').where({ id: npcTok.id }).first();
+  t('the inheriting token stores NULL for the picture, not a copy',
+    inheritRow.img_url === null, `${inheritRow.img_url}`);
 
   console.log('\n--- placing a token FOR a character: inheritance by absence ---');
   // The server fills a field from the character only when the body OMITS it.
@@ -293,10 +331,13 @@ async function mk(name) {
   });
   const inherited = (await gm.req('POST', `${P}/tokens`, { actor_id: npc.id, x: 8, y: 8 })).data.token;
   t('an omitted name inherits the character\'s', inherited.name === 'Goblin', inherited.name);
-  t('an omitted picture inherits too', inherited.img_url === 'https://example.com/goblin.png');
-  t('...and brings the framing with it',
+  t('an omitted picture is inherited in the payload',
+    inherited.img_url === 'https://example.com/goblin.png', inherited.img_url);
+  t('...along with the framing',
     inherited.img_scale === 1.5 && inherited.img_offset_x === 0.2,
     JSON.stringify([inherited.img_scale, inherited.img_offset_x]));
+  t('...while the ROW itself stores NULL, which is what keeps it live',
+    (await knex('tokens').where({ id: inherited.id }).first()).img_url === null);
   t('an omitted size inherits the creature footprint (Large = 2x2)',
     inherited.width === 2 && inherited.height === 2,
     JSON.stringify([inherited.width, inherited.height]));
@@ -328,6 +369,8 @@ async function mk(name) {
   t('a pasted spec inherits the character\'s name', pasted[0].name === 'Goblin', pasted[0].name);
   t('...its picture', pasted[0].img_url === 'https://example.com/goblin.png');
   t('...its framing', pasted[0].img_scale === 1.5, `${pasted[0].img_scale}`);
+  t('...and stores the picture as NULL, so it stays live',
+    (await knex('tokens').where({ id: pasted[0].id }).first()).img_url === null);
   t('...and its footprint', pasted[0].width === 2, `${pasted[0].width}`);
   t('an explicit name in a spec still wins', pasted[1].name === 'Named One');
   t('...and that spec still inherits the picture it omitted',

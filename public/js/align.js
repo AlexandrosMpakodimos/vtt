@@ -343,6 +343,20 @@ document.getElementById('reset').addEventListener('click', () => {
 document.getElementById('sceneSel').addEventListener('change', (e) => selectScene(e.target.value));
 document.getElementById('loadCampaign').addEventListener('click', loadCampaign);
 
+// M6: the map image can be chosen from the library instead of pasted. Map is a
+// GM-only kind server-side, and this page is GM-only anyway, so the picker and
+// the route agree without either enforcing it twice.
+if (window.VTTImagePicker) {
+  window.VTTImagePicker.attach('mapUrl', {
+    campaignId: () => (campaign ? campaign.id : null),
+    kind: 'map',
+    // Setting the field is not saving it. Applying immediately means one click
+    // does what a person means by "choose this map", instead of leaving a
+    // filled box and a button they still have to find.
+    onChoose: () => document.getElementById('setMap').click(),
+  });
+}
+
 const preset = new URLSearchParams(window.location.search).get('campaign');
 if (preset) {
   document.getElementById('campaignId').value = preset;

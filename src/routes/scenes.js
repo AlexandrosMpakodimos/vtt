@@ -115,7 +115,30 @@ function publicScene(s) {
   };
 }
 
-function publicToken(t) {
+// A token's picture and framing are INHERITED FROM ITS CHARACTER when the
+// token's own values are NULL, and resolved here rather than copied at
+// placement.
+//
+// [CHANGED 2026-08-10] They used to be copied. That made inheritance a one-time
+// EVENT rather than a relationship: editing a character's portrait left every
+// token already on the board showing the old picture, because each carried its
+// own copy. Reported as a bug, and it was — the copy silently collapsed the
+// distinction between a linked token and an unlinked one the moment either was
+// created.
+//
+// NULL now means "ask the character". A value means "this token has its own
+// picture", which is a real case — a wounded variant, a disguised NPC — and it
+// still overrides permanently.
+//
+// NAME AND FOOTPRINT ARE DELIBERATELY NOT PART OF THIS. They keep
+// copy-at-placement: a new token takes the character's name and creature size,
+// and a rename does not sweep the board. Tokens are renamed individually all
+// the time — bulk placement numbers them "Goblin 2", "Goblin 3" — so a live
+// reference there would fight the way the feature is actually used.
+const pick = (own, inherited) => (own === null || own === undefined ? inherited : own);
+const numOrUndefined = (v) => (v === null || v === undefined ? undefined : Number(v));
+
+function publicToken(t, actor) {
   if (!t) return null;
   return {
     id: t.id,
@@ -123,7 +146,7 @@ function publicToken(t) {
     actor_id: t.actor_id,
     created_by: t.created_by,
     name: t.name,
-    img_url: t.img_url,
+    img_url: pick(t.img_url, actor && actor.img_url) || null,
     // Postgres DECIMAL comes back as a string over the wire; coerce so clients
     // get numbers to render with, not "3.00".
     x: Number(t.x),
@@ -139,15 +162,62 @@ function publicToken(t) {
     is_prop: t.is_prop,
     // M6 image framing. Numeric, so the client can apply the transform without
     // parsing; Postgres returns DECIMAL as a string, hence the coercion.
-    img_offset_x: t.img_offset_x === undefined ? undefined : Number(t.img_offset_x),
-    img_offset_y: t.img_offset_y === undefined ? undefined : Number(t.img_offset_y),
-    img_scale: t.img_scale === undefined ? undefined : Number(t.img_scale),
+    //
+    // Inherited from the character when the token's own value is NULL — see
+    // pick() and the header note above.
+    // With no character to ask, "inherit" means the identity transform rather
+    // than "absent" — an unlinked token has nothing to inherit FROM, and the
+    // payload should still carry numbers. Before these columns became nullable
+    // the database defaults supplied them; now the resolution has to.
+    img_offset_x: numOrUndefined(pick(t.img_offset_x, actor ? actor.img_offset_x : 0)),
+    img_offset_y: numOrUndefined(pick(t.img_offset_y, actor ? actor.img_offset_y : 0)),
+    img_scale: numOrUndefined(pick(t.img_scale, actor ? actor.img_scale : 1)),
+    // WHETHER the picture and framing above were inherited, which the resolved
+    // values themselves can no longer say.
+    //
+    // [ADDED 2026-08-10] Resolving on the server means a client receives the
+    // character's URL whether the token inherits it or owns a copy of the same
+    // one — the distinction is erased by the very thing that made the values
+    // usable. A client that needs it must therefore be TOLD.
+    //
+    // It needs it: when a character changes, the canvas repaints the tokens
+    // that follow that character and must leave alone the ones that deliberately
+    // do not. Without these flags the repaint either skipped everything or
+    // would have overwritten every deliberate override — and the first version
+    // did skip everything, by testing the resolved value for null.
+    //
+    // Two flags rather than one, because the two are genuinely independent: a
+    // token can inherit the picture and carry its own framing, and the
+    // migration clears them separately for exactly that reason.
+    img_inherited: !!(t.actor_id && (t.img_url === null || t.img_url === undefined)),
+    frame_inherited: !!(t.actor_id && (t.img_scale === null || t.img_scale === undefined)),
     bar1_value: t.bar1_value,
     bar1_max: t.bar1_max,
     conditions: t.conditions,
     created_at: t.created_at,
     updated_at: t.updated_at,
   };
+}
+
+// Shape one token or a list, resolving inherited pictures in a SINGLE query.
+//
+// The alternative was to left-join actors into every token query in this file —
+// about ten of them, in code covered by 134 canvas assertions. One extra query
+// per operation is cheaper than ten edits to audited SQL, and it keeps the
+// resolution in one place rather than in every SELECT.
+async function shapeTokens(rows) {
+  const many = Array.isArray(rows);
+  const list = (many ? rows : [rows]).filter(Boolean);
+  if (!list.length) return many ? [] : null;
+
+  const ids = [...new Set(list.map((r) => r.actor_id).filter(Boolean))];
+  const actors = ids.length
+    ? await knex('actors').whereIn('id', ids).select('id', 'img_url', 'img_offset_x', 'img_offset_y', 'img_scale')
+    : [];
+  const byId = new Map(actors.map((a) => [a.id, a]));
+
+  const out = list.map((r) => publicToken(r, r.actor_id ? byId.get(r.actor_id) : null));
+  return many ? out : out[0];
 }
 
 // loadSceneInCampaign and mayUseScene now live in services/sceneAccess.js and are
@@ -415,7 +485,7 @@ router.get('/:sceneId', requireMember, async (req, res, next) => {
 
     return res.json({
       scene: publicScene(scene),
-      tokens: tokens.map(publicToken),
+      tokens: await shapeTokens(tokens),
       fog: fog.map(publicFog),
       actors,
     });
@@ -697,16 +767,30 @@ router.post('/:sceneId/tokens', requireMember, async (req, res, next) => {
     // consequence, stated rather than discovered: re-framing a character does
     // NOT retro-update tokens already on the board, exactly as re-uploading its
     // portrait does not. One rule, and the token owns what it was given.
+    // [CHANGED 2026-08-10] The picture is no longer COPIED. Leaving it NULL is
+    // what makes the token inherit from the character for as long as it exists,
+    // rather than for the instant it was created — see publicToken.
+    //
+    // NAME AND FOOTPRINT ARE STILL COPIED, deliberately. A new token takes the
+    // character's name and creature size; renaming the character afterwards
+    // does not sweep the board, because tokens are renamed individually all the
+    // time and bulk placement numbers them.
     let tokenFrame = null;
     if (actor) {
       if (body.name === undefined) tokenName = actor.name;
       if (body.img_url === undefined) {
-        tokenImg = actor.img_url;
-        tokenFrame = {
-          img_offset_x: actor.img_offset_x,
-          img_offset_y: actor.img_offset_y,
-          img_scale: actor.img_scale,
-        };
+        tokenImg = null;
+        tokenFrame = { img_offset_x: null, img_offset_y: null, img_scale: null };
+      } else {
+        // A token given its OWN picture must NOT inherit the character's
+        // framing: framing describes an image, and this is a different image.
+        //
+        // Explicit rather than left to the column default, because the defaults
+        // were REMOVED when these columns became nullable — omitting them now
+        // stores NULL, which means "inherit". So the identity transform has to
+        // be written down, or an explicit picture silently arrives cropped to
+        // the character's portrait.
+        tokenFrame = { img_offset_x: 0, img_offset_y: 0, img_scale: 1 };
       }
       const preset = SIZE_PRESETS[String(actor.size || '').toLowerCase()];
       if (preset !== undefined) {
@@ -784,7 +868,7 @@ router.post('/:sceneId/tokens', requireMember, async (req, res, next) => {
       }
     }
 
-    const shaped = publicToken(token);
+    const shaped = await shapeTokens(token);
 
     // Broadcast the placement to the room (including the placer) so every open
     // canvas gets the authoritative row — but a HIDDEN token is announced to the
@@ -976,7 +1060,7 @@ router.patch('/:sceneId/tokens/:tokenId', requireOwner, async (req, res, next) =
     updates.updated_at = knex.fn.now();
 
     const [row] = await knex('tokens').where({ id: token.id }).update(updates).returning('*');
-    const shaped = publicToken(row);
+    const shaped = await shapeTokens(row);
 
     // Visibility-aware broadcast. If the token is (now) hidden, only the GM should
     // learn its state; players must not receive it. If it just became visible, a
@@ -1155,17 +1239,19 @@ router.post('/:sceneId/tokens/copy', requireOwner, async (req, res, next) => {
       let specImg = img.value;
       let specW = width.value;
       let specH = height.value;
+      // Same rule as single placement: the picture is inherited by being left
+      // NULL, the name and footprint are copied.
       let specFrame = null;
       if (linked.actor) {
         const a = linked.actor;
         if (spec.name === undefined) specName = a.name;
         if (spec.img_url === undefined) {
-          specImg = a.img_url;
-          specFrame = {
-            img_offset_x: a.img_offset_x,
-            img_offset_y: a.img_offset_y,
-            img_scale: a.img_scale,
-          };
+          specImg = null;
+          specFrame = { img_offset_x: null, img_offset_y: null, img_scale: null };
+        } else {
+          // Same rule as single placement: an explicit picture gets the
+          // identity transform, not the character's framing.
+          specFrame = { img_offset_x: 0, img_offset_y: 0, img_scale: 1 };
         }
         const preset = SIZE_PRESETS[String(a.size || '').toLowerCase()];
         if (preset !== undefined) {
@@ -1213,7 +1299,7 @@ router.post('/:sceneId/tokens/copy', requireOwner, async (req, res, next) => {
       if (err.capExceeded) return res.status(409).json({ error: err.message });
       throw err;
     }
-    const shaped = inserted.map(publicToken);
+    const shaped = await shapeTokens(inserted);
 
     const sockets = req.app.get('campaignSockets');
     if (sockets) {
@@ -1530,6 +1616,7 @@ router.post('/:sceneId/fog/copy', requireOwner, async (req, res, next) => {
 module.exports = {
   router,
   publicToken,
+  shapeTokens,
   publicScene,
   publicFog,
   tokenMovePolicy,

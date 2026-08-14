@@ -42,7 +42,15 @@ async function api(method, path, body) {
     body: body ? JSON.stringify(body) : undefined,
   });
   const data = await res.json().catch(() => ({}));
-  return { status: res.status, data };
+  const out = { status: res.status, data };
+  // Surface a closed-campaign refusal wherever it happens, rather than leaving
+  // the page to render nothing and look broken. Hooked into api() rather than
+  // into each caller because EVERY request can hit it — the gate is on the
+  // whole game surface, so a per-caller check would be a list to keep complete.
+  if (window.VTTClosedNotice) {
+    if (!window.VTTClosedNotice.check(out) && res.status < 400) window.VTTClosedNotice.hide();
+  }
+  return out;
 }
 
 let me = null;
@@ -59,6 +67,14 @@ let clipboard = [];
 // Last known pointer position over the stage, in grid units. Paste drops tokens
 // here; duplicate ignores it and offsets from the original instead.
 let cursorGrid = { x: 0, y: 0 };
+// The same position UNROUNDED, in fractional grid units.
+//
+// cursorGrid is deliberately snapped — a pasted token belongs in a square, and
+// every existing consumer wants that. A ping does not: it marks the spot the
+// person pointed at, and rounding it to a square moves the mark by up to half a
+// cell from where they clicked. So both are recorded and each consumer takes
+// the one it means.
+let cursorPoint = { x: 0, y: 0 };
 // Set when a marquee drag ends, to swallow the click the browser fires right
 // after it (see the #stage-bg click handler).
 let suppressNextClear = false;
@@ -315,17 +331,41 @@ function applyGridAlignment() {
 // hardcoded dark lines. Colour and opacity are presentational and validated
 // server-side; type 'none' hides the overlay for a map that has its own printed
 // grid already aligned underneath.
+// How far the grid reaches past the map image, in whole squares.
+//
+// A WHOLE NUMBER of squares, deliberately: the pad element starts at
+// -PAD_SQUARES * GRID_PX, so a multiple keeps its background lines on the same
+// lattice as the stage origin. A pad of, say, 470px would draw a grid half a
+// square out of step with the one over the image, which is the sort of thing
+// nobody notices until they try to line a token up across the seam.
+const PAD_SQUARES = 12;
+const PAD_PX = PAD_SQUARES * GRID_PX;
+
 function applyGridOverlay() {
   const grid = (scene && scene.grid) || {};
+  const pad = document.getElementById('grid-pad');
+
+  // Sized and placed here rather than in the stylesheet, because it depends on
+  // the scene's dimensions and those are only known once a scene has loaded.
+  if (scene) {
+    pad.style.left = -PAD_PX + 'px';
+    pad.style.top = -PAD_PX + 'px';
+    pad.style.width = (scene.width + PAD_PX * 2) + 'px';
+    pad.style.height = (scene.height + PAD_PX * 2) + 'px';
+  }
+
   if (grid.type === 'none') {
-    stage.style.backgroundImage = 'none';
+    pad.style.backgroundImage = 'none';
     return;
   }
   const color = grid.color || '#3a3a3a';
-  stage.style.backgroundImage =
+  pad.style.backgroundImage =
     `linear-gradient(${color} 1px, transparent 1px), linear-gradient(90deg, ${color} 1px, transparent 1px)`;
-  stage.style.backgroundSize = `${GRID_PX}px ${GRID_PX}px`;
-  stage.style.opacity = '';
+  pad.style.backgroundSize = `${GRID_PX}px ${GRID_PX}px`;
+  pad.style.opacity = grid.opacity === undefined ? '' : String(grid.opacity);
+  // The grid used to live on #stage itself, which is why it stopped at the
+  // image. Cleared so the two cannot both draw.
+  stage.style.backgroundImage = 'none';
 }
 
 function upsertToken(row) {
@@ -586,10 +626,19 @@ function attachTokenPointer(el, tokenId) {
   let groupOrigins = [];   // [{id, el, left, top}] for everything being dragged
 
   el.addEventListener('pointerdown', (e) => {
-    if (e.button === 2) return;             // right-click handled by contextmenu
+    // Right button: NOT this token's business. It either opens the context menu
+    // or starts a marquee, and both of those live on the stage — so the event
+    // is left to bubble rather than stopped here.
+    //
+    // [CHANGED 2026-08-10] This used to return before stopPropagation, which
+    // happened to be correct when the marquee was on the left button and became
+    // wrong when it moved: a right-drag beginning on top of a token reached the
+    // stage listener only by luck of ordering. Stating it as "the right button
+    // belongs to the stage" makes the behaviour intentional.
+    if (e.button === 2) return;
     const entry = tokens.get(tokenId);
     if (!entry) return;
-    e.stopPropagation();                    // don't start a marquee
+    e.stopPropagation();                    // a left drag here is a token drag, not a pan
 
     // Clicking a token that isn't in the selection selects just it (unless
     // shift-clicking, which toggles it into the selection).
@@ -617,8 +666,16 @@ function attachTokenPointer(el, tokenId) {
 
   el.addEventListener('pointermove', (e) => {
     if (!dragging) return;
-    const dx = e.clientX - startX, dy = e.clientY - startY;
-    if (Math.abs(dx) > 2 || Math.abs(dy) > 2) moved = true;
+    // Screen movement divided by the zoom, because `style.left` is a STAGE
+    // coordinate and the stage is scaled. Without it, dragging at 200% moved a
+    // token twice as far as the pointer went, and at 50% half as far.
+    //
+    // The `moved` threshold stays in SCREEN pixels: "did the user's hand move"
+    // is a question about the pointer, not about the map, and a three-pixel
+    // twitch should not become a drag just because the map is zoomed in.
+    const sdx = e.clientX - startX, sdy = e.clientY - startY;
+    if (Math.abs(sdx) > 2 || Math.abs(sdy) > 2) moved = true;
+    const dx = sdx / view.z, dy = sdy / view.z;
     for (const g of groupOrigins) {
       g.el.style.left = (g.left + dx) + 'px';
       g.el.style.top = (g.top + dy) + 'px';
@@ -671,17 +728,217 @@ function emitMoveBatch(moves) {
 // the user is looking. Uses the capture phase so it still fires when the pointer
 // is over a token (whose own handlers stop propagation during a drag).
 stage.addEventListener('pointermove', (e) => {
-  const rect = stage.getBoundingClientRect();
-  cursorGrid = {
-    x: Math.round((e.clientX - rect.left) / GRID_PX),
-    y: Math.round((e.clientY - rect.top) / GRID_PX),
-  };
+  cursorGrid = stageGrid(e);
+  const cp = stagePoint(e);
+  cursorPoint = { x: cp.x / GRID_PX, y: cp.y / GRID_PX };
 }, true);
 
-// --- marquee selection (drag on empty stage) ---
+// --- pan, zoom, and the right-drag marquee -----------------------------------
+//
+// The WRAPPER is the viewport and the STAGE is the world: panning and zooming
+// transform the stage, and the wrapper stays put. That choice is what made this
+// cheap — every coordinate conversion in this file already goes through
+// stage.getBoundingClientRect(), which returns POST-TRANSFORM screen
+// coordinates, so token placement, marquee hit-testing and fog picking all
+// keep working with no arithmetic changes at all.
+//
+// Ten call sites, 134 assertions, and none of them had to move.
+const wrap = document.getElementById('stage-wrap');
+const zoomHud = document.getElementById('zoom-hud');
+
+const MIN_ZOOM = 0.25;
+const MAX_ZOOM = 4;
+
+// The zoom a focus ping imposes, unless the GM is already closer than this.
+//
+// [ADDED 2026-08-10] A focus ping that keeps the current zoom can be a NO-OP,
+// and was: with a 1400px scene in a 1400px viewport there is no slack at 100%,
+// so the clamp centres the map and centreOn's result is discarded entirely.
+// Focus looked identical to a normal ping — correctly, because there was
+// nothing to move.
+//
+// Zooming in is what creates the room. At 200% the map is twice the viewport,
+// so there is a full viewport of slack and the pinged point can actually be
+// brought to the middle. This is the "force zoom" half of the feature rather
+// than an arbitrary preference: without it, focus only works on maps that
+// happen to be larger than the window.
+const FOCUS_ZOOM = 2;
+const view = { x: 0, y: 0, z: 1 };
+
+// [REMOVED 2026-08-10] `rightDragMoved` used to live here.
+//
+// It existed to suppress the context menu at the end of a right-drag, and it
+// worked in every probe and in no browser: on macOS `contextmenu` arrives with
+// the mouse DOWN, before any movement, so the flag was always false when it was
+// read. The menu opened at the start of every marquee.
+//
+// The menu is now opened from the RELEASE, where the marquee's own size already
+// says whether the gesture was a click or a drag. Nothing has to be tracked, so
+// nothing can be tracked wrongly — the flag is gone rather than corrected.
+
+// Keep the map inside the viewport.
+//
+// [ADDED 2026-08-10] Nothing constrained the pan, so the map could be dragged —
+// or FOCUSED — into a position where most of the viewport was empty
+// background. Focusing a ping near the left edge of a map slid it right until a
+// third of the screen was black and six hundred pixels of map hung off the
+// other side. The ping was still dead centre, which is why it read as "the
+// camera is offset" rather than as "the ping is wrong": the centring was exact
+// and the framing was absurd.
+//
+// The rule is the ordinary one for maps:
+//   larger than the viewport  -> no empty edge is allowed; pan up to the edges
+//   smaller than the viewport -> centred, and it stays centred
+//
+// Applied in applyView rather than at each call site, so panning, zooming and
+// focusing are all constrained by one function — three callers with three
+// copies of a clamp is how they drift apart.
+function clampView() {
+  if (!scene) return;
+  // clientWidth, not getBoundingClientRect().width: the content box is where
+  // the stage actually sits, and the border is what made the centring land one
+  // pixel out.
+  const vw = wrap.clientWidth;
+  const vh = wrap.clientHeight;
+
+  // The pannable world is the image PLUS the pad on every side, so the clamp
+  // stops at the edge of the grid rather than at the edge of the picture. This
+  // is what gives the overshoot room, and it is the same rule as before applied
+  // to a larger rectangle rather than a second rule bolted alongside it.
+  //
+  // The world starts at stage-local -PAD_PX, not 0, so the upper bound on
+  // view.x is PAD_PX * z rather than 0 — the map may be pushed right until the
+  // grid's left edge reaches the viewport's, and no further.
+  const sw = (scene.width + PAD_PX * 2) * view.z;
+  const sh = (scene.height + PAD_PX * 2) * view.z;
+  const originX = PAD_PX * view.z;
+  const originY = PAD_PX * view.z;
+
+  view.x = sw <= vw
+    ? (vw - sw) / 2 + originX
+    : Math.min(originX, Math.max(vw - sw + originX, view.x));
+  view.y = sh <= vh
+    ? (vh - sh) / 2 + originY
+    : Math.min(originY, Math.max(vh - sh + originY, view.y));
+}
+
+function applyView() {
+  clampView();
+  stage.style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.z})`;
+  if (zoomHud) zoomHud.textContent = `${Math.round(view.z * 100)}%`;
+}
+
+function setZoom(next, anchor) {
+  const z = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, next));
+  if (z === view.z) return;
+  // Zoom about a point rather than about the origin, so the map grows toward
+  // the cursor instead of sliding away from it. Without this, zooming in on
+  // something in the corner pushes it off screen — which is the difference
+  // between a usable map and a frustrating one.
+  const r = wrap.getBoundingClientRect();
+  const ax = anchor ? anchor.x - r.left : r.width / 2;
+  const ay = anchor ? anchor.y - r.top : r.height / 2;
+  const k = z / view.z;
+  view.x = ax - (ax - view.x) * k;
+  view.y = ay - (ay - view.y) * k;
+  view.z = z;
+  applyView();
+}
+
+function resetView() {
+  view.x = 0; view.y = 0; view.z = 1;
+  // applyView clamps, so a map smaller than the viewport lands centred rather
+  // than pinned to the top-left corner.
+  applyView();
+}
+
+// Wheel zooms. preventDefault because the wrapper no longer scrolls — the
+// transform is the only thing that moves the map, and letting the page scroll
+// underneath a map you are zooming is the worst of both.
+wrap.addEventListener('wheel', (e) => {
+  if (!scene) return;
+  e.preventDefault();
+  // Multiplicative, so a step feels the same at 25% as at 400%.
+  setZoom(view.z * (e.deltaY < 0 ? 1.12 : 1 / 1.12), { x: e.clientX, y: e.clientY });
+}, { passive: false });
+
+// Left-drag on empty space pans. Attached to the WRAPPER, not the stage: the
+// stage is the thing being moved, and a drag handler on a moving element
+// chases its own transform.
+let pan = null;
+wrap.addEventListener('pointerdown', (e) => {
+  if (e.button !== 0 || !scene) return;
+  // A token, a fog region or a fog draw tool owns the left button where it
+  // applies. Panning is what is left over — empty space only.
+  if (e.target !== stage && e.target !== stageBg && e.target !== wrap) return;
+  if (fogMode) return;
+  pan = { x: e.clientX, y: e.clientY, vx: view.x, vy: view.y };
+  wrap.classList.add('panning');
+  wrap.setPointerCapture(e.pointerId);
+});
+wrap.addEventListener('pointermove', (e) => {
+  if (!pan) return;
+  // One screen pixel of drag is one screen pixel of movement at any zoom: the
+  // translate is applied OUTSIDE the scale in the transform string, so it is
+  // already in screen units and must not be divided by the zoom.
+  view.x = pan.vx + (e.clientX - pan.x);
+  view.y = pan.vy + (e.clientY - pan.y);
+  applyView();
+});
+function endPan(e) {
+  if (!pan) return;
+  pan = null;
+  wrap.classList.remove('panning');
+  try { wrap.releasePointerCapture(e.pointerId); } catch { /* already released */ }
+}
+wrap.addEventListener('pointerup', endPan);
+wrap.addEventListener('pointercancel', endPan);
+
+// --- marquee selection (RIGHT-drag) ---
 let marquee = null;
 stage.addEventListener('pointerdown', (e) => {
-  if (e.button === 2) return;
+  // [CHANGED 2026-08-10] The gestures were reassigned:
+  //
+  //   LEFT  on empty space  -> pan the map        (was: marquee)
+  //   RIGHT drag            -> marquee select     (was: context menu only)
+  //   RIGHT click, no drag  -> context menu       (unchanged)
+  //   wheel                 -> zoom
+  //
+  // Left-drag-to-pan is what every map interface does, and box-select on the
+  // right button is how the two coexist without a modifier key. The cost is
+  // that right-drag and right-click now share a button, so the context menu can
+  // only be suppressed once a drag has actually MOVED — see the contextmenu
+  // handler, which is where that decision is enforced.
+  //
+  // Left-drag on empty space no longer selects, so the pan handler is attached
+  // to the WRAPPER rather than here: the stage moves, and a handler on a moving
+  // element fights its own transform.
+  if (e.button === 2) {
+    // A NEW right press starts a new gesture, so any suppression owed to the
+    // previous one is spent. Cleared here as well as in the contextmenu
+    // handler, and the pair is the actual rule:
+    //
+    //   pointerdown  arms it (false)
+    //   pointermove  sets it (true)
+    //   contextmenu  reads and clears it
+    //
+    // Clearing in only one of the two was wrong in both directions — on press
+    // alone the flag was stale by the time the drag's own menu event arrived;
+    // on the menu alone it survived to swallow the NEXT legitimate click. The
+    // probe that fires a drag and then a plain click in sequence is what
+    // distinguishes them, and neither single-sided version passes it.
+    // Right-drag: marquee. Everything below is the old left-button path, and it
+    // is reached with the button swapped rather than duplicated.
+    if (fogMode && fogToolEl.value !== 'select') return;   // draw tools keep the left button
+  } else if (e.button === 0) {
+    // Left on a token is handled by the token's own listener. Left on empty
+    // space is a pan, which the wrapper owns — so there is nothing to do here.
+    if (!fogMode) return;
+    // In fog mode the left button still draws and still moves regions: the fog
+    // tools are a mode, and a mode owns its button.
+  } else {
+    return;
+  }
   // Fog mode owns the gesture entirely. Nothing below this block runs, so the
   // token drag/marquee paths are untouched rather than conditionally patched.
   if (fogMode) {
@@ -709,31 +966,91 @@ stage.addEventListener('pointerdown', (e) => {
       beginFogMove(e);
       return;
     }
-    // Empty space with the select tool: marquee.
-    const r0 = stage.getBoundingClientRect();
-    const sx0 = e.clientX - r0.left, sy0 = e.clientY - r0.top;
-    marquee = { sx: sx0, sy: sy0, rect: r0 };
+    // [FIXED 2026-08-10] Empty space with the select tool: MARQUEE ON THE RIGHT
+    // BUTTON ONLY. A left press here means "pan", exactly as it does outside
+    // fog mode — the marquee moved buttons everywhere, not everywhere except
+    // fog.
+    //
+    // It slipped through because the button check above lets a left press into
+    // this block deliberately: fog DRAWING and region MOVING are left-button
+    // gestures and have to reach the code below. Only this last branch — the
+    // fallthrough for empty space — is a marquee, and it is the one that had to
+    // be excluded rather than the whole block.
+    if (e.button !== 2) return;
+    const p0 = stagePoint(e);
+    const sx0 = p0.x, sy0 = p0.y;
+    marquee = { sx: sx0, sy: sy0, pointerId: e.pointerId };
+    // Capture, for the same reason fog drawing does: a marquee dragged past the
+    // edge of the map otherwise stops receiving movement and never sees its own
+    // release, leaving the rectangle stuck to the pointer.
+    try { stage.setPointerCapture(e.pointerId); } catch { /* capture unavailable */ }
     marqueeEl.style.left = sx0 + 'px'; marqueeEl.style.top = sy0 + 'px';
     marqueeEl.style.width = '0px'; marqueeEl.style.height = '0px';
     marqueeEl.style.display = 'block';
     if (!e.shiftKey) setFogSelection([]);
     return;
   }
-  if (e.target !== stage && e.target !== stageBg) return; // only empty space
+  // Right-drag marquees from ANYWHERE, including from on top of a token. That
+  // is the point of moving it to the right button: with left-drag panning,
+  // there would otherwise be no way to box-select on a crowded map — the same
+  // reasoning that gave fog mode its Alt-forces-marquee escape hatch.
+  if (e.button !== 2 && e.target !== stage && e.target !== stageBg) return;
   hideCtxMenu();
-  const rect = stage.getBoundingClientRect();
-  const sx = e.clientX - rect.left, sy = e.clientY - rect.top;
-  marquee = { sx, sy, rect };
+  const p = stagePoint(e);
+  const sx = p.x, sy = p.y;
+  marquee = {
+    sx, sy, pointerId: e.pointerId,
+    // Screen coordinates of the press, so movement can be MEASURED rather than
+    // merely detected — see the threshold in pointermove.
+    px0: e.clientX, py0: e.clientY,
+  };
+  try { stage.setPointerCapture(e.pointerId); } catch { /* capture unavailable */ }
   marqueeEl.style.left = sx + 'px'; marqueeEl.style.top = sy + 'px';
   marqueeEl.style.width = '0px'; marqueeEl.style.height = '0px';
   marqueeEl.style.display = 'block';
-  if (!e.shiftKey) setSelection([]);
+
+  // [FIXED 2026-08-10] Clearing the selection is DEFERRED until the drag
+  // actually moves.
+  //
+  // Every right press now starts a marquee, because a right-drag has to be able
+  // to begin anywhere — including on top of a token. But a right press is also
+  // how the context menu opens, and clearing here meant the token being
+  // right-clicked was deselected before the menu ran, so the menu found an
+  // empty selection and returned without opening. Right-clicking a token did
+  // nothing at all; fog was unaffected because it selects by hit-test rather
+  // than from an existing selection.
+  //
+  // Deferring costs nothing: a marquee that never moves selects nothing anyway,
+  // so there was never anything to clear at the moment of the press.
+  if (!e.shiftKey) marquee.clearOnMove = true;
 });
 stage.addEventListener('pointermove', (e) => {
   if (fogMode && fogDraw) { updateFogDraw(e); return; }
   if (fogMode && fogMove) { updateFogMove(e); return; }
   if (!marquee) return;
-  const x = e.clientX - marquee.rect.left, y = e.clientY - marquee.rect.top;
+  // [FIXED 2026-08-10] A THRESHOLD, not "any movement at all".
+  //
+  // The previous version set this on the first pointermove, on the reasoning
+  // that a three-pixel marquee selects nothing anyway so the strict test cost
+  // nothing. That reasoning was wrong about how mice work: a real pointer emits
+  // a continuous stream of move events, including from the hand tremor of
+  // somebody holding still to click. So the flag was set between every press
+  // and its menu, and the context menu NEVER OPENED.
+  //
+  // Every probe passed, because a test fires pointermove only when it means a
+  // drag. The bug lived entirely in the gap between "a drag is a move" and "a
+  // click also produces moves" — which is a property of the input device, not
+  // of the code, and therefore not visible to any amount of synthetic
+  // dispatching.
+  // The press deferred this so that a right-CLICK could reach the context menu
+  // with its selection intact. Now that the drag has moved, it is a marquee and
+  // the old selection goes.
+  if (marquee.clearOnMove) { setSelection([]); marquee.clearOnMove = false; }
+  // Stage coordinates, not screen: the marquee element is a CHILD of the stage,
+  // so it is drawn inside the same transform. Positioning it from screen deltas
+  // made it drift away from the pointer at any zoom other than 100%.
+  const p = stagePoint(e);
+  const x = p.x, y = p.y;
   const left = Math.min(x, marquee.sx), top = Math.min(y, marquee.sy);
   const w = Math.abs(x - marquee.sx), h = Math.abs(y - marquee.sy);
   marqueeEl.style.left = left + 'px'; marqueeEl.style.top = top + 'px';
@@ -747,9 +1064,15 @@ stage.addEventListener('pointerup', (e) => {
   if (!marquee) return;
   const box = { left: parseFloat(marqueeEl.style.left), top: parseFloat(marqueeEl.style.top),
                 w: parseFloat(marqueeEl.style.width), h: parseFloat(marqueeEl.style.height) };
+  try { stage.releasePointerCapture(marquee.pointerId); } catch { /* not captured */ }
   marqueeEl.style.display = 'none';
   marquee = null;
-  if (box.w < 3 && box.h < 3) return;   // a click, not a drag
+  if (box.w < 3 && box.h < 3) {
+    // A click, not a drag. This is where the context menu opens — see the
+    // contextmenu handler for why it cannot be opened there.
+    if (e.button === 2) openMenuAt(e);
+    return;
+  }
   suppressNextClear = true;
 
   // Fog marquee: bounding-box intersection. Approximate on purpose — a sweep
@@ -784,6 +1107,27 @@ stage.addEventListener('pointerup', (e) => {
   for (const entry of tokens.values()) entry.el.classList.toggle('selected', selection.has(entry.row.id));
   log(`marquee selected ${hits.length}`);
 });
+
+// [ADDED 2026-08-10] pointercancel is the OTHER way a drag ends, and nothing
+// listened for it.
+//
+// Capture keeps events arriving when the cursor leaves the element. It does not
+// help when the BROWSER takes the gesture away — a touch becoming a scroll, the
+// window losing focus, a system gesture interrupting. In those cases pointerup
+// never fires at all, and a drag with no cancel path is stuck exactly as it was
+// before capture existed.
+//
+// Treated as a release rather than as an abort: the shape the user had drawn is
+// what they had drawn, and discarding it would make an interrupted gesture lose
+// work rather than finish early.
+stage.addEventListener('pointercancel', (e) => {
+  if (fogMode && fogDraw) { commitFogDraw(); return; }
+  if (fogMode && fogMove) { commitFogMove(e); return; }
+  if (!marquee) return;
+  try { stage.releasePointerCapture(marquee.pointerId); } catch { /* not captured */ }
+  marqueeEl.style.display = 'none';
+  marquee = null;
+});
 // Clicking empty space (no drag) clears selection. A click that is the tail of a
 // marquee drag is skipped — otherwise it would immediately undo the selection
 // the drag just made (#stage-bg spans the whole stage, so every marquee drag
@@ -793,17 +1137,137 @@ stageBg.addEventListener('click', (e) => {
   if (e.target === stageBg) setSelection([]);
 });
 
+// --- pings -------------------------------------------------------------------
+//
+// A transient marker: point at a spot, everyone sees a circle for a moment.
+// Nothing is stored — see the server handler for why an ephemeral event is
+// deliberately not a table.
+//
+// The circle takes the pinger's CAMPAIGN COLOUR, which is the same colour their
+// dice and their chat name already use. That is the whole reason the colour is
+// unique per campaign: one identity, expressed the same way everywhere, so
+// "who is pointing at that" needs no label.
+function showPing(p) {
+  if (!scene || p.scene_id !== scene.id) return;
+
+  const dot = document.createElement('div');
+  dot.className = 'ping';
+  // currentColor, so every ring follows one value and the colour is set once.
+  dot.style.color = p.color || '#ffcc00';
+  // The coordinates ARE the centre. No half-cell offset: they are no longer a
+  // square to be centred within, they are the point that was pointed at.
+  dot.style.left = (p.x * GRID_PX) + 'px';
+  dot.style.top = (p.y * GRID_PX) + 'px';
+  // Two rings, expanding outward and staggered — see the stylesheet for why the
+  // direction and the delay are the parts that matter.
+  dot.appendChild(document.createElement('i'));
+  dot.appendChild(document.createElement('i'));
+  stage.appendChild(dot);
+
+  // Removed when the LAST ring finishes, not the first. animationend fires once
+  // per animating child, so counting them is what distinguishes "a ring ended"
+  // from "the ping ended" — removing on the first would cut the second ring off
+  // mid-flight, which is exactly the stagger that makes it read as radar.
+  let done = 0;
+  dot.addEventListener('animationend', () => {
+    done += 1;
+    if (done >= 2) dot.remove();
+  });
+
+  if (p.focus) {
+    // A focus ping imposes the GM's ZOOM as well as their target, so everyone
+    // ends up looking at the same thing at the same size. Sending the GM's own
+    // level rather than a fixed constant means "look at this" shows what the GM
+    // is actually seeing — if they are studying one corridor, so is the table.
+    //
+    // Re-clamped on arrival even though the server bounds it. The server is the
+    // authority and this is not a second opinion: it is the same rule stated
+    // where the value is used, so a payload from a future version cannot push
+    // this client somewhere its own controls could not reach.
+    //
+    // Zoom BEFORE centring, because centreOn multiplies by view.z — centring
+    // first and zooming after would frame the old scale and then abandon it.
+    if (Number.isFinite(p.zoom)) {
+      view.z = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, p.zoom));
+    }
+    centreOn(p.x, p.y);
+  }
+  log(`ping at (${p.x},${p.y})${p.focus ? ' — focus' : ''}`);
+}
+
+// Move the viewport so a grid square sits in the middle of it.
+//
+// This is the only place anything moves a user's view for them, and it is
+// GM-only for that reason: drawing on somebody's screen is one thing, taking
+// their viewport is another. The zoom is left alone — the GM is directing
+// attention, not deciding how close anyone looks.
+function centreOn(gx, gy) {
+  // Same reasoning as showPing: the coordinates are already a point, so adding
+  // half a cell would put the focus half a square off the thing being pointed
+  // at.
+  //
+  // clientWidth rather than the bounding rect, because the stage sits in the
+  // CONTENT box — measuring the border box put the centring one pixel out,
+  // which is small but was real and is now simply gone.
+  //
+  // This asks for a perfect centre and applyView may refuse part of it: a point
+  // near the edge of the map cannot be centred without showing empty
+  // background, and filling the viewport matters more than centring exactly.
+  // The point is always brought into view; it is not always brought to the
+  // middle.
+  view.x = wrap.clientWidth / 2 - gx * GRID_PX * view.z;
+  view.y = wrap.clientHeight / 2 - gy * GRID_PX * view.z;
+  applyView();
+}
+
+function sendPing(gx, gy, focus) {
+  if (!scene) return;
+  socket.emit('scene:ping',
+    {
+      campaign_id: campaignId,
+      scene_id: scene.id,
+      x: gx,
+      y: gy,
+      focus: !!focus,
+      // Only meaningful on a focus ping, and the server ignores it otherwise.
+      //
+      // The GREATER of the GM's own zoom and FOCUS_ZOOM: focusing must zoom in
+      // far enough to have somewhere to move, and a GM already studying
+      // something at 300% should not be pulled back out to 200% by their own
+      // ping. Computed once, at the sender, so every client — the GM's own
+      // included — ends up at the same level.
+      zoom: focus ? Math.max(view.z, FOCUS_ZOOM) : undefined,
+    },
+    (ack) => { if (!(ack && ack.ok)) log(`ping refused: ${ack && ack.error}`); });
+}
+
 // --- context menu ---
-stage.addEventListener('contextmenu', (e) => {
-  e.preventDefault();
-  // Record where the menu was opened, so a paste from the menu lands there
+// [RESTRUCTURED 2026-08-10] The menu is opened from the RELEASE, never from the
+// contextmenu event.
+//
+// The previous version suppressed the menu when a right-drag had moved, using a
+// flag set during pointermove. It passed every probe and failed on the actual
+// machine, because WHEN `contextmenu` fires is platform-dependent: on macOS it
+// arrives with the mouse DOWN, before any movement has happened, so the flag was
+// always false and the menu opened at the START of every marquee — the drag then
+// continued underneath it.
+//
+// Deferring to pointerup removes the timing question entirely. By then it is
+// known whether the gesture was a click or a drag, because the marquee's own
+// size says so, and no flag has to guess.
+//
+// contextmenu therefore only suppresses the NATIVE menu. It decides nothing.
+stage.addEventListener('contextmenu', (e) => { e.preventDefault(); });
+
+// Open the menu for a right-click that did not turn into a drag.
+function openMenuAt(e) {
+  // Record where the menu was opened, so a ping or a paste from it lands there
   // rather than wherever the pointer drifted afterwards.
-  const rect = stage.getBoundingClientRect();
-  cursorGrid = {
-    x: Math.round((e.clientX - rect.left) / GRID_PX),
-    y: Math.round((e.clientY - rect.top) / GRID_PX),
-  };
-  const tokenEl = e.target.closest('.token');
+  cursorGrid = stageGrid(e);
+  const cp = stagePoint(e);
+  cursorPoint = { x: cp.x / GRID_PX, y: cp.y / GRID_PX };
+
+  const tokenEl = e.target.closest && e.target.closest('.token');
   if (fogMode) {
     // In fog mode the menu acts on regions. Right-clicking an unselected region
     // selects just it first, mirroring the token behaviour below.
@@ -819,9 +1283,11 @@ stage.addEventListener('contextmenu', (e) => {
     const id = [...tokens.entries()].find(([, en]) => en.el === tokenEl)?.[0];
     if (id && !selection.has(id)) setSelection([id]);
   }
-  if (selection.size === 0) return;
+  // The menu opens on empty space too: ping acts on the POINT that was
+  // right-clicked rather than on a selection, so there is something to offer
+  // even with nothing selected.
   openCtxMenu(e.clientX, e.clientY);
-});
+}
 
 function openCtxMenu(px, py) {
   ctxMenu.textContent = '';
@@ -830,7 +1296,7 @@ function openCtxMenu(px, py) {
 
   const head = document.createElement('div');
   head.className = 'head';
-  head.textContent = `${sel.length} selected`;
+  head.textContent = sel.length ? `${sel.length} selected` : 'map';
   ctxMenu.appendChild(head);
 
   const item = (label, handler) => {
@@ -841,6 +1307,26 @@ function openCtxMenu(px, py) {
     ctxMenu.appendChild(d);
   };
   const sep = () => { const s = document.createElement('div'); s.className = 'sep'; ctxMenu.appendChild(s); };
+
+  // Ping first, and available to EVERYONE including with nothing selected: it
+  // acts on the point that was right-clicked rather than on a selection, and
+  // pointing at the map is the one thing every person at the table needs to do.
+  //
+  // cursorGrid was recorded when the menu opened, so the ping lands where the
+  // right-click happened rather than wherever the pointer drifted while the
+  // menu was up — the same reasoning that already positions a paste.
+  // The EXACT point, not the snapped square: a ping marks where the person
+  // pointed. Still expressed in grid units, so the server's existing bounds
+  // check applies unchanged — it validates a finite number inside the scene,
+  // and never required that number to be whole.
+  const at = { x: cursorPoint.x, y: cursorPoint.y };
+  item('ping here', () => sendPing(at.x, at.y, false));
+  if (gm) {
+    // A focus ping MOVES every player's view. GM-only, and named so the
+    // difference is visible in the menu rather than being a surprise.
+    item('ping and focus everyone', () => sendPing(at.x, at.y, true));
+  }
+  if (sel.length) sep();
 
   if (gm) {
     const sizeHead = document.createElement('div');
@@ -1258,12 +1744,32 @@ function selectAllFog() {
 // --- fog drawing on the stage ---
 // Only reached while fog mode is on; the token handlers return early in that
 // case, so these two worlds never contend for the same gesture.
-function stageGrid(e) {
+// Screen coordinates -> STAGE coordinates.
+//
+// [FIXED 2026-08-10] getBoundingClientRect() returns the transformed ORIGIN, so
+// subtracting rect.left lands on the right point — but the remaining offset is
+// still in SCREEN pixels, and the stage is scaled. Dividing that by GRID_PX
+// alone gives the right answer only at 100% zoom: at 200% every distance came
+// out half of what it should be, so clicks landed off-target, the marquee
+// tracked away from the pointer, and dragging a token moved it the wrong
+// distance.
+//
+// I had assumed getBoundingClientRect handled this on its own, said so, and
+// shipped it. It handles the ORIGIN and nothing else; the scale has to be
+// divided out explicitly, in every conversion, which is why they all go through
+// here now rather than each doing the arithmetic inline.
+function stagePoint(e) {
   const rect = stage.getBoundingClientRect();
   return {
-    x: Math.round((e.clientX - rect.left) / GRID_PX),
-    y: Math.round((e.clientY - rect.top) / GRID_PX),
+    x: (e.clientX - rect.left) / view.z,
+    y: (e.clientY - rect.top) / view.z,
   };
+}
+
+// The same conversion, rounded to whole grid squares.
+function stageGrid(e) {
+  const p = stagePoint(e);
+  return { x: Math.round(p.x / GRID_PX), y: Math.round(p.y / GRID_PX) };
 }
 
 const drawingRevealed = () => fogToolEl.value === 'reveal';
@@ -1276,7 +1782,21 @@ function beginFogDraw(e) {
     renderFog();
     return;
   }
-  fogDraw = { tool: shape, x0: g.x, y0: g.y, x1: g.x, y1: g.y };
+  fogDraw = { tool: shape, x0: g.x, y0: g.y, x1: g.x, y1: g.y, pointerId: e.pointerId };
+  // [FIXED 2026-08-10] Capture the pointer, so movement and release keep
+  // arriving here after the cursor leaves the stage.
+  //
+  // Without capture, dragging past the edge of the map left the drag with no
+  // way to END: pointermove stopped arriving so the preview froze, and
+  // pointerup landed on whatever element was under the cursor instead, so
+  // releasing the button did nothing. The shape stayed stuck to the pointer and
+  // the only escape was a reload.
+  //
+  // Two other drags in this file already captured — token movement and fog
+  // region movement — and the two that did not are exactly the two that begin
+  // on empty space, which is also where a drag is most likely to run off the
+  // edge.
+  try { stage.setPointerCapture(e.pointerId); } catch { /* capture unavailable */ }
 }
 
 function updateFogDraw(e) {
@@ -1289,6 +1809,10 @@ function updateFogDraw(e) {
 async function commitFogDraw() {
   const preview = previewRow();
   const revealed = drawingRevealed();
+  // Release before anything can fail. An awaited request that throws would
+  // otherwise leave the pointer captured for the life of the page, which is a
+  // worse version of the bug this capture exists to fix.
+  if (fogDraw) { try { stage.releasePointerCapture(fogDraw.pointerId); } catch { /* not captured */ } }
   fogDraw = null;
   if (!preview) { renderFog(); return; }
   await createFog(preview.type, preview.points, revealed);
@@ -1318,7 +1842,11 @@ function updateFogMove(e) {
   if (!fogMove.moved && Math.abs(dx) < 3 && Math.abs(dy) < 3) return;  // still a click
   fogMove.moved = true;
   // Snap the preview to whole grid squares so what you see is what gets sent.
-  const sx = Math.round(dx / GRID_PX) * GRID_PX, sy = Math.round(dy / GRID_PX) * GRID_PX;
+  // dx/dy arrive in screen pixels; the SVG transform is applied inside the
+  // scaled stage, so they have to be converted first — same correction as the
+  // token drag above.
+  const sx = Math.round((dx / view.z) / GRID_PX) * GRID_PX;
+  const sy = Math.round((dy / view.z) / GRID_PX) * GRID_PX;
   for (const id of fogSelection) {
     for (const el of (fogNodes.get(id) || [])) el.setAttribute('transform', `translate(${sx},${sy})`);
   }
@@ -1330,8 +1858,8 @@ async function commitFogMove(e) {
   fogMove = null;
   try { stage.releasePointerCapture(e.pointerId); } catch { /* not captured */ }
   if (!moved) return;                       // a click, not a drag
-  const dx = Math.round((e.clientX - startX) / GRID_PX);
-  const dy = Math.round((e.clientY - startY) / GRID_PX);
+  const dx = Math.round(((e.clientX - startX) / view.z) / GRID_PX);
+  const dy = Math.round(((e.clientY - startY) / view.z) / GRID_PX);
   if (dx === 0 && dy === 0) { renderFog(); return; }
   await nudgeFogSelection(dx, dy);
   // Any render suppressed during the drag happens now, once, with fresh rows.
@@ -1594,6 +2122,79 @@ socket.on('scene:deleted', (d) => {
   log('a scene was deleted');
 });
 
+// [ADDED 2026-08-10] A character changed. Its tokens' pictures are INHERITED
+// rather than copied, so the canvas has to repaint them — otherwise a portrait
+// edited on the character page shows the old image here until a reload, which
+// is the symptom that produced the change in the first place.
+//
+// This file never handled actor:updated at all. The server has broadcast it
+// since M4 and no canvas listened, so a character edit reached the character
+// page and stopped there. Fixing the copy alone would not have fixed the
+// symptom: it was two defects wearing one appearance.
+//
+// The projected payload carries img_url and the framing for a character a
+// player is allowed to know about, and the server withholds the event entirely
+// otherwise — so applying it unconditionally here discloses nothing.
+// Registered here rather than beside showPing, because that helper is defined
+// above the point where `socket` is created — a listener attached at definition
+// time would run before the connection exists.
+socket.on('scene:ping', showPing);
+
+socket.on('actor:updated', (a) => {
+  if (!a || !scene) return;
+  let touched = 0;
+  for (const entry of tokens.values()) {
+    if (entry.row.actor_id !== a.id) continue;
+    // Only repaint what INHERITS. A token with its own picture keeps it, and
+    // overwriting that would be the opposite bug — a deliberate override
+    // reverting silently whenever the character was edited.
+    //
+    // The FLAGS decide this, not the values. The server resolves an inherited
+    // picture to the character's URL before sending it, so the payload cannot
+    // be inspected to tell the two apart: an earlier version tested
+    // `img_url == null` here and consequently matched nothing at all, which is
+    // why a character edit appeared to do nothing until the page was reloaded.
+    //
+    // Picture and framing are checked separately because they are inherited
+    // separately.
+    let changed = false;
+    if (entry.row.img_inherited) {
+      entry.row.img_url = a.img_url || null;
+      changed = true;
+    }
+    if (entry.row.frame_inherited) {
+      entry.row.img_offset_x = a.img_offset_x;
+      entry.row.img_offset_y = a.img_offset_y;
+      entry.row.img_scale = a.img_scale;
+      changed = true;
+    }
+    if (changed) {
+      paintToken(entry);
+      touched += 1;
+    }
+  }
+  if (touched) log(`actor:updated — repainted ${touched} token(s)`);
+});
+
+// [ADDED 2026-08-10] The map or the grid alignment changed. Repaint the
+// background without reloading tokens or fog: a presentational change should
+// not flicker the whole board.
+//
+// This was written during the alignment work and never landed in the file — the
+// patch was reported as applied and the handler was not there. Found by
+// comparing the events the server emits against the ones each client handles,
+// which is a check worth repeating whenever an event is added.
+socket.on('scene:updated', (d) => {
+  if (!scene || !d || d.id !== scene.id) return;
+  scene = d;
+  stage.style.width = scene.width + 'px';
+  stage.style.height = scene.height + 'px';
+  stageBg.style.backgroundImage = scene.img_url ? `url("${CSS.escape(scene.img_url)}")` : 'none';
+  applyGridAlignment();
+  applyGridOverlay();
+  log('scene:updated — background repainted');
+});
+
 // The GM runs the board: when they set the active scene, every client follows.
 socket.on('scene:activated', (d) => {
   if (!campaignId || d.campaign_id !== campaignId) return;
@@ -1638,3 +2239,16 @@ async function fetchOwner() {
 }
 
 whoami();
+
+// M6: let the token image field be filled from the campaign's image library
+// rather than by pasting a URL. Guarded, because the field must keep working on
+// a page that has not loaded the picker — and because the jsdom suites covering
+// this file construct a DOM without it.
+if (window.VTTImagePicker) {
+  window.VTTImagePicker.attach('tok-img', {
+    campaignId: () => campaignId,
+    // A token's art is token art whether or not it is linked to a character.
+    kind: 'token',
+  });
+}
+

@@ -66,7 +66,15 @@ async function api(method, path, body) {
     body: body ? JSON.stringify(body) : undefined,
   });
   const data = await res.json().catch(() => ({}));
-  return { status: res.status, data };
+  const out = { status: res.status, data };
+  // Surface a closed-campaign refusal wherever it happens, rather than leaving
+  // the page to render nothing and look broken. Hooked into api() rather than
+  // into each caller because EVERY request can hit it — the gate is on the
+  // whole game surface, so a per-caller check would be a list to keep complete.
+  if (window.VTTClosedNotice) {
+    if (!window.VTTClosedNotice.check(out) && res.status < 400) window.VTTClosedNotice.hide();
+  }
+  return out;
 }
 
 function el(tag, opts = {}) {
@@ -164,6 +172,17 @@ function renderStrip() {
       im.className = 'portrait';
       im.src = img;            // attribute, not markup — no parsing context
       im.alt = '';
+      // [FIXED 2026-08-10] An <img> is natively draggable, so grabbing the
+      // portrait started a drag of the PICTURE rather than of the card: the
+      // ghost following the cursor was a floating portrait, while grabbing the
+      // card anywhere else dragged the whole card as expected. Same gesture,
+      // two different pieces of feedback, depending on which pixel was under
+      // the pointer.
+      //
+      // Turning off the image's own draggability makes the card the drag
+      // source wherever it is grabbed. setDragImage below then makes the
+      // resulting ghost explicit rather than left to the browser's default.
+      im.draggable = false;
       card.appendChild(im);
     } else {
       card.appendChild(el('div', { cls: 'noimg', text: token ? '⚔' : '⚠' }));
@@ -211,6 +230,18 @@ function wireDrag(card) {
     e.dataTransfer.effectAllowed = 'move';
     // Firefox refuses to start a drag without payload.
     e.dataTransfer.setData('text/plain', card.dataset.id);
+
+    // The ghost is the WHOLE CARD, stated rather than inferred. Without this
+    // the browser picks a drag image from whatever element the gesture began
+    // on, which is how grabbing the portrait produced a floating picture.
+    //
+    // The offset keeps the card under the cursor exactly where it was grabbed —
+    // passing 0,0 would snap the card's corner to the pointer and make it jump
+    // the moment the drag starts.
+    if (e.dataTransfer.setDragImage) {
+      const r = card.getBoundingClientRect();
+      e.dataTransfer.setDragImage(card, e.clientX - r.left, e.clientY - r.top);
+    }
   });
   card.addEventListener('dragend', () => {
     dragId = null;
@@ -363,6 +394,9 @@ function renderTokens() {
     if (t.img_url) {
       const im = document.createElement('img');
       im.src = t.img_url; im.alt = '';
+      // Same reason as the roster portraits above: a native image drag would
+      // compete with whatever gesture this row is part of.
+      im.draggable = false;
       row.appendChild(im);
     } else {
       row.appendChild(el('span', { text: '▢' }));
@@ -820,6 +854,17 @@ function connectSocket() {
     } else {
       loadCombat();
     }
+  });
+
+  // [ADDED 2026-08-10] The roster joins portraits and names from tokens, whose
+  // pictures are inherited from their characters — so a character edit changes
+  // what this panel should draw. Refetching rather than patching in place: the
+  // roster is filtered per recipient server-side, and reconstructing that
+  // filter here would be a second copy of a disclosure rule.
+  socket.on('actor:updated', (d) => {
+    log(`actor:updated  ${JSON.stringify(d)}`);
+    if (!combat) return;
+    loadScene().then(loadCombat);
   });
 
   socket.on('member:updated', (d) => {

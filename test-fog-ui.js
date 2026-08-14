@@ -101,8 +101,13 @@ window.eval(fs.readFileSync('public/js/scene.js','utf8') + `
   __check('fog layer is inert with fog mode off', !layer.classList.contains('editing'));
   __check('no pointer surface rendered with fog mode off', layer.querySelectorAll('.fog-catch').length===0);
   upsertToken({id:'T1',scene_id:'S',created_by:'GM',name:'A',x:1,y:1,width:1,height:1,rotation:0,hidden:false,locked:false,conditions:[]});
-  fire(bg,'pointerdown',20,20); fire(stg,'pointermove',250,250); fire(stg,'pointerup',250,250);
-  __check('marquee still selects TOKENS with fog mode off', selection.has('T1'), [...selection].join(','));
+  // [CHANGED 2026-08-10] The token marquee moved to the RIGHT button, because
+  // left-drag now pans the map. The rest of this file keeps button 0: fog
+  // DRAWING is still a left-button gesture, and a mode owns its button — so
+  // only this one probe changes, which is the correct blast radius for the
+  // change and a useful thing to have confirmed.
+  fire(bg,'pointerdown',20,20,{button:2}); fire(stg,'pointermove',250,250,{button:2}); fire(stg,'pointerup',250,250,{button:2});
+  __check('right-drag marquee still selects TOKENS with fog mode off', selection.has('T1'), [...selection].join(','));
   __check('token marquee did not touch fog selection', fogSelection.size===0);
 
   // ---------- mode isolation: fog on ----------
@@ -186,16 +191,27 @@ window.eval(fs.readFileSync('public/js/scene.js','utf8') + `
   // marquee selects fog by bounding box (select tool)
   toolEl.value='select';
   setFogSelection([]);
-  fire(bg,'pointerdown',0,0,{altKey:true}); fire(stg,'pointermove',300,300); fire(stg,'pointerup',300,300);
-  __check('alt+drag marquees even over fully-covered ground', fogSelection.size===2, [...fogSelection].join(','));
+  // [CHANGED 2026-08-10] Right button, because the marquee moved buttons in fog
+  // mode too — left-drag pans everywhere, without an exception for fog. Alt
+  // still FORCES a marquee over covered ground rather than hit-testing a
+  // region, which is what this probe is really about and is unchanged.
+  fire(bg,'pointerdown',0,0,{altKey:true,button:2}); fire(stg,'pointermove',300,300,{button:2}); fire(stg,'pointerup',300,300,{button:2});
+  __check('alt+right-drag marquees even over fully-covered ground', fogSelection.size===2, [...fogSelection].join(','));
   __check('fog marquee never selects tokens', selection.size===0);
   // With no region under the pointer, a plain drag marquees as usual.
   fog.clear(); setFogSelection([]);
   addFog('S1','rect',[{x:0,y:0},{x:2,y:2}],false,1000);
   addFog('S2','rect',[{x:3,y:3},{x:5,y:5}],false,2000);
   renderFog();
+  fire(bg,'pointerdown',480,480,{button:2}); fire(stg,'pointermove',0,0,{button:2}); fire(stg,'pointerup',0,0,{button:2});
+  __check('right-drag from empty space still marquees', fogSelection.size===2, [...fogSelection].join(','));
+
+  // ...and the LEFT button must not. This is the bug that prompted the change:
+  // fog mode kept its old left-drag marquee while every other mode had moved,
+  // so the same gesture did two different things depending on a toggle.
+  setFogSelection([]);
   fire(bg,'pointerdown',480,480); fire(stg,'pointermove',0,0); fire(stg,'pointerup',0,0);
-  __check('plain drag from empty space still marquees', fogSelection.size===2, [...fogSelection].join(','));
+  __check('LEFT-drag in fog mode does NOT marquee', fogSelection.size===0, [...fogSelection].join(','));
   fog.clear(); setFogSelection([]);
   addFog('F1','rect',[{x:0,y:0},{x:20,y:16}],false,1000);
   addFog('F2','rect',[{x:2,y:2},{x:4,y:4}],true,2000);

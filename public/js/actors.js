@@ -36,7 +36,15 @@ async function api(method, path, body) {
     body: body ? JSON.stringify(body) : undefined,
   });
   const data = await res.json().catch(() => ({}));
-  return { status: res.status, data };
+  const out = { status: res.status, data };
+  // Surface a closed-campaign refusal wherever it happens, rather than leaving
+  // the page to render nothing and look broken. Hooked into api() rather than
+  // into each caller because EVERY request can hit it — the gate is on the
+  // whole game surface, so a per-caller check would be a list to keep complete.
+  if (window.VTTClosedNotice) {
+    if (!window.VTTClosedNotice.check(out) && res.status < 400) window.VTTClosedNotice.hide();
+  }
+  return out;
 }
 
 function el(tag, opts = {}) {
@@ -992,6 +1000,23 @@ function renderSheet() {
       return r;
     },
   });
+
+  // The sheet's portrait field is rendered from a field list by sheet.js, so
+  // the element does not exist until this point and the picker has to be
+  // attached AFTER every render rather than once at load.
+  //
+  // attach() is idempotent — it marks the input and refuses a second button —
+  // which is what makes calling it on every render safe rather than accumulating
+  // one button per re-render.
+  if (window.VTTImagePicker) {
+    window.VTTImagePicker.attach('sheet-img_url', {
+      campaignId: () => (campaign ? campaign.id : null),
+      // A character's own picture is a portrait; framing then places it inside
+      // the token square. Two separate steps, deliberately: the image belongs to
+      // the character, the crop belongs to the square.
+      kind: 'portrait',
+    });
+  }
 }
 
 async function loadBag() {
@@ -1093,6 +1118,17 @@ document.getElementById('clearLog').addEventListener('click', () => { logEl.text
 // Convenience: /actors.html?campaign=<uuid> preloads, so the GM and player
 // windows can be opened from the same link.
 initFraming();
+
+// M6: fill the new-character image field from the library. The character sheet
+// has its own img_url field rendered by sheet.js from a field list, so it is
+// attached lazily below rather than here — the element does not exist until a
+// sheet is opened.
+if (window.VTTImagePicker) {
+  window.VTTImagePicker.attach('acImg', {
+    campaignId: () => (campaign ? campaign.id : null),
+    kind: 'portrait',
+  });
+}
 
 document.getElementById('assetUpload').addEventListener('click', uploadAsset);
 document.getElementById('assetLink').addEventListener('click', addAssetLink);

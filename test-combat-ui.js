@@ -54,8 +54,26 @@ window.fetch = async (path, opts = {}) => {
   const json = async () => {
     if (path === '/api/auth/me') return { user: { id: 'U1', username: 'gm' } };
     if (/\/messages/.test(path)) return { messages: [] };
-    if (/\/combat\/[^/]+$/.test(path)) return { combat: null, combatants: [], actors: [] };
-    if (/\/combat$/.test(path)) return { combats: [] };
+    if (/\/combat\/[^/]+$/.test(path)) {
+      // A running encounter with one combatant, so the roster actually renders.
+      // The drag probes at the end need a real card built by the real renderer
+      // — asserting on one this file assembled by hand would prove nothing
+      // about the card a person drags.
+      return {
+        combat: { id: 'CB1', scene_id: 'S1', active: true, name: 'Fight' },
+        combatants: [{
+          id: 'C1', combat_id: 'CB1', token_id: 'T1', sort_order: 0,
+          hp_override: 7, hp_visible: true,
+        }],
+        actors: [],
+      };
+    }
+    // loadCombat reads the LIST first and filters by scene_id, so an empty list
+    // here means the detail stub below is never reached and the roster stays
+    // empty — which is exactly how the first version of the drag probes failed.
+    if (/\/combat$/.test(path)) {
+      return { combats: [{ id: 'CB1', scene_id: 'S1', active: true, name: 'Fight' }] };
+    }
     // Characters offered in the "speaking as" picker. The server re-checks
     // ownership on every message; this list is convenience, not authority.
     if (/\/actors$/.test(path)) {
@@ -66,7 +84,17 @@ window.fetch = async (path, opts = {}) => {
         ],
       };
     }
-    if (/\/scenes\/[^/]+$/.test(path)) return { scene: {}, tokens: [], fog: [], actors: [] };
+    if (/\/scenes\/[^/]+$/.test(path)) {
+      return {
+        scene: { id: 'S1', name: 'Board', width: 1000, height: 800, grid: {} },
+        tokens: [{
+          id: 'T1', name: 'Goblin', img_url: 'https://x/g.png',
+          actor_id: null, x: 1, y: 1, width: 1, height: 1, hidden: false,
+        }],
+        fog: [],
+        actors: [],
+      };
+    }
     if (/\/scenes$/.test(path)) return { scenes: [{ id: 'S1', name: 'Board' }] };
     // Campaign detail — the endpoint that carries member colours.
     return {
@@ -219,6 +247,67 @@ console.log('\n--- the entry points run without throwing ---');
 
   click(document.getElementById('trayClear'));
   t('clear empties the pool', /empty/.test(document.getElementById('trayPool').textContent));
+
+  console.log('\n--- dragging a combatant card (2026-08-10) ---');
+  //
+  // Reported: dragging a card by its PORTRAIT showed a floating picture, while
+  // dragging it anywhere else showed the whole card. An <img> is natively
+  // draggable, so grabbing one made the image the drag source — the same
+  // gesture producing two different pieces of feedback depending on which pixel
+  // was under the pointer.
+  //
+  // Driven through the real renderer rather than by hand: the roster is built
+  // from combat/combatants/tokens, and asserting on a card this file assembled
+  // itself would prove nothing about the one a user drags.
+  // Driven through the loaders, not by assignment: combat.js holds its state in
+  // `let` bindings, which are not reachable from outside the evaluated script.
+  // Feeding the fetch stub is also the more honest route — it exercises the
+  // path a real page takes.
+  await window.loadScene();
+  await window.loadCombat();
+
+  const card = document.querySelector('#strip .card, #strip [data-id]');
+  t('a combatant card is rendered', !!card, document.getElementById('strip').textContent.slice(0, 60));
+  t('...and is draggable for a GM', !!card && card.draggable === true);
+
+  const portrait = card && card.querySelector('img');
+  t('the card carries a portrait', !!portrait);
+  t('...which is NOT independently draggable',
+    portrait && portrait.draggable === false,
+    portrait && String(portrait.draggable));
+
+  // The explicit ghost. Recorded rather than stubbed away, so the probe can
+  // assert WHICH element the browser was told to draw — passing the portrait
+  // here would reproduce the bug with the fix apparently in place.
+  const seen = [];
+  const dt = {
+    effectAllowed: '',
+    setData() {},
+    setDragImage(el2, x, y) { seen.push({ el: el2, x, y }); },
+  };
+  const ev = new window.Event('dragstart', { bubbles: true });
+  ev.dataTransfer = dt;
+  ev.clientX = 40; ev.clientY = 30;
+  card.dispatchEvent(ev);
+
+  t('dragstart sets an explicit drag image', seen.length === 1, String(seen.length));
+  t('...and it is the whole CARD, not the portrait',
+    seen[0] && seen[0].el === card,
+    seen[0] && (seen[0].el === portrait ? 'portrait' : seen[0].el.tagName));
+  t('...offset so the card stays under the cursor where it was grabbed',
+    seen[0] && Number.isFinite(seen[0].x) && Number.isFinite(seen[0].y),
+    seen[0] && `${seen[0].x},${seen[0].y}`);
+
+  // A drag started from the portrait must produce the same ghost: the event
+  // bubbles to the card, and the card is what gets drawn.
+  seen.length = 0;
+  const ev2 = new window.Event('dragstart', { bubbles: true });
+  ev2.dataTransfer = dt;
+  ev2.clientX = 12; ev2.clientY = 12;
+  portrait.dispatchEvent(ev2);
+  t('grabbing the PORTRAIT still drags the whole card',
+    seen.length === 1 && seen[0].el === card,
+    seen[0] && (seen[0].el === portrait ? 'portrait' : 'card'));
 
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);

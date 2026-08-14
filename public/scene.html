@@ -22,8 +22,60 @@
     /* The canvas surface. Tokens are absolutely-positioned children so the
        browser handles hit-testing on pointer events; the grid is a CSS
        background so we don't repaint it per drag. */
-    #stage-wrap { overflow: auto; border: 1px solid #999; background: #222; max-height: 60vh; }
-    #stage { position: relative; }
+    /* The wrapper is the VIEWPORT and the stage is the world. Panning and
+       zooming transform the world; the viewport does not move, so a token's
+       screen position stays derivable from getBoundingClientRect — which is what
+       every coordinate conversion in scene.js already uses, and why this needed
+       no arithmetic changes.
+       overflow:hidden rather than auto: scrollbars and a transform are two
+       competing ways to move the same content, and having both makes the
+       resulting position depend on which one moved last. */
+    #stage-wrap { overflow: hidden; border: 1px solid #999; background: #222;
+                  height: 60vh; position: relative; cursor: grab; touch-action: none; }
+    #stage-wrap.panning { cursor: grabbing; }
+    #stage { position: relative; transform-origin: 0 0; will-change: transform; }
+    /* The grid extends BEYOND the map image in every direction.
+       Two reasons, both from using the thing: panning is unpleasant when the
+       map is pinned to the viewport edges with nowhere to overshoot, and a GM
+       wants somewhere to park tokens that are not on the board yet — reserves,
+       summons, the next wave — where they are one drag from being in play.
+       It is a child of #stage with NEGATIVE offsets rather than a resized
+       #stage, because #stage IS the coordinate origin: grid (0,0) is its
+       top-left, and every token position in the database is measured from
+       there. Growing the stage would move that origin and silently relocate
+       every token ever placed. */
+    #grid-pad { position: absolute; z-index: 0; pointer-events: none; }
+    /* Pings: RADAR RINGS. Two concentric circles expand outward from the
+       pinged point and fade, the second staggered behind the first so a new
+       ring appears as the previous one dies — which is what reads as "radar"
+       rather than as a single circle growing.
+       Expanding OUTWARD, deliberately: an inward-collapsing ring points at a
+       spot but draws the eye along with it, while an outward one leaves the eye
+       where the ping is. Roll20 describes its own as rings sprouting from the
+       cursor, and the direction is the reason it works.
+       pointer-events:none throughout, so a marker can never intercept a click
+       on the map beneath it — a ping that blocked interaction would be worse
+       than no ping.
+       The wrapper carries no size of its own: it is a point, and each ring is
+       centred on it by its own negative margin. That keeps the ping anchored to
+       one square regardless of how large the rings grow. */
+    .ping { position: absolute; width: 0; height: 0; pointer-events: none; z-index: 40; }
+    .ping i { position: absolute; display: block; border-radius: 50%;
+              border: 6px solid currentColor; opacity: 0;
+              width: 160px; height: 160px; margin: -80px 0 0 -80px;
+              animation: ping-ring 1.6s cubic-bezier(0.2, 0.6, 0.3, 1) forwards; }
+    /* The stagger is what makes it read as a repeating signal rather than as
+       one circle. Half a beat is enough: longer and they look unrelated. */
+    .ping i:nth-child(2) { animation-delay: 0.32s; }
+    @keyframes ping-ring {
+      0%   { transform: scale(0.15); opacity: 0; }
+      12%  { opacity: 0.95; }
+      100% { transform: scale(1); opacity: 0; }
+    }
+
+    #zoom-hud { position: absolute; right: 8px; bottom: 8px; z-index: 20;
+                background: rgba(0,0,0,0.6); color: #fff; font-size: 11px;
+                padding: 3px 7px; border-radius: 3px; pointer-events: none; }
     #stage-bg { position: absolute; inset: 0; background-size: cover; background-position: center; opacity: 0.85; }
     .token { position: absolute; box-sizing: border-box; border: 2px solid #fff;
              border-radius: 6px; background: #445 center/cover no-repeat;
@@ -35,14 +87,20 @@
        `center/cover` here means the identity transform renders exactly as the
        pre-M6 build did, and composes with cover without needing the image's
        natural dimensions. */
-    .token > .art { position: absolute; inset: 0; background: center/cover no-repeat;
+    /* The art sits BEHIND the caption. Both are absolutely positioned inside the
+       token, so without an explicit order the later element in the DOM wins —
+       and the art is appended first only because it was added first. Stating
+       both z-indexes makes the stacking a decision rather than a consequence of
+       insertion order. */
+    .token > .art { position: absolute; inset: 0; z-index: 0; background: center/cover no-repeat;
                     transform-origin: center; pointer-events: none; }
     .token.mine { border-color: #6f6; }
     .token.dragging { cursor: grabbing; opacity: 0.8; z-index: 10; }
     .token.selected { outline: 2px dashed #fc6; outline-offset: 2px; }
     .token.locked { cursor: not-allowed; }
     .token.hidden-tok { opacity: 0.4; border-style: dashed; }   /* GM-only view of a hidden token */
-    .token .cap { background: rgba(0,0,0,0.55); width: 100%; padding: 1px 2px;
+    .token .cap { position: relative; z-index: 1;
+                  background: rgba(0,0,0,0.55); width: 100%; padding: 1px 2px;
                   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     /* Marquee selection rectangle drawn on the stage. */
     #marquee { position: absolute; border: 1px dashed #fc6; background: rgba(255,204,102,0.12);
@@ -175,7 +233,8 @@
       Del/Backspace delete · F toggle fog mode</span>
     </div>
     <div id="stage-wrap">
-      <div id="stage"><div id="stage-bg"></div><svg id="fog-layer" xmlns="http://www.w3.org/2000/svg"></svg><div id="marquee"></div></div>
+      <div id="stage"><div id="grid-pad"></div><div id="stage-bg"></div><svg id="fog-layer" xmlns="http://www.w3.org/2000/svg"></svg><div id="marquee"></div></div>
+      <div id="zoom-hud">100%</div>
     </div>
   </fieldset>
 
@@ -184,6 +243,8 @@
   <div id="out">ready</div>
 
   <script src="/socket.io/socket.io.js"></script>
+  <script src="/js/imagepicker.js"></script>
+  <script src="/js/closednotice.js"></script>
   <script src="/js/scene.js"></script>
 </body>
 </html>

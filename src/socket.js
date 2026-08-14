@@ -22,7 +22,7 @@
 const knex = require('./db');
 const { isActiveMember } = require('./middleware/campaignAuth');
 const {
-  publicToken, tokenMovePolicy, loadSceneInCampaign,
+  publicToken, shapeTokens, tokenMovePolicy, loadSceneInCampaign,
   validateGridCoord, validateTokenSize,
 } = require('./routes/scenes');
 // The active-scene rule, in one place. See services/sceneAccess.js for why it
@@ -350,7 +350,10 @@ function initSockets(io) {
         const [row] = await knex('tokens')
           .where({ id: token.id }).update(updates).returning('*');
 
-        const shaped = publicToken(row);
+        // shapeTokens, not publicToken: a move broadcast must carry the same
+        // resolved picture the scene load did, or a token whose art is
+        // inherited would blank on every other client the moment it moved.
+        const shaped = await shapeTokens(row);
         // Broadcast the authoritative position. A HIDDEN token must reach only
         // the GM — sending it to the room would leak the position of a token
         // players aren't meant to see. A visible token goes to the whole room
@@ -374,6 +377,138 @@ function initSockets(io) {
     // else's, or locked) is SILENTLY DROPPED from the batch, not an error for the
     // whole set — grabbing a cluster and moving only your own is the intended feel.
     // Payload: { campaign_id, scene_id, moves: [{ token_id, x, y }, ...] }.
+    // --- pings -------------------------------------------------------------
+    //
+    // A ping is a transient marker: somebody points at a spot on the map and
+    // everyone sees a circle there for a couple of seconds. It is the one piece
+    // of real-time state in this project that is DELIBERATELY NOT PERSISTED —
+    // there is no table, no row, and nothing to load on a page refresh.
+    //
+    // That is not laziness. A ping means "look here NOW"; a ping that survived a
+    // reload would be a ping that means something else, and storing it would
+    // add a table, a cap, a sweep and a disclosure rule to a feature whose
+    // entire lifetime is shorter than the request that would write it.
+    //
+    // AUTHORISATION IS THE SAME AS EVERYTHING ELSE ON THIS TRANSPORT, and that
+    // is the point: an ephemeral event is still an event, and "it disappears in
+    // two seconds" is not an argument for skipping the checks. Membership, room
+    // membership, and the active-scene rule all apply — without the last one a
+    // player could ping a map the GM has not revealed, and learn from the
+    // absence of a refusal that it exists.
+    //
+    // FOCUS is GM-only. A normal ping draws a circle; a focus ping also moves
+    // every player's view to it. Moving somebody's viewport is a stronger act
+    // than drawing on it, so it takes the stronger permission — and the flag is
+    // recomputed HERE from campaign ownership rather than trusted from the
+    // payload, because a client that could set `focus` could seize the table's
+    // attention at will.
+    socket.on('scene:ping', async (payload, ack) => {
+      const respond = (result) => { if (typeof ack === 'function') ack(result); };
+      try {
+        const p = payload || {};
+        const campaignId = p.campaign_id;
+        const sceneId = p.scene_id;
+
+        if (!(await isActiveMember(campaignId, user.id))) {
+          return respond({ ok: false, error: 'not a member of that campaign' });
+        }
+        if (!socket.rooms.has(roomName(campaignId))) {
+          return respond({ ok: false, error: 'join the campaign room first' });
+        }
+
+        const scene = await loadSceneInCampaign(sceneId, campaignId);
+        if (!scene) return respond({ ok: false, error: 'scene not found' });
+
+        const campaign = await knex('campaigns')
+          .where({ id: campaignId }).whereNull('deleted_at').first();
+        if (!campaign) return respond({ ok: false, error: 'campaign not found' });
+
+        const isOwner = campaign.owner_id === user.id;
+        if (!mayUseSceneFor({ isOwner, campaign, scene })) {
+          return respond({ ok: false, error: 'that scene is not active' });
+        }
+
+        // Grid coordinates, bounded to the scene. Unbounded values would let a
+        // ping be placed far outside the map — harmless to the server, and a
+        // way to scroll every other client's view to nowhere when combined with
+        // focus.
+        const x = Number(p.x);
+        const y = Number(p.y);
+        if (!Number.isFinite(x) || !Number.isFinite(y)) {
+          return respond({ ok: false, error: 'x and y are required' });
+        }
+        const maxX = Math.max(1, Math.floor(scene.width / 50));
+        const maxY = Math.max(1, Math.floor(scene.height / 50));
+        if (x < -1 || y < -1 || x > maxX + 1 || y > maxY + 1) {
+          return respond({ ok: false, error: 'ping is outside the scene' });
+        }
+
+        // Recomputed, never taken from the body.
+        const focus = isOwner && p.focus === true;
+
+        // The zoom a focus ping imposes on every other client.
+        //
+        // This is the only value in the project that a client supplies and that
+        // then acts on OTHER PEOPLE'S SCREENS, so it is bounded here rather than
+        // trusted and bounded on arrival. A client that could send an arbitrary
+        // number would be able to zoom the whole table to 10000% — not a data
+        // breach, but a way to make the application unusable for everyone else,
+        // which is the same class of harm as an unbounded write.
+        //
+        // The bounds match the client's own, deliberately: two limits on one
+        // quantity that disagree is how a value gets accepted here and refused
+        // there. Carried only when focus is set, because it means nothing
+        // otherwise and an ignored field invites somebody to rely on it.
+        //
+        // [FIXED before shipping, 2026-08-10] typeof BEFORE any coercion.
+        // `Number.isFinite(Number(p.zoom))` accepts `[[2]]`, because
+        // Number([[2]]) is 2 — the FIFTH appearance of this one trap in this
+        // project, after Number([[5]]) in the M2 canvas validators,
+        // String(['2d6']) in the dice bridge, String(['#ffffff']) in
+        // validateColor, and an array used as an object key in formatFor.
+        //
+        // Caught here by running the clamp against a table of inputs rather
+        // than by reading it. Every previous instance was found by a probe too;
+        // none has ever been found by inspection, which is the more useful fact
+        // about this class than the trap itself.
+        //
+        // A string is refused rather than coerced. This payload comes from our
+        // own client, which sends a number, so accepting '3' would only widen
+        // the surface for nothing.
+        let zoom = null;
+        if (focus && typeof p.zoom === 'number' && Number.isFinite(p.zoom)) {
+          zoom = Math.max(0.25, Math.min(4, p.zoom));
+        }
+
+        // The colour is the member's own, read from the database rather than
+        // sent. A client-supplied colour could impersonate another player at the
+        // table, which is exactly what the colour exists to prevent.
+        const member = await knex('campaign_members')
+          .where({ campaign_id: campaignId, user_id: user.id }).first();
+
+        const ping = {
+          scene_id: scene.id,
+          x,
+          y,
+          focus,
+          zoom,
+          user_id: user.id,
+          color: (member && member.color) || null,
+        };
+
+        // Scene-scoped, so a player on another map hears nothing — the same
+        // filter every token and fog broadcast uses. The GM gets it separately
+        // because they may be looking at a different scene entirely.
+        await broadcastScenePlayers(campaignId, scene.id, 'scene:ping', ping);
+        await broadcastToOwner(campaignId, 'scene:ping', ping);
+        return respond({ ok: true });
+      } catch (err) {
+        console.error('scene:ping failed:', err.message);
+        return respond({ ok: false, error: 'ping failed' });
+      }
+    });
+
+
     socket.on('token:move-batch', async (payload, ack) => {
       const respond = (result) => { if (typeof ack === 'function') ack(result); };
       try {
@@ -428,7 +563,8 @@ function initSockets(io) {
               .where({ id: token.id })
               .update({ x: x.value, y: y.value, updated_at: knex.fn.now() })
               .returning('*');
-            applied.push(publicToken(row));
+            // eslint-disable-next-line no-await-in-loop
+            applied.push(await shapeTokens(row));
           }
         });
 

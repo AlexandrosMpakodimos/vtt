@@ -54,6 +54,10 @@ function campaignCard(c, actions = []) {
     c.is_public ? 'public' : 'private',
     c.has_password ? 'password' : null,
     c.is_gm ? 'GM' : null,
+    // Shown to EVERY member, not just the GM. A player whose game is closed
+    // needs to know that from the dashboard rather than from a wall of failed
+    // requests once they open the table.
+    c.is_open === false ? 'CLOSED' : null,
     c.archived ? 'ARCHIVED' : null,
     c.deleted_at ? 'DELETED' : null,
   ].filter(Boolean)) {
@@ -126,6 +130,13 @@ async function loadMine() {
             const x = await api('POST', `/api/campaigns/${c.id}/archive`);
             show(`archive → ${x.status}`, x.data); loadMine();
           }],
+      // Open and close the table. GM only — the server enforces that with
+      // requireOwner; this just declines to offer a button nobody else can use.
+      ...(c.is_gm ? [[c.is_open === false ? 'open the game' : 'close the game', async () => {
+        const x = await api('PATCH', `/api/campaigns/${c.id}`, { is_open: c.is_open === false });
+        show(`${c.is_open === false ? 'open' : 'close'} → ${x.status}`, x.data);
+        loadMine();
+      }]] : []),
       ...(c.is_gm ? [['delete', async () => {
         const d = await api('DELETE', `/api/campaigns/${c.id}`);
         show(`DELETE → ${d.status}`, d.data); loadMine();
