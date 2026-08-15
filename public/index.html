@@ -1,37 +1,382 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Ping-Pong Demo</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>A Virtual Tabletop</title>
+
+  <!-- Data-URI favicon: a simple accent d20-ish glyph, so the server log stops
+       collecting /favicon.ico 404s. Not the [TODO] seal. -->
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 2 L28 9 L28 23 L16 30 L4 23 L4 9 Z' fill='%230e7466'/%3E%3Cpath d='M16 2 L16 30 M4 9 L28 23 M28 9 L4 23' stroke='%23f7f6f3' stroke-width='1.2' fill='none'/%3E%3C/svg%3E">
+
+  <!-- Shared token system (commit 1). -->
+  <link rel="stylesheet" href="/css/tokens.css">
+
+  <!-- Anti-flash theme script: NO defer, NO async — it blocks parsing by design
+       so data-theme is set before first paint (spec §8.1). Precedes the page
+       <style> below. -->
+  <script src="/js/theme.js"></script>
+
+  <style>
+    /* Page-local styles (house pattern: inline <style> is CSP-permitted via
+       style-src 'unsafe-inline'). Colour comes entirely from tokens.css; this
+       block is layout, type and spacing only. */
+
+    :root {
+      --maxw: 68rem;
+      --pad: clamp(1rem, 4vw, 2.5rem);
+      --radius: 10px;
+      --font-body: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      --font-display: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    /* The `hidden` attribute must always win over any element's display. Without
+       this, .btn's `display: inline-flex` overrides the UA [hidden] rule and a
+       hidden button stays visible — which is why hide()/reveal() toggle the
+       attribute but the signed-in/out swaps must rely on this to actually hide.
+       !important on [hidden] is the accepted idiom for this exact cascade. */
+    [hidden] { display: none !important; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      margin: 0;
+      background: var(--surface);
+      color: var(--text);
+      font-family: var(--font-body);
+      line-height: 1.55;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    h1, h2 { font-family: var(--font-display); font-weight: 600; line-height: 1.1; }
+
+    a { color: var(--link); }
+
+    /* Skip link — first focusable, hidden until focused. */
+    .skip {
+      position: absolute; left: 8px; top: -48px;
+      background: var(--surface-raised); color: var(--text);
+      padding: 8px 14px; border-radius: var(--radius);
+      z-index: 100; transition: top 0.15s ease;
+    }
+    .skip:focus { top: 8px; }
+
+    /* ── Header ── */
+    .site-header {
+      position: fixed; inset: 0 0 auto 0; z-index: 50;
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 1rem; padding: 0.75rem var(--pad);
+      background: color-mix(in srgb, var(--surface) 72%, transparent);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border);
+    }
+    .wordmark { font-family: var(--font-display); font-size: 1.05rem; font-weight: 600; }
+    .header-actions { display: flex; align-items: center; gap: 0.5rem; }
+
+    .btn {
+      font: inherit; cursor: pointer; border-radius: var(--radius);
+      padding: 0.55rem 1.1rem; border: 1px solid transparent;
+      background: transparent; color: inherit; text-decoration: none;
+      display: inline-flex; align-items: center; gap: 0.4rem;
+    }
+    .btn.primary { background: var(--accent); color: var(--on-accent); }
+    .btn.secondary { border-color: var(--border); }
+    .btn.icon { padding: 0.5rem; line-height: 0; }
+    .btn:disabled { opacity: 0.6; cursor: default; }
+    .btn svg { width: 20px; height: 20px; }
+
+    /* ── Hero ── */
+    .hero {
+      position: relative; min-height: 100svh;
+      display: grid; place-items: center;
+      overflow: hidden; text-align: center;
+      padding: 6rem var(--pad) 3rem;
+    }
+    .hero-layers { position: absolute; inset: 0; z-index: 0; pointer-events: none; }
+    .layer {
+      position: absolute; top: 50%; left: 50%;
+      width: 106%; height: 106%;
+      transform: translate3d(0, 0, 0);
+      margin: -53% 0 0 -53%;
+      object-fit: cover; will-change: transform;
+    }
+    .scrim { position: absolute; inset: 0; z-index: 1; background: var(--scrim); }
+
+    .hero-inner { position: relative; z-index: 2; color: var(--hero-text); max-width: 46rem; }
+    .hero h1 { font-size: clamp(2.4rem, 7vw, 4.2rem); margin: 0 0 1rem; }
+    .tagline { font-size: clamp(1.1rem, 2.6vw, 1.5rem); margin: 0 0 0.5rem; }
+    .subline { font-size: 0.95rem; opacity: 0.9; margin: 0 0 2rem; }
+
+    .cta-row { display: flex; gap: 0.75rem; justify-content: center; flex-wrap: wrap; }
+    /* Hero secondary button: computed against the same 4.93 floor (spec §8.2). */
+    .hero .btn.secondary {
+      color: var(--hero-text);
+      background: rgba(255, 255, 255, 0.14);
+      border-color: var(--hero-text);
+    }
+
+    .scroll-cue {
+      position: absolute; bottom: 1.5rem; left: 50%; transform: translateX(-50%);
+      z-index: 2; color: var(--hero-text); text-decoration: none; font-size: 1.6rem;
+      animation: bounce 1.8s ease-in-out infinite;
+    }
+    @keyframes bounce { 0%, 100% { transform: translate(-50%, 0); } 50% { transform: translate(-50%, 8px); } }
+
+    /* ── Content sections ── */
+    main { position: relative; z-index: 1; background: var(--surface); }
+    .section { max-width: var(--maxw); margin: 0 auto; padding: 4rem var(--pad); }
+    .section h2 { font-size: clamp(1.6rem, 4vw, 2.2rem); margin: 0 0 1rem; }
+    .section p { max-width: 46rem; }
+    .feature-list { list-style: none; padding: 0; margin: 2rem 0 0; display: grid; gap: 1.5rem; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); }
+    .feature-list h3 { margin: 0 0 0.35rem; font-size: 1.05rem; }
+    .feature-list p { margin: 0; color: var(--text-muted); }
+    .todo { color: var(--text-muted); font-style: italic; }
+
+    footer { border-top: 1px solid var(--border); }
+    footer .section { padding: 2rem var(--pad); color: var(--text-muted); font-size: 0.85rem; }
+
+    /* ── Auth card (dialog) ── */
+    dialog#authCard {
+      width: min(28rem, 92vw); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 0;
+      background: var(--surface-raised); color: var(--text);
+    }
+    dialog#authCard::backdrop { background: rgba(0, 0, 0, 0.5); }
+    .card-inner { padding: 1.75rem; position: relative; }
+    .card-close {
+      position: absolute; top: 0.75rem; right: 0.75rem;
+      background: transparent; border: none; color: var(--text-muted);
+      font-size: 1.4rem; line-height: 1; cursor: pointer; padding: 0.25rem 0.5rem;
+    }
+    .card-inner h2 { font-size: 1.35rem; margin: 0 0 1.25rem; }
+    .field { display: grid; gap: 0.3rem; margin-bottom: 1rem; }
+    .field label { font-size: 0.9rem; font-weight: 600; }
+    .field .help { font-size: 0.8rem; color: var(--text-muted); }
+    .field input {
+      font: inherit; padding: 0.6rem 0.7rem; border-radius: 8px;
+      border: 1px solid var(--border); background: var(--surface); color: var(--text);
+    }
+    .field input[aria-invalid="true"] { border-color: var(--danger); }
+    .pw-wrap { position: relative; display: flex; }
+    .pw-wrap input { flex: 1; padding-right: 3.5rem; }
+    .pw-toggle {
+      position: absolute; right: 0.35rem; top: 50%; transform: translateY(-50%);
+      font: inherit; font-size: 0.8rem; background: transparent;
+      border: none; color: var(--link); cursor: pointer; padding: 0.3rem 0.5rem;
+    }
+    .status { min-height: 1.2em; margin: 0.25rem 0 1rem; color: var(--text); font-size: 0.9rem; }
+    .card-footer { margin-top: 0.5rem; font-size: 0.9rem; color: var(--text-muted); }
+    .switch-face { font: inherit; background: none; border: none; color: var(--link); cursor: pointer; padding: 0; text-decoration: underline; }
+    form[hidden] { display: none; }
+
+    /* ── Reduced motion: kill parallax residue, the cue bounce, smooth scroll ── */
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      .scroll-cue { animation: none; }
+      .layer { transition: none; }
+      * { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; }
+    }
+
+    /* ── Mobile (spec §10) ── */
+    @media (max-width: 640px) {
+      .hero h1 { font-size: 2.2rem; }
+      .cta-row { flex-direction: column; }
+      .cta-row .btn { width: 100%; justify-content: center; }
+      .section { padding: 3rem var(--pad); }
+      dialog#authCard { width: 92vw; }
+    }
+  </style>
 </head>
+
 <body>
-    <h1>Ping-Ping Demo</h1>
-    <p id="status">Connecting...</p>
-    <button onclick="sendPing()">Send Ping</button>
-    <div id="log"></div>
+  <a class="skip" href="#about">Skip to about</a>
 
-    <script src="/socket.io/socket.io.js"></script>
-    <script> 
-        const statusEl = document.getElementById('status');
-        const logEl = document.getElementById('log');
-        const socket = io();
-        
-        socket.on('connect', () => {
-            statusEl.textContent = 'Connected: ' + socket.id;
-        });
+  <header class="site-header">
+    <span class="wordmark">A Virtual Tabletop</span>
+    <div class="header-actions">
+      <button id="themeToggle" class="btn icon" type="button" aria-label="Switch to dark theme">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <circle cx="12" cy="12" r="5"></circle>
+          <path d="M12 1v2M12 21v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M1 12h2M21 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4"></path>
+        </svg>
+      </button>
+      <button id="headerLogin" class="btn secondary" type="button">Log in</button>
+      <a id="headerDash" class="btn secondary" href="/dashboard.html" hidden>Dashboard</a>
+    </div>
+  </header>
 
-        socket.on('disconnect', () => {
-            statusEl.textContent = 'Disconnected';
-        });
+  <main>
+    <section class="hero">
+      <div id="heroLayers" class="hero-layers" aria-hidden="true">
+        <img class="layer" src="/assets/layer-back.svg"  alt="" data-depth="0.1" width="1600" height="900" decoding="async">
+        <img class="layer" src="/assets/layer-mid.svg"   alt="" data-depth="0.3" width="1600" height="900" decoding="async">
+        <img class="layer" src="/assets/layer-front.svg" alt="" data-depth="0.6" width="1600" height="900" decoding="async">
+      </div>
+      <div class="scrim"></div>
 
-        socket.on('pong', (data) => {
-            logEl.textContent += JSON.stringify(data) + '\n';
-        });
+      <div class="hero-inner">
+        <h1>A Virtual Tabletop</h1>
+        <p class="tagline">Maps, tokens, fog and dice — one shared table in the browser.</p>
+        <p class="subline">An undergraduate thesis — Department of Informatics, Ionian University.</p>
 
-        function sendPing() {
-            socket.emit('ping', {timestamp: Date.now() });
-        }
-    </script>
+        <div id="ctaRow" class="cta-row">
+          <button id="ctaSignup" class="btn primary" type="button">Create an account</button>
+          <button id="ctaLogin" class="btn secondary" type="button">Log in</button>
+          <a id="ctaContinue" class="btn primary" href="/dashboard.html" hidden>Continue</a>
+          <button id="ctaLogout" class="btn secondary" type="button" hidden>Log out</button>
+        </div>
+      </div>
+
+      <a class="scroll-cue" href="#about" aria-label="Scroll to learn more">⌄</a>
+    </section>
+
+    <section id="about" class="section">
+      <h2>What this is</h2>
+      <p>A real-time virtual tabletop for small groups: a game master and up to seven
+      players share campaigns — scenes and tokens on a gridded map, fog of war,
+      characters and inventories, an initiative strip, dice, and chat with whispers.
+      Everything runs in the browser; the server is the single authority for what
+      happens at the table. The rules engine is deliberately small: the system is
+      D&amp;D-inspired but simplified, and the table — not the software — decides what a
+      roll means.</p>
+
+      <ul class="feature-list">
+        <li>
+          <h3>One shared board</h3>
+          <p>Token moves, fog reveals and scene changes reach every player live.</p>
+        </li>
+        <li>
+          <h3>Dice you can trust</h3>
+          <p>Every roll happens on the server; your browser only animates the result.</p>
+        </li>
+        <li>
+          <h3>The GM runs the table</h3>
+          <p>A hidden token never reaches a player's browser — what you can't see was never sent.</p>
+        </li>
+      </ul>
+    </section>
+
+    <section id="thesis" class="section">
+      <h2>The thesis</h2>
+      <p>This application is the artefact of an undergraduate thesis at the
+      <a href="https://di.ionio.gr/en/" target="_blank" rel="noopener">Department of Informatics, Ionian University</a>:
+      building a server-authoritative real-time application — authentication and session
+      management, authorisation boundaries, and validation at every input.</p>
+      <p class="todo">[TODO] Departmental seal pending a vector version and approval for use on a public site. Text attribution only until then.</p>
+    </section>
+
+    <section id="license" class="section">
+      <h2>Licence &amp; source</h2>
+      <p>The source code is available
+      <a href="https://github.com/AlexandrosMpakodimos/vtt" target="_blank" rel="noopener">on GitHub</a>
+      and released under the <span class="todo">[TODO: licence]</span> licence.</p>
+    </section>
+  </main>
+
+  <footer>
+    <div class="section">
+      Alexandros Mpakodimos · Ionian University, Department of Informatics · 2026 ·
+      <a href="https://github.com/AlexandrosMpakodimos/vtt" target="_blank" rel="noopener">Source on GitHub</a> ·
+      <span class="todo">[TODO: licence]</span>
+    </div>
+  </footer>
+
+  <!-- ── Auth card ── -->
+  <dialog id="authCard" aria-labelledby="liHeading">
+    <div class="card-inner">
+      <button id="authClose" class="card-close" type="button" aria-label="Close">×</button>
+
+      <!-- Sign up -->
+      <form id="formSignup" hidden novalidate>
+        <h2 id="suHeading">Create an account</h2>
+        <div class="field">
+          <label for="suEmail">Email</label>
+          <input id="suEmail" type="email" autocomplete="email" maxlength="254" required>
+        </div>
+        <div class="field">
+          <label for="suUsername">Username</label>
+          <input id="suUsername" type="text" autocomplete="username" minlength="3" maxlength="30" pattern="[A-Za-z0-9_]+" required>
+          <span class="help">3–30 characters: letters, numbers, underscore.</span>
+        </div>
+        <div class="field">
+          <label for="suPassword">Password</label>
+          <div class="pw-wrap">
+            <input id="suPassword" type="password" autocomplete="new-password" minlength="8" maxlength="64" required>
+            <button class="pw-toggle" type="button" aria-controls="suPassword" aria-pressed="false">Show</button>
+          </div>
+          <span class="help">8–64 characters — that's the only rule.</span>
+        </div>
+        <p id="suStatus" class="status" role="status"></p>
+        <button id="suSubmit" class="btn primary" type="submit">Create account</button>
+        <button id="suResend" class="btn secondary" type="button" hidden>Resend verification email</button>
+        <p class="card-footer">Have an account?
+          <button class="switch-face" type="button" data-face="formLogin">Log in</button>
+        </p>
+      </form>
+
+      <!-- Log in -->
+      <form id="formLogin" hidden novalidate>
+        <h2 id="liHeading">Log in</h2>
+        <div class="field">
+          <label for="liEmail">Email</label>
+          <input id="liEmail" type="email" autocomplete="email" maxlength="254" required>
+        </div>
+        <div class="field">
+          <label for="liPassword">Password</label>
+          <div class="pw-wrap">
+            <input id="liPassword" type="password" autocomplete="current-password" minlength="8" maxlength="64" required>
+            <button class="pw-toggle" type="button" aria-controls="liPassword" aria-pressed="false">Show</button>
+          </div>
+        </div>
+        <p id="liStatus" class="status" role="status"></p>
+        <button id="liSubmit" class="btn primary" type="submit">Log in</button>
+        <button id="liResend" class="btn secondary" type="button" hidden>Resend verification email</button>
+        <p class="card-footer">
+          <button id="liForgot" class="switch-face" type="button" data-face="formForgot">Forgot password?</button>
+          · New here?
+          <button class="switch-face" type="button" data-face="formSignup">Sign up</button>
+        </p>
+      </form>
+
+      <!-- Forgot -->
+      <form id="formForgot" hidden novalidate>
+        <h2 id="fpHeading">Reset your password</h2>
+        <div class="field">
+          <label for="fpEmail">Email</label>
+          <input id="fpEmail" type="email" autocomplete="email" maxlength="254" required>
+        </div>
+        <p id="fpStatus" class="status" role="status"></p>
+        <button id="fpSubmit" class="btn primary" type="submit">Send reset link</button>
+        <p class="card-footer">
+          <button class="switch-face" type="button" data-face="formLogin">Back to log in</button>
+        </p>
+      </form>
+
+      <!-- Reset -->
+      <form id="formReset" hidden novalidate>
+        <h2 id="rpHeading">Set a new password</h2>
+        <div class="field">
+          <label for="rpPassword">New password</label>
+          <div class="pw-wrap">
+            <input id="rpPassword" type="password" autocomplete="new-password" minlength="8" maxlength="64" required>
+            <button class="pw-toggle" type="button" aria-controls="rpPassword" aria-pressed="false">Show</button>
+          </div>
+          <span class="help">8–64 characters — that's the only rule.</span>
+        </div>
+        <p id="rpStatus" class="status" role="status"></p>
+        <button id="rpSubmit" class="btn primary" type="submit">Set new password</button>
+        <p class="card-footer">
+          <button id="rpLoginSwitch" class="switch-face" type="button" data-face="formLogin" hidden>Log in now</button>
+          <button id="rpForgotSwitch" class="switch-face" type="button" data-face="formForgot" hidden>Request a new link</button>
+          <button class="switch-face" type="button" data-face="formLogin">Back to log in</button>
+        </p>
+      </form>
+    </div>
+  </dialog>
+
+  <script src="/js/landing.js" defer></script>
 </body>
 </html>

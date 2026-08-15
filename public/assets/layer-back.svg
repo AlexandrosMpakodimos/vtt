@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" width="1600" height="900" preserveAspectRatio="xMidYMid slice" role="presentation">
+  <!-- [TODO] placeholder art (spec §7): hand-authored silhouette stand-in, not
+       shipping art. Replaced before ship by the owner's own or a CC0/CC-BY set,
+       ≤250 KB, static. Do NOT commit the Dragon Prince references. -->
+  <!-- Back layer: farthest ridge line, lowest contrast, drifts least (depth 0.1). -->
+  <path d="M0 640
+           C 180 600, 320 660, 500 620
+           S 820 560, 1000 610
+           S 1320 660, 1600 600
+           L 1600 900 L 0 900 Z"
+        fill="#3b4a63" fill-opacity="0.55"/>
+  <path d="M0 720
+           C 240 690, 420 730, 640 700
+           S 1040 660, 1280 710
+           S 1500 730, 1600 700
+           L 1600 900 L 0 900 Z"
+        fill="#2f3c52" fill-opacity="0.7"/>
+</svg>
