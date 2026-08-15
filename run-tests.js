@@ -48,7 +48,8 @@ const DB = [
   'test-campaigns.js', 'test-scenes.js', 'test-token-ops.js', 'test-fog.js',
   'test-active-scene.js', 'test-scene-delete.js', 'test-actors.js',
   'test-items-inventory.js', 'test-combat.js', 'test-speaker-color.js',
-  'test-scene-grid.js', 'test-spells.js', 'test-assets.js', 'test-campaign-open.js',
+  'test-scene-grid.js', 'test-spells.js', 'test-assets.js', 'test-landing-server.js',
+  'test-campaign-open.js',
 ];
 
 // Adversarial security regressions.

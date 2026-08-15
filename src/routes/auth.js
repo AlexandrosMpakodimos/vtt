@@ -200,51 +200,24 @@ router.get('/verify-email', async (req, res, next) => {
   }
 });
 
-// GET /api/auth/reset-password?token=... — render a new-password form if the token is valid.
+// GET /api/auth/reset-password?token=... — validate, then hand off to the landing page.
+// The inline-scripted form this route used to serve was blocked by the app's own
+// CSP (script-src 'self'), so the button fell through to a native submit that
+// dropped the token. The working reset form now lives on the landing page; this
+// route keeps its token pre-check (UX the design already had) and swaps its two
+// send(html) outcomes for redirects. POST /reset-password and the mailer link are
+// unchanged; authority stays server-side (the POST re-validates regardless).
 router.get('/reset-password', async (req, res, next) => {
-  const page = (title, body) =>
-    `<!doctype html><meta charset="utf-8"><title>${title}</title>
-     <body style="font-family:system-ui;max-width:420px;margin:80px auto;text-align:center">
-     <h1>${title}</h1><p>${body}</p></body>`;
   try {
     const { token } = req.query;
     const row = token
       ? await knex('password_reset_tokens').where({ token_hash: sha256(String(token)) }).first()
       : null;
     if (!row || row.used_at || new Date(row.expires_at) < new Date()) {
-      return res.status(400).send(page('Link invalid or expired', 'Please request a new password reset.'));
+      return res.redirect('/?reset_error=1');
     }
-    return res.send(`<!doctype html><meta charset="utf-8"><title>Reset your password</title>
-<body style="font-family:system-ui;max-width:420px;margin:80px auto">
-  <h1>Choose a new password</h1>
-  <form id="f">
-    <input type="password" id="pw" placeholder="New password (min 8 chars)" minlength="8" required
-           style="width:100%;padding:8px;font-size:15px;box-sizing:border-box" />
-    <button style="margin-top:10px;padding:8px 14px">Reset password</button>
-  </form>
-  <p id="msg" style="margin-top:14px"></p>
-  <script>
-    const token = new URLSearchParams(location.search).get('token');
-    document.getElementById('f').addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const msg = document.getElementById('msg');
-      msg.textContent = 'Working...';
-      try {
-        const r = await fetch('/api/auth/reset-password', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ token, password: document.getElementById('pw').value }),
-        });
-        const data = await r.json().catch(() => ({}));
-        msg.textContent = r.ok
-          ? 'Password reset. You can now log in with your new password.'
-          : (data.error || 'Reset failed.');
-      } catch (_) { msg.textContent = 'Network error.'; }
-    });
-  </script>
-</body>`);
-  } catch (err) {
-    return next(err);
-  }
+    return res.redirect(`/?reset=${encodeURIComponent(String(token))}`);
+  } catch (err) { return next(err); }
 });
 
 // POST /api/auth/reset-password — validate token + new password, update it, log out everywhere.
