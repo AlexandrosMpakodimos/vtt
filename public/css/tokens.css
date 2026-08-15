@@ -1,0 +1,70 @@
+/* public/css/tokens.css — the shared theme token system.
+ *
+ * Born with the landing page (page 1 of 3); every later page imports it. The
+ * values below are FROZEN: each contrast ratio in the spec's §8.2 table was
+ * computed from WCAG relative luminance, not asserted. Do not tune a colour
+ * without recomputing its ratio against the surface it sits on.
+ *
+ * Theme is selected by html[data-theme="light"|"dark"], set before first paint
+ * by /js/theme.js. per-theme `color-scheme` makes native controls, form widgets
+ * and scrollbars follow the theme. The <meta name="color-scheme" content="light
+ * dark"> that pairs with this lives in index.html's <head> (commit 2), where the
+ * markup it annotates lives.
+ *
+ * Ratios recorded per token (L = light surface/raised, D = dark surface/raised):
+ *   --text        14.81,16.71 / 14.52,12.88   need 4.5
+ *   --text-muted   5.97, 6.73 /  6.81, 6.05    need 4.5
+ *   --link         6.24, 7.04 /  8.60, 7.63    need 4.5
+ *   --danger       5.79, 6.54 /  6.32, 5.60    need 4.5
+ *   --accent       5.02 (L) / 7.85 (D) as UI   need 3.0
+ *   --on-accent    5.66 (L) / 6.67 (D) on accent need 4.5
+ *   --focus        5.94, 6.70 /  8.51, 7.55    need 3.0
+ *   --hero-text    4.93 (scrim over pure white, worst case) need 4.5
+ */
+
+html[data-theme="light"] {
+  color-scheme: light;
+
+  --surface:        #f4f1ea;
+  --surface-raised: #ffffff;
+  --text:           #1c1e21;
+  --text-muted:     #565c66;
+  --link:           #0b5aa0;
+  --danger:         #b3261e;
+  --accent:         #0e7466;
+  --on-accent:      #ffffff;
+  --focus:          #1d4ed8;
+  --border:         #d8d4ca;
+
+  --scrim:     rgba(15, 17, 21, 0.62);
+  --hero-text: #f7f6f3;
+}
+
+html[data-theme="dark"] {
+  color-scheme: dark;
+
+  --surface:        #15171b;
+  --surface-raised: #1f2229;
+  --text:           #e9e7e2;
+  --text-muted:     #9aa0a9;
+  --link:           #82b8f0;
+  --danger:         #f2726a;
+  --accent:         #2fbfae;
+  --on-accent:      #0e2a26;
+  --focus:          #8ab4f8;
+  --border:         #363b44;
+
+  /* --scrim and --hero-text are theme-independent: the scrim sits over the hero
+   * art in both themes, and the 4.93 floor is computed against it, not the page
+   * surface. Kept identical in both blocks so no page can read them unset. */
+  --scrim:     rgba(15, 17, 21, 0.62);
+  --hero-text: #f7f6f3;
+}
+
+/* Focus indicator — visible in both themes by computation (§8.2). Applied here
+ * so every page importing tokens.css inherits one focus treatment; :focus-visible
+ * keeps it off mouse clicks. */
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
