@@ -151,9 +151,16 @@
       transform: translate3d(0, 0, 0) scale(1.06); /* overscan for parallax travel */
       will-change: transform;
     }
-    .layer.back  { background-image: url("/assets/layer-back.jpg"); }
-    .layer.mid   { background-image: url("/assets/layer-mid.webp"); }
-    .layer.front { background-image: url("/assets/layer-front.webp"); }
+    /* Theme-aware hero art: the LIGHT theme shows the daytime scene, the DARK
+       theme shows the same scene at night (campfire + moonlight). Same three
+       layers, same composition — the toggle reads as one place, two times of day.
+       Defaults below are the dark/night set (dark is the primary theme). */
+    .layer.back  { background-image: url("/assets/layer-back-night.jpg"); }
+    .layer.mid   { background-image: url("/assets/layer-mid-night.webp"); }
+    .layer.front { background-image: url("/assets/layer-front-night.webp"); }
+    html[data-theme="light"] .layer.back  { background-image: url("/assets/layer-back.jpg"); }
+    html[data-theme="light"] .layer.mid   { background-image: url("/assets/layer-mid.webp"); }
+    html[data-theme="light"] .layer.front { background-image: url("/assets/layer-front.webp"); }
     /* Vignette + scrim: darken toward the edges and bottom so the title reads,
        without hiding the art. Two stacked gradients, no flat overlay. */
     .scrim {

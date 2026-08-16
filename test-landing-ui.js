@@ -300,6 +300,13 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     !/<script(?![^>]*\ssrc=)[^>]*>/.test(htmlSrc));
   t('index.html has no on<event>= handler attribute', !/\son[a-z]+=/.test(htmlSrc));
 
+  // Theme-aware hero art: dark theme uses the night set (default), light theme
+  // overrides to the day set. Both must be wired or the toggle won't swap the art.
+  t('hero art defaults to the night set (dark theme)',
+    /\.layer\.back\s*\{[^}]*layer-back-night\.jpg/.test(htmlSrc));
+  t('light theme overrides hero art to the day set',
+    /html\[data-theme="light"\]\s*\.layer\.back\s*\{[^}]*layer-back\.jpg/.test(htmlSrc));
+
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })().catch((e) => {
