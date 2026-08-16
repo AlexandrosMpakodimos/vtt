@@ -344,7 +344,7 @@
           password: valueOf('liPassword'),
         }).then(function (r) {
           if (r.status === 200) {
-            navigate('/dashboard.html');
+            window.VTTLanding.navigate('/dashboard.html');
           } else if (r.status === 403 && r.data && r.data.email_verified === false) {
             setStatus('liStatus', serverError(r));
             reveal('liResend');
