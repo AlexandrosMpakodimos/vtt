@@ -6,38 +6,43 @@
   <meta name="color-scheme" content="light dark">
   <title>A Virtual Tabletop</title>
 
-  <!-- Data-URI favicon: a simple accent d20-ish glyph, so the server log stops
-       collecting /favicon.ico 404s. Not the [TODO] seal. -->
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 2 L28 9 L28 23 L16 30 L4 23 L4 9 Z' fill='%230e7466'/%3E%3Cpath d='M16 2 L16 30 M4 9 L28 23 M28 9 L4 23' stroke='%23f7f6f3' stroke-width='1.2' fill='none'/%3E%3C/svg%3E">
+  <!-- Data-URI favicon: a simple gold d20 glyph on the near-black ground. -->
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%230c0e13'/%3E%3Cpath d='M16 3 L27 9.5 L27 22.5 L16 29 L5 22.5 L5 9.5 Z' fill='none' stroke='%23c79a5b' stroke-width='1.4'/%3E%3Cpath d='M16 3 L16 29 M5 9.5 L27 22.5 M27 9.5 L5 22.5' stroke='%238a6c3c' stroke-width='1'/%3E%3C/svg%3E">
 
-  <!-- Shared token system (commit 1). -->
+  <!-- Shared token system. -->
   <link rel="stylesheet" href="/css/tokens.css">
 
-  <!-- Anti-flash theme script: NO defer, NO async — it blocks parsing by design
-       so data-theme is set before first paint (spec §8.1). Precedes the page
-       <style> below. -->
+  <!-- Anti-flash theme script: NO defer, NO async — sets data-theme before first
+       paint (spec §8.1). Precedes the page <style> below. -->
   <script src="/js/theme.js"></script>
 
   <style>
-    /* Page-local styles (house pattern: inline <style> is CSP-permitted via
-       style-src 'unsafe-inline'). Colour comes entirely from tokens.css; this
-       block is layout, type and spacing only. */
+
+
+
+
+
+
+    /* Page-local styles. Colour comes entirely from tokens.css; this block is
+       layout, type, motion and the dark-fantasy motifs carried over from the
+       author's original League-of-Legends-inspired landing (the expand-from-
+       centre divider, the hollow triangle scroll-cue, underline-grows nav hover,
+       gold-glow buttons). Inline <style> is CSP-permitted (style-src). */
 
     :root {
-      --maxw: 68rem;
-      --pad: clamp(1rem, 4vw, 2.5rem);
-      --radius: 10px;
-      --font-body: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-      --font-display: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+      --maxw: 70rem;
+      --pad: clamp(1rem, 4vw, 3rem);
+      /* System font stack — no web font to host (Montserrat is unreachable to
+         self-host and blocked from Google by the CSP). Resolves to San Francisco
+         on Apple, Segoe UI on Windows, Roboto on Android/Linux — all clean and
+         render the uppercase-bold hero well. Zero downloads, zero 404s. */
+      --font-body: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      --ease: cubic-bezier(0.22, 1, 0.36, 1);
     }
 
     * { box-sizing: border-box; }
 
-    /* The `hidden` attribute must always win over any element's display. Without
-       this, .btn's `display: inline-flex` overrides the UA [hidden] rule and a
-       hidden button stays visible — which is why hide()/reveal() toggle the
-       attribute but the signed-in/out swaps must rely on this to actually hide.
-       !important on [hidden] is the accepted idiom for this exact cascade. */
+    /* The hidden attribute must always win over any element's display. */
     [hidden] { display: none !important; }
 
     html { scroll-behavior: smooth; }
@@ -47,194 +52,305 @@
       background: var(--surface);
       color: var(--text);
       font-family: var(--font-body);
-      line-height: 1.55;
+      font-weight: 400;
+      line-height: 1.6;
       -webkit-font-smoothing: antialiased;
     }
 
-    h1, h2 { font-family: var(--font-display); font-weight: 600; line-height: 1.1; }
+    /* Chrome/labels/wordmark/CTA text are not meant to be selected — they are UI,
+       not content. Body copy (about/thesis) stays selectable. */
+    .no-select { user-select: none; -webkit-user-select: none; }
 
-    a { color: var(--link); }
+    h1, h2, h3 { line-height: 1.12; font-weight: 700; }
 
-    /* Skip link — first focusable, hidden until focused. */
+    a { color: var(--link); text-decoration: none; }
+    main a:not(.btn) { text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 1px; }
+    main a:not(.btn):hover { color: var(--text); }
+
+    /* Skip link — first focusable, appears on focus (WCAG bypass block). */
     .skip {
-      position: absolute; left: 8px; top: -48px;
+      position: absolute; left: 12px; top: -56px;
       background: var(--surface-raised); color: var(--text);
-      padding: 8px 14px; border-radius: var(--radius);
-      z-index: 100; transition: top 0.15s ease;
+      padding: 10px 16px; border: 1px solid var(--rule); border-radius: 2px;
+      z-index: 100; transition: top 0.18s var(--ease);
     }
-    .skip:focus { top: 8px; }
+    .skip:focus { top: 12px; }
 
-    /* ── Header ── */
+    /* ── Header: fixed, transparent-over-hero, nav left / auth right ── */
     .site-header {
       position: fixed; inset: 0 0 auto 0; z-index: 50;
       display: flex; align-items: center; justify-content: space-between;
-      gap: 1rem; padding: 0.75rem var(--pad);
-      background: color-mix(in srgb, var(--surface) 72%, transparent);
-      backdrop-filter: blur(8px);
+      gap: 1rem; padding: 0.85rem var(--pad);
+      /* Solid bar so the chrome always has consistent contrast, regardless of
+         the hero art scrolling underneath. */
+      background: var(--surface);
       border-bottom: 1px solid var(--border);
     }
-    .wordmark { font-family: var(--font-display); font-size: 1.05rem; font-weight: 600; }
+    .wordmark {
+      font-weight: 800; font-size: 0.95rem; letter-spacing: 0.22em;
+      text-transform: uppercase; color: var(--accent);
+      display: inline-flex; align-items: center; gap: 0.55rem;
+    }
+    .wordmark::before {
+      content: ""; width: 22px; height: 22px; flex: none;
+      background: var(--accent);
+      -webkit-mask: var(--d20) center / contain no-repeat;
+      mask: var(--d20) center / contain no-repeat;
+    }
+    /* d20 glyph reused as a mask so the wordmark mark follows theme colour. */
+    :root { --d20: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 3 L27 9.5 L27 22.5 L16 29 L5 22.5 L5 9.5 Z M16 3 L16 29 M5 9.5 L27 22.5 M27 9.5 L5 22.5' fill='none' stroke='black' stroke-width='1.6'/%3E%3C/svg%3E"); }
+
     .header-actions { display: flex; align-items: center; gap: 0.5rem; }
 
+    /* ── Buttons: gold-glow hover carried from the original ── */
     .btn {
-      font: inherit; cursor: pointer; border-radius: var(--radius);
-      padding: 0.55rem 1.1rem; border: 1px solid transparent;
-      background: transparent; color: inherit; text-decoration: none;
-      display: inline-flex; align-items: center; gap: 0.4rem;
+      font: inherit; font-weight: 600; cursor: pointer;
+      border-radius: 2px; padding: 0.6rem 1.2rem;
+      min-height: 44px; min-width: 44px;   /* WCAG 2.2 target size, generous */
+      display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem;
+      border: 1px solid transparent; background: transparent; color: inherit;
+      text-decoration: none; letter-spacing: 0.02em;
+      transition: color 0.2s var(--ease), background-color 0.2s var(--ease),
+                  box-shadow 0.2s var(--ease), border-color 0.2s var(--ease);
     }
-    .btn.primary { background: var(--accent); color: var(--on-accent); }
-    .btn.secondary { border-color: var(--border); }
-    .btn.icon { padding: 0.5rem; line-height: 0; }
-    .btn:disabled { opacity: 0.6; cursor: default; }
-    .btn svg { width: 20px; height: 20px; }
+    .btn.secondary { border-color: var(--rule); color: var(--accent); background: transparent; }
+    .btn.secondary:hover { color: var(--on-accent); background: var(--accent); }
+    .btn.secondary:hover {
+      color: var(--on-accent); background: var(--accent);
+      box-shadow: 0 0 6px color-mix(in srgb, var(--accent) 70%, transparent),
+                  0 0 18px color-mix(in srgb, var(--accent) 40%, transparent);
+    }
+    .btn.primary {
+      background: var(--accent); color: var(--on-accent); border-color: var(--accent);
+    }
+    .btn.primary:hover {
+      box-shadow: 0 0 8px color-mix(in srgb, var(--accent) 80%, transparent),
+                  0 0 22px color-mix(in srgb, var(--accent) 45%, transparent);
+      transform: translateY(-1px);
+    }
+    .btn.icon { padding: 0.55rem; }
+    .btn.icon svg { width: 20px; height: 20px; }
+    .btn:disabled { opacity: 0.55; cursor: default; box-shadow: none; transform: none; }
 
-    /* ── Hero ── */
+    /* ── Hero: parallax scene, low-anchored title, over-scrim ── */
     .hero {
       position: relative; min-height: 100svh;
-      display: grid; place-items: center;
+      display: flex; flex-direction: column; align-items: center; justify-content: flex-end;
       overflow: hidden; text-align: center;
-      padding: 6rem var(--pad) 3rem;
+      padding: 7rem var(--pad) 5.5rem;
     }
-    .hero-layers { position: absolute; inset: 0; z-index: 0; pointer-events: none; }
+    .hero-layers { position: absolute; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; }
+    /* Layers are full-bleed background-image divs, not <img>: background-size:cover
+       always fills the hero at any viewport aspect ratio and can never expose a
+       top/bottom edge (the failure mode of object-fit on a sized <img>). The
+       extra scale() gives overscan headroom for the parallax translate. */
     .layer {
-      position: absolute; top: 50%; left: 50%;
-      width: 106%; height: 106%;
-      transform: translate3d(0, 0, 0);
-      margin: -53% 0 0 -53%;
-      object-fit: cover; will-change: transform;
+      position: absolute; inset: -4%;              /* bleed past all edges */
+      background-size: cover; background-position: center 42%;
+      background-repeat: no-repeat;
+      transform: translate3d(0, 0, 0) scale(1.06); /* overscan for parallax travel */
+      will-change: transform;
     }
-    .scrim { position: absolute; inset: 0; z-index: 1; background: var(--scrim); }
-
-    .hero-inner { position: relative; z-index: 2; color: var(--hero-text); max-width: 46rem; }
-    .hero h1 { font-size: clamp(2.4rem, 7vw, 4.2rem); margin: 0 0 1rem; }
-    .tagline { font-size: clamp(1.1rem, 2.6vw, 1.5rem); margin: 0 0 0.5rem; }
-    .subline { font-size: 0.95rem; opacity: 0.9; margin: 0 0 2rem; }
-
-    .cta-row { display: flex; gap: 0.75rem; justify-content: center; flex-wrap: wrap; }
-    /* Hero secondary button: computed against the same 4.93 floor (spec §8.2). */
-    .hero .btn.secondary {
-      color: var(--hero-text);
-      background: rgba(255, 255, 255, 0.14);
-      border-color: var(--hero-text);
+    .layer.back  { background-image: url("/assets/layer-back.jpg"); }
+    .layer.mid   { background-image: url("/assets/layer-mid.webp"); }
+    .layer.front { background-image: url("/assets/layer-front.webp"); }
+    /* Vignette + scrim: darken toward the edges and bottom so the title reads,
+       without hiding the art. Two stacked gradients, no flat overlay. */
+    .scrim {
+      position: absolute; inset: 0; z-index: 1;
+      background:
+        /* central pool of shade behind the title, strongest where the text sits */
+        radial-gradient(90% 70% at 50% 52%, var(--scrim) 0%, transparent 70%),
+        /* edge vignette, kept clear of the bottom */
+        radial-gradient(130% 80% at 50% 10%, transparent 48%, var(--scrim) 100%);
+    }
+    /* Dedicated bottom dissolve to the page surface, ABOVE the scrim so nothing
+       tints it — this is what makes the hero melt into the section with no seam.
+       Reaches solid --surface before the hero's edge. */
+    .hero::after {
+      content: ""; position: absolute; left: 0; right: 0; bottom: 0; z-index: 2;
+      height: 38%; pointer-events: none;
+      background: linear-gradient(to bottom,
+        transparent 0%,
+        color-mix(in srgb, var(--surface) 55%, transparent) 55%,
+        color-mix(in srgb, var(--surface) 88%, transparent) 78%,
+        var(--surface) 96%);
     }
 
+    .hero-inner { position: relative; z-index: 3; color: var(--hero-text); max-width: 54rem; }
+    .hero h1 {
+      font-size: clamp(2.1rem, 6.2vw, 4.6rem); font-weight: 800;
+      letter-spacing: 0.02em; text-transform: uppercase; margin: 0;
+      text-shadow: 0 2px 24px rgba(0,0,0,0.55);
+      animation: fadeUp 0.9s var(--ease) both;
+    }
+    .tagline { font-size: clamp(1rem, 2.4vw, 1.35rem); margin: 1rem 0 0; color: var(--hero-text); opacity: 0.92; animation: fadeUp 0.9s var(--ease) 0.1s both; }
+    .subline { font-size: 0.85rem; letter-spacing: 0.04em; text-transform: uppercase; opacity: 0.72; margin: 0.6rem 0 0; animation: fadeUp 0.9s var(--ease) 0.2s both; }
+
+    /* The signature gold divider that expands from centre. */
+    .divider {
+      height: 2px; width: min(60%, 26rem); margin: 1.6rem auto 0;
+      background: linear-gradient(to right, transparent, var(--rule) 20%, var(--rule) 80%, transparent);
+      transform: scaleX(0); transform-origin: center;
+      animation: expandLine 0.9s var(--ease) 0.3s forwards;
+    }
+
+    .cta-row { display: flex; gap: 0.8rem; justify-content: center; flex-wrap: wrap; margin-top: 2rem; animation: fadeUp 0.9s var(--ease) 0.45s both; }
+    /* The one big hero CTA reads larger than header buttons. */
+    .cta-row .btn { font-size: 1.05rem; padding: 0.85rem 2rem; letter-spacing: 0.06em; text-transform: uppercase; }
+
+    /* Hollow downward triangle scroll-cue, from the original. */
     .scroll-cue {
-      position: absolute; bottom: 1.5rem; left: 50%; transform: translateX(-50%);
-      z-index: 2; color: var(--hero-text); text-decoration: none; font-size: 1.6rem;
-      animation: bounce 1.8s ease-in-out infinite;
+      position: absolute; bottom: 1.6rem; left: 50%; transform: translateX(-50%);
+      z-index: 3; width: 44px; height: 44px; display: grid; place-items: center;
+      animation: nudge 2s var(--ease) infinite;
     }
-    @keyframes bounce { 0%, 100% { transform: translate(-50%, 0); } 50% { transform: translate(-50%, 8px); } }
+    .scroll-cue::before {
+      content: ""; width: 0; height: 0;
+      border-left: 9px solid transparent; border-right: 9px solid transparent;
+      border-top: 12px solid var(--accent);
+    }
+    .scroll-cue:focus-visible { outline: 2px solid var(--focus); outline-offset: 4px; border-radius: 2px; }
+
+    @keyframes fadeUp { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+    @keyframes expandLine { to { transform: scaleX(1); } }
+    @keyframes nudge { 0%, 100% { transform: translate(-50%, 0); } 50% { transform: translate(-50%, 7px); } }
 
     /* ── Content sections ── */
     main { position: relative; z-index: 1; background: var(--surface); }
-    .section { max-width: var(--maxw); margin: 0 auto; padding: 4rem var(--pad); }
-    .section h2 { font-size: clamp(1.6rem, 4vw, 2.2rem); margin: 0 0 1rem; }
-    .section p { max-width: 46rem; }
-    .feature-list { list-style: none; padding: 0; margin: 2rem 0 0; display: grid; gap: 1.5rem; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); }
-    .feature-list h3 { margin: 0 0 0.35rem; font-size: 1.05rem; }
+    .section { max-width: var(--maxw); margin: 0 auto; padding: 5rem var(--pad); }
+    .section > h2 {
+      font-size: clamp(1.5rem, 3.6vw, 2.2rem); text-transform: uppercase;
+      letter-spacing: 0.06em; color: var(--accent); margin: 0 0 0.4rem;
+    }
+    /* Each section heading gets the short gold rule under it — the divider motif,
+       reused at smaller scale. Intentional repetition, not uniform padding. */
+    .section > h2 + .rule { height: 2px; width: 4rem; background: var(--rule); margin-bottom: 1.6rem; }
+    .section p { max-width: 46rem; color: var(--text); }
+
+    .feature-list { list-style: none; padding: 0; margin: 2.4rem 0 0; display: grid; gap: 1.5rem; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); }
+    .feature-list li { border-left: 2px solid var(--rule); padding: 0.2rem 0 0.2rem 1.1rem; }
+    .feature-list h3 { margin: 0 0 0.4rem; font-size: 1.05rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text); }
     .feature-list p { margin: 0; color: var(--text-muted); }
     .todo { color: var(--text-muted); font-style: italic; }
 
-    footer { border-top: 1px solid var(--border); }
-    footer .section { padding: 2rem var(--pad); color: var(--text-muted); font-size: 0.85rem; }
+    footer { border-top: 1px solid var(--border); background: var(--surface); }
+    footer .foot { max-width: var(--maxw); margin: 0 auto; padding: 2rem var(--pad); color: var(--text-muted); font-size: 0.85rem; }
 
     /* ── Auth card (dialog) ── */
     dialog#authCard {
-      width: min(28rem, 92vw); border: 1px solid var(--border);
-      border-radius: var(--radius); padding: 0;
-      background: var(--surface-raised); color: var(--text);
+      width: min(29rem, 92vw); border: 1px solid var(--rule); border-radius: 3px;
+      padding: 0; background: var(--surface-raised); color: var(--text);
+      box-shadow: 0 0 0 1px color-mix(in srgb, var(--rule) 30%, transparent), 0 24px 60px rgba(0,0,0,0.5);
     }
-    dialog#authCard::backdrop { background: rgba(0, 0, 0, 0.5); }
-    .card-inner { padding: 1.75rem; position: relative; }
+    dialog#authCard::backdrop { background: rgba(6, 7, 10, 0.7); backdrop-filter: blur(2px); }
+    .card-inner { padding: 2rem; position: relative; }
     .card-close {
-      position: absolute; top: 0.75rem; right: 0.75rem;
+      position: absolute; top: 0.6rem; right: 0.6rem;
+      width: 44px; height: 44px; display: grid; place-items: center;
       background: transparent; border: none; color: var(--text-muted);
-      font-size: 1.4rem; line-height: 1; cursor: pointer; padding: 0.25rem 0.5rem;
+      font-size: 1.5rem; line-height: 1; cursor: pointer; border-radius: 2px;
     }
-    .card-inner h2 { font-size: 1.35rem; margin: 0 0 1.25rem; }
-    .field { display: grid; gap: 0.3rem; margin-bottom: 1rem; }
-    .field label { font-size: 0.9rem; font-weight: 600; }
-    .field .help { font-size: 0.8rem; color: var(--text-muted); }
+    .card-close:hover { color: var(--accent); }
+    .card-inner h2 { font-size: 1.3rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--accent); margin: 0 0 0.3rem; }
+    .card-inner h2 + .rule { height: 2px; width: 3rem; background: var(--rule); margin-bottom: 1.4rem; }
+    .field { display: grid; gap: 0.35rem; margin-bottom: 1rem; }
+    .field label { font-size: 0.8rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); }
+    .field .help { font-size: 0.78rem; color: var(--text-muted); }
     .field input {
-      font: inherit; padding: 0.6rem 0.7rem; border-radius: 8px;
+      font: inherit; padding: 0.65rem 0.75rem; border-radius: 2px;
       border: 1px solid var(--border); background: var(--surface); color: var(--text);
+      min-height: 44px;
     }
+    .field input:focus-visible { border-color: var(--accent); outline: 2px solid var(--focus); outline-offset: 1px; }
     .field input[aria-invalid="true"] { border-color: var(--danger); }
     .pw-wrap { position: relative; display: flex; }
-    .pw-wrap input { flex: 1; padding-right: 3.5rem; }
+    .pw-wrap input { flex: 1; padding-right: 4rem; }
     .pw-toggle {
-      position: absolute; right: 0.35rem; top: 50%; transform: translateY(-50%);
-      font: inherit; font-size: 0.8rem; background: transparent;
-      border: none; color: var(--link); cursor: pointer; padding: 0.3rem 0.5rem;
+      position: absolute; right: 0.3rem; top: 50%; transform: translateY(-50%);
+      min-height: 38px; padding: 0 0.6rem; font: inherit; font-size: 0.78rem;
+      background: transparent; border: none; color: var(--link); cursor: pointer;
     }
-    .status { min-height: 1.2em; margin: 0.25rem 0 1rem; color: var(--text); font-size: 0.9rem; }
-    .card-footer { margin-top: 0.5rem; font-size: 0.9rem; color: var(--text-muted); }
-    .switch-face { font: inherit; background: none; border: none; color: var(--link); cursor: pointer; padding: 0; text-decoration: underline; }
+    .status { min-height: 1.2em; margin: 0.4rem 0 1rem; color: var(--text); font-size: 0.88rem; }
+    .card-footer { margin-top: 0.6rem; font-size: 0.88rem; color: var(--text-muted); }
+    .switch-face {
+      font: inherit; background: none; border: none; color: var(--link);
+      cursor: pointer; padding: 0.2rem; text-decoration: underline; text-underline-offset: 3px;
+    }
+    .switch-face:hover { color: var(--text); }
+    .card-inner .btn { width: 100%; margin-top: 0.3rem; }
     form[hidden] { display: none; }
 
-    /* ── Reduced motion: kill parallax residue, the cue bounce, smooth scroll ── */
+    /* ── Reduced motion: kill all the entrance + idle animation, keep layout ── */
     @media (prefers-reduced-motion: reduce) {
       html { scroll-behavior: auto; }
+      .hero h1, .tagline, .subline, .divider, .cta-row { animation: none; opacity: 1; transform: none; }
+      .divider { transform: scaleX(1); }
       .scroll-cue { animation: none; }
       .layer { transition: none; }
       * { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; }
     }
 
-    /* ── Mobile (spec §10) ── */
+    /* ── Mobile ── */
     @media (max-width: 640px) {
-      .hero h1 { font-size: 2.2rem; }
-      .cta-row { flex-direction: column; }
-      .cta-row .btn { width: 100%; justify-content: center; }
-      .section { padding: 3rem var(--pad); }
-      dialog#authCard { width: 92vw; }
+      .wordmark { font-size: 0.8rem; letter-spacing: 0.15em; }
+      .cta-row { flex-direction: column; width: 100%; }
+      .cta-row .btn { width: 100%; }
+      .header-actions .btn.secondary#headerSignup { display: none; }  /* keep header light on small screens */
+      .card-inner { padding: 1.5rem; }
     }
   </style>
 </head>
 
 <body>
-  <a class="skip" href="#about">Skip to about</a>
+  <a class="skip" href="#about">Skip to content</a>
 
   <header class="site-header">
-    <span class="wordmark">A Virtual Tabletop</span>
+    <span class="wordmark no-select">A Virtual Tabletop</span>
     <div class="header-actions">
-      <button id="themeToggle" class="btn icon" type="button" aria-label="Switch to dark theme">
+      <button id="themeToggle" class="btn icon" type="button" aria-label="Switch to light theme">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
           <circle cx="12" cy="12" r="5"></circle>
           <path d="M12 1v2M12 21v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M1 12h2M21 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4"></path>
         </svg>
       </button>
-      <button id="headerLogin" class="btn secondary" type="button">Log in</button>
-      <a id="headerDash" class="btn secondary" href="/dashboard.html" hidden>Dashboard</a>
+      <button id="headerSignup" class="btn secondary no-select" type="button">Sign up</button>
+      <button id="headerLogin" class="btn secondary no-select" type="button">Log in</button>
+      <a id="headerDash" class="btn secondary no-select" href="/dashboard.html" hidden>Dashboard</a>
     </div>
   </header>
 
   <main>
     <section class="hero">
       <div id="heroLayers" class="hero-layers" aria-hidden="true">
-        <img class="layer" src="/assets/layer-back.svg"  alt="" data-depth="0.1" width="1600" height="900" decoding="async">
-        <img class="layer" src="/assets/layer-mid.svg"   alt="" data-depth="0.3" width="1600" height="900" decoding="async">
-        <img class="layer" src="/assets/layer-front.svg" alt="" data-depth="0.6" width="1600" height="900" decoding="async">
-      </div>
+        <div class="layer back"  data-depth="0.1"></div>
+        <div class="layer mid"   data-depth="0.3"></div>
+        <div class="layer front" data-depth="0.6"></div>      </div>
       <div class="scrim"></div>
 
       <div class="hero-inner">
-        <h1>A Virtual Tabletop</h1>
-        <p class="tagline">Maps, tokens, fog and dice — one shared table in the browser.</p>
-        <p class="subline">An undergraduate thesis — Department of Informatics, Ionian University.</p>
+        <h1 class="no-select">Jump into your fantastical worlds</h1>
+        <div class="divider" aria-hidden="true"></div>
+        <p class="tagline no-select">Maps, tokens, fog and dice — one shared table, right in the browser.</p>
+        <p class="subline no-select">An undergraduate thesis · Department of Informatics · Ionian University</p>
 
         <div id="ctaRow" class="cta-row">
-          <button id="ctaSignup" class="btn primary" type="button">Create an account</button>
-          <button id="ctaLogin" class="btn secondary" type="button">Log in</button>
-          <a id="ctaContinue" class="btn primary" href="/dashboard.html" hidden>Continue</a>
-          <button id="ctaLogout" class="btn secondary" type="button" hidden>Log out</button>
+          <!-- One big CTA. Signed out: "Log in". Signed in: "Continue as {name}".
+               ctaSignup/ctaLogout are wired for the state machine but not primary
+               here; the header carries sign-up. landing.js toggles these. -->
+          <button id="ctaLogin" class="btn primary no-select" type="button">Log in to jump in</button>
+          <a id="ctaContinue" class="btn primary no-select" href="/dashboard.html" hidden>Continue</a>
+          <button id="ctaSignup" class="btn secondary no-select" type="button" hidden>Create an account</button>
+          <button id="ctaLogout" class="btn secondary no-select" type="button" hidden>Log out</button>
         </div>
       </div>
 
-      <a class="scroll-cue" href="#about" aria-label="Scroll to learn more">⌄</a>
+      <a class="scroll-cue" href="#about" aria-label="Scroll to learn more"></a>
     </section>
 
     <section id="about" class="section">
-      <h2>What this is</h2>
+      <h2 class="no-select">What this is</h2>
+      <div class="rule" aria-hidden="true"></div>
       <p>A real-time virtual tabletop for small groups: a game master and up to seven
       players share campaigns — scenes and tokens on a gridded map, fog of war,
       characters and inventories, an initiative strip, dice, and chat with whispers.
@@ -260,7 +376,8 @@
     </section>
 
     <section id="thesis" class="section">
-      <h2>The thesis</h2>
+      <h2 class="no-select">The thesis</h2>
+      <div class="rule" aria-hidden="true"></div>
       <p>This application is the artefact of an undergraduate thesis at the
       <a href="https://di.ionio.gr/en/" target="_blank" rel="noopener">Department of Informatics, Ionian University</a>:
       building a server-authoritative real-time application — authentication and session
@@ -269,7 +386,8 @@
     </section>
 
     <section id="license" class="section">
-      <h2>Licence &amp; source</h2>
+      <h2 class="no-select">Licence &amp; source</h2>
+      <div class="rule" aria-hidden="true"></div>
       <p>The source code is available
       <a href="https://github.com/AlexandrosMpakodimos/vtt" target="_blank" rel="noopener">on GitHub</a>
       and released under the <span class="todo">[TODO: licence]</span> licence.</p>
@@ -277,7 +395,7 @@
   </main>
 
   <footer>
-    <div class="section">
+    <div class="foot">
       Alexandros Mpakodimos · Ionian University, Department of Informatics · 2026 ·
       <a href="https://github.com/AlexandrosMpakodimos/vtt" target="_blank" rel="noopener">Source on GitHub</a> ·
       <span class="todo">[TODO: licence]</span>
@@ -292,6 +410,7 @@
       <!-- Sign up -->
       <form id="formSignup" hidden novalidate>
         <h2 id="suHeading">Create an account</h2>
+        <div class="rule" aria-hidden="true"></div>
         <div class="field">
           <label for="suEmail">Email</label>
           <input id="suEmail" type="email" autocomplete="email" maxlength="254" required>
@@ -309,7 +428,7 @@
           </div>
           <span class="help">8–64 characters — that's the only rule.</span>
         </div>
-        <p id="suStatus" class="status" role="status"></p>
+        <p id="suStatus" class="status" role="status" aria-live="polite"></p>
         <button id="suSubmit" class="btn primary" type="submit">Create account</button>
         <button id="suResend" class="btn secondary" type="button" hidden>Resend verification email</button>
         <p class="card-footer">Have an account?
@@ -320,6 +439,7 @@
       <!-- Log in -->
       <form id="formLogin" hidden novalidate>
         <h2 id="liHeading">Log in</h2>
+        <div class="rule" aria-hidden="true"></div>
         <div class="field">
           <label for="liEmail">Email</label>
           <input id="liEmail" type="email" autocomplete="email" maxlength="254" required>
@@ -331,7 +451,7 @@
             <button class="pw-toggle" type="button" aria-controls="liPassword" aria-pressed="false">Show</button>
           </div>
         </div>
-        <p id="liStatus" class="status" role="status"></p>
+        <p id="liStatus" class="status" role="status" aria-live="polite"></p>
         <button id="liSubmit" class="btn primary" type="submit">Log in</button>
         <button id="liResend" class="btn secondary" type="button" hidden>Resend verification email</button>
         <p class="card-footer">
@@ -344,11 +464,12 @@
       <!-- Forgot -->
       <form id="formForgot" hidden novalidate>
         <h2 id="fpHeading">Reset your password</h2>
+        <div class="rule" aria-hidden="true"></div>
         <div class="field">
           <label for="fpEmail">Email</label>
           <input id="fpEmail" type="email" autocomplete="email" maxlength="254" required>
         </div>
-        <p id="fpStatus" class="status" role="status"></p>
+        <p id="fpStatus" class="status" role="status" aria-live="polite"></p>
         <button id="fpSubmit" class="btn primary" type="submit">Send reset link</button>
         <p class="card-footer">
           <button class="switch-face" type="button" data-face="formLogin">Back to log in</button>
@@ -358,6 +479,7 @@
       <!-- Reset -->
       <form id="formReset" hidden novalidate>
         <h2 id="rpHeading">Set a new password</h2>
+        <div class="rule" aria-hidden="true"></div>
         <div class="field">
           <label for="rpPassword">New password</label>
           <div class="pw-wrap">
@@ -366,7 +488,7 @@
           </div>
           <span class="help">8–64 characters — that's the only rule.</span>
         </div>
-        <p id="rpStatus" class="status" role="status"></p>
+        <p id="rpStatus" class="status" role="status" aria-live="polite"></p>
         <button id="rpSubmit" class="btn primary" type="submit">Set new password</button>
         <p class="card-footer">
           <button id="rpLoginSwitch" class="switch-face" type="button" data-face="formLogin" hidden>Log in now</button>

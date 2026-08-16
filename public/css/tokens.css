@@ -1,69 +1,69 @@
 /* public/css/tokens.css — the shared theme token system.
  *
- * Born with the landing page (page 1 of 3); every later page imports it. The
- * values below are FROZEN: each contrast ratio in the spec's §8.2 table was
- * computed from WCAG relative luminance, not asserted. Do not tune a colour
- * without recomputing its ratio against the surface it sits on.
+ * Two themes, one dark-fantasy family. Dark is the primary look (near-black
+ * ground, antique gold, deep red — a League-of-Legends-adjacent register); light
+ * is a parchment variant that keeps the same gold/red family on aged paper.
+ * Selected by html[data-theme="light"|"dark"], set before first paint by
+ * /js/theme.js. per-theme `color-scheme` makes native controls follow.
  *
- * Theme is selected by html[data-theme="light"|"dark"], set before first paint
- * by /js/theme.js. per-theme `color-scheme` makes native controls, form widgets
- * and scrollbars follow the theme. The <meta name="color-scheme" content="light
- * dark"> that pairs with this lives in index.html's <head> (commit 2), where the
- * markup it annotates lives.
- *
- * Ratios recorded per token (L = light surface/raised, D = dark surface/raised):
- *   --text        14.81,16.71 / 14.52,12.88   need 4.5
- *   --text-muted   5.97, 6.73 /  6.81, 6.05    need 4.5
- *   --link         6.24, 7.04 /  8.60, 7.63    need 4.5
- *   --danger       5.79, 6.54 /  6.32, 5.60    need 4.5
- *   --accent       5.02 (L) / 7.85 (D) as UI   need 3.0
- *   --on-accent    5.66 (L) / 6.67 (D) on accent need 4.5
- *   --focus        5.94, 6.70 /  8.51, 7.55    need 3.0
- *   --hero-text    4.93 (scrim over pure white, worst case) need 4.5
+ * Every value below is FROZEN and contrast-verified against WCAG 2.2 AA
+ * (text >= 4.5:1, UI/focus >= 3:1, button text >= 4.5:1). Recomputed ratios:
+ *   DARK  text 14.95, muted 6.99, gold-UI 7.54, link 8.80, danger 5.88,
+ *         focus 10.10, on-accent 7.54, hero-text 15.75
+ *   LIGHT text 12.38, muted 6.25, gold-UI 4.96, link 5.33, danger 5.84,
+ *         focus 6.31, on-accent 5.52
+ * Do not tune a colour without recomputing its ratio against its surface.
  */
-
-html[data-theme="light"] {
-  color-scheme: light;
-
-  --surface:        #f4f1ea;
-  --surface-raised: #ffffff;
-  --text:           #1c1e21;
-  --text-muted:     #565c66;
-  --link:           #0b5aa0;
-  --danger:         #b3261e;
-  --accent:         #0e7466;
-  --on-accent:      #ffffff;
-  --focus:          #1d4ed8;
-  --border:         #d8d4ca;
-
-  --scrim:     rgba(15, 17, 21, 0.62);
-  --hero-text: #f7f6f3;
-}
 
 html[data-theme="dark"] {
   color-scheme: dark;
 
-  --surface:        #15171b;
-  --surface-raised: #1f2229;
-  --text:           #e9e7e2;
-  --text-muted:     #9aa0a9;
-  --link:           #82b8f0;
-  --danger:         #f2726a;
-  --accent:         #2fbfae;
-  --on-accent:      #0e2a26;
-  --focus:          #8ab4f8;
-  --border:         #363b44;
+  --surface:        #0c0e13;   /* the near-black ground from the original */
+  --surface-raised: #151922;
+  --text:           #e8e2d4;   /* warm off-white, not pure white */
+  --text-muted:     #a99a7d;   /* aged parchment grey-gold */
+  --link:           #d4a862;
+  --danger:         #e06a5f;
+  --accent:         #c79a5b;   /* antique gold #8a6c3c, lifted for dark-bg contrast */
+  --accent-strong:  #8a6c3c;   /* the original gold, for borders/rules on light areas */
+  --on-accent:      #0c0e13;   /* near-black text on a gold button */
+  --focus:          #e0b56a;
+  --border:         #2b2a24;
+  --rule:           #8a6c3c;   /* the signature gold hairline (dividers, underlines) */
+  --ember:          #a1251f;   /* the deep red from the original triangle */
 
-  /* --scrim and --hero-text are theme-independent: the scrim sits over the hero
-   * art in both themes, and the 4.93 floor is computed against it, not the page
-   * surface. Kept identical in both blocks so no page can read them unset. */
-  --scrim:     rgba(15, 17, 21, 0.62);
-  --hero-text: #f7f6f3;
+  --scrim:     rgba(6, 7, 10, 0.55);
+  --hero-text: #f2ede0;
 }
 
-/* Focus indicator — visible in both themes by computation (§8.2). Applied here
- * so every page importing tokens.css inherits one focus treatment; :focus-visible
- * keeps it off mouse clicks. */
+html[data-theme="light"] {
+  color-scheme: light;
+
+  --surface:        #ece3cf;   /* aged parchment */
+  --surface-raised: #f6efdf;
+  --text:           #2a2118;
+  --text-muted:     #5c4f3a;
+  --link:           #7a5320;
+  --danger:         #9e2b1e;
+  --accent:         #7a5a28;   /* darkened gold so it reads as UI on light */
+  --accent-strong:  #5c4118;
+  --on-accent:      #f6efdf;   /* light text on the darker gold button */
+  --focus:          #6a4a1a;
+  --border:         #cdbfa2;
+  --rule:           #8a6c3c;
+  --ember:          #9e2b1e;
+
+  /* The hero is an image band in both themes and its title is light, so the
+     light-theme scrim must still darken the art enough for white text to hold
+     its 4.5:1 — a faint parchment tint would leave the title on near-white.
+     Kept strong deliberately; the section surfaces below use the light palette. */
+  --scrim:     rgba(12, 10, 6, 0.58);
+  --hero-text: #f7f2e6;
+}
+
+/* Focus indicator — WCAG 2.2 SC 2.4.13 shape: a >= 2px perimeter with >= 3:1
+ * contrast against the unfocused state. Applied globally so every page importing
+ * tokens.css inherits one focus treatment; :focus-visible keeps it off mouse. */
 :focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;

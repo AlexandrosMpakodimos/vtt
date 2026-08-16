@@ -230,6 +230,7 @@
 
     // Openers.
     bindOpen('headerLogin', 'formLogin');
+    bindOpen('headerSignup', 'formSignup');
     bindOpen('ctaLogin', 'formLogin');
     bindOpen('ctaSignup', 'formSignup');
 
@@ -420,8 +421,9 @@
   }
 
   function signedIn(user) {
-    swap('headerLogin', 'headerDash');
-    // CTA row: show Continue + Logout, hide signup/login.
+    // Header: hide both auth buttons, show Dashboard.
+    hide('headerLogin'); hide('headerSignup'); reveal('headerDash');
+    // CTA row: the one big button becomes "Continue as {name}"; Log out beside it.
     hide('ctaSignup'); hide('ctaLogin');
     reveal('ctaContinue'); reveal('ctaLogout');
     var cont = $('ctaContinue');
@@ -436,18 +438,20 @@
   }
 
   function signedOut() {
-    swap('headerDash', 'headerLogin');
-    reveal('ctaSignup'); reveal('ctaLogin');
+    // Header: show both auth buttons, hide Dashboard.
+    hide('headerDash'); reveal('headerLogin'); reveal('headerSignup');
+    // CTA row: one big "Log in to jump in"; signup lives in the header now.
+    reveal('ctaLogin'); hide('ctaSignup');
     hide('ctaContinue'); hide('ctaLogout');
-    var su = $('ctaSignup');
-    if (su && typeof su.focus === 'function' && document.activeElement === $('ctaLogout')) su.focus();
+    var li = $('ctaLogin');
+    if (li && typeof li.focus === 'function' && document.activeElement === $('ctaLogout')) li.focus();
   }
 
   // Show one element, hide the other (header auth control is exactly one).
   function swap(hideId, showId) { hide(hideId); reveal(showId); }
 
   // ── 6. Parallax (spec §7) ──────────────────────────────────────────────────
-  var K = 28;   // px; front layer (depth 0.6) moves at most ±16.8 px
+  var K = 18;   // px; front layer (depth 0.6) moves at most ±10.8 px — kept well
 
   function initParallax() {
     window.VTTLanding.parallaxActive = false;
@@ -457,38 +461,62 @@
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
     if (window.matchMedia('(hover: none)').matches) return;
 
-    var hero = $('heroLayers');
-    if (!hero) return;
-    var layers = hero.querySelectorAll('.layer');
+    var layerBox = $('heroLayers');
+    if (!layerBox) return;
+    var layers = layerBox.querySelectorAll('.layer');
     if (!layers.length) return;
 
-    var nx = 0, ny = 0, scheduled = false;
+    var hero = (layerBox.closest && layerBox.closest('.hero')) || layerBox;
 
-    function apply() {
-      scheduled = false;
+    // Target (where the mouse points) and current (smoothed) offsets. The layers
+    // ease toward the target every frame, so motion is always fluid and there is
+    // no snap. We track the mouse on `window`, not the hero, and NEVER recenter
+    // when it leaves — crossing the hero edge or the scrollbar gutter used to
+    // fire pointerleave and snap back to centre, which was the jitter. Now the
+    // parallax simply holds/adjusts wherever the mouse is, on-screen or not.
+    var tX = 0, tY = 0;   // target, normalized -1..1
+    var cX = 0, cY = 0;   // current, smoothed
+    var running = false;
+
+    function frame() {
+      // ease current toward target
+      cX += (tX - cX) * 0.12;
+      cY += (tY - cY) * 0.12;
       for (var i = 0; i < layers.length; i++) {
         var d = clampDepth(layers[i].getAttribute('data-depth'));
-        var tx = (-nx * d * K).toFixed(2);
-        var ty = (-ny * d * K).toFixed(2);
-        layers[i].style.transform = 'translate3d(' + tx + 'px,' + ty + 'px,0)';
+        var tx = (-cX * d * K).toFixed(2);
+        var ty = (-cY * d * K).toFixed(2);
+        layers[i].style.transform = 'translate3d(' + tx + 'px,' + ty + 'px,0) scale(1.06)';
+      }
+      // keep animating until we've essentially reached the target
+      if (Math.abs(tX - cX) > 0.001 || Math.abs(tY - cY) > 0.001) {
+        window.requestAnimationFrame(frame);
+      } else {
+        running = false;
       }
     }
+    function kick() { if (!running) { running = true; window.requestAnimationFrame(frame); } }
 
-    hero.addEventListener('pointermove', function (e) {
-      var rect = hero.getBoundingClientRect();
+    var rect = hero.getBoundingClientRect();
+    var refreshRect = function () { rect = hero.getBoundingClientRect(); };
+    window.addEventListener('resize', refreshRect);
+    window.addEventListener('scroll', refreshRect, { passive: true });
+
+    function onMove(e) {
+      if (e.pointerType && e.pointerType !== 'mouse') return;
       var cx = rect.left + rect.width / 2;
       var cy = rect.top + rect.height / 2;
-      nx = rect.width ? (e.clientX - cx) / (rect.width / 2) : 0;
-      ny = rect.height ? (e.clientY - cy) / (rect.height / 2) : 0;
-      if (nx < -1) nx = -1; else if (nx > 1) nx = 1;
-      if (ny < -1) ny = -1; else if (ny > 1) ny = 1;
-      if (!scheduled) { scheduled = true; window.requestAnimationFrame(apply); }
-    });
+      var nx = rect.width ? (e.clientX - cx) / (rect.width / 2) : 0;
+      var ny = rect.height ? (e.clientY - cy) / (rect.height / 2) : 0;
+      // Clamp so the effect saturates but never overshoots, even far off-hero.
+      tX = nx < -1 ? -1 : nx > 1 ? 1 : nx;
+      tY = ny < -1 ? -1 : ny > 1 ? 1 : ny;
+      kick();
+    }
 
-    hero.addEventListener('pointerleave', function () {
-      nx = 0; ny = 0;
-      if (!scheduled) { scheduled = true; window.requestAnimationFrame(apply); }
-    });
+    // Global listener: the parallax follows the mouse anywhere on the page and
+    // does not reset when the pointer leaves the hero or hits the scrollbar.
+    window.addEventListener('pointermove', onMove, { passive: true });
 
     window.VTTLanding.parallaxActive = true;
   }

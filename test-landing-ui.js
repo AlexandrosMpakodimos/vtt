@@ -113,6 +113,8 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     + 'liPassword liStatus liSubmit liResend liForgot formForgot fpHeading fpEmail '
     + 'fpStatus fpSubmit formReset rpHeading rpPassword rpStatus rpSubmit about thesis license').split(/\s+/);
   for (const id of MANIFEST) t(`#${id} present`, document.getElementById(id) !== null);
+  // Redesign added a top-right Sign up button; it opens the signup face.
+  t('#headerSignup present', document.getElementById('headerSignup') !== null);
 
   // structure the parallax + card rely on
   t('#heroLayers is aria-hidden', document.getElementById('heroLayers').getAttribute('aria-hidden') === 'true');
@@ -141,23 +143,69 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   t('parallaxActive === false under reduced motion', V.parallaxActive === false);
   t('no pointermove listener attached under reduced motion', listenerRec.pointermove === false);
 
-  // ── auth card: open via CTA, correct face, focus first field, Esc closes ────
-  const ctaSignup = document.getElementById('ctaSignup');
-  ctaSignup.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
-  t('CTA signup -> showModal recorded', window.__showModalCalls === 1, `calls=${window.__showModalCalls}`);
-  t('CTA signup -> sign-up face visible', !document.getElementById('formSignup').hasAttribute('hidden'));
-  t('CTA signup -> other faces hidden',
+  // ── parallax ACTIVE path: when motion is allowed and a hover pointer exists,
+  //    the pointermove listener must attach to an element that actually receives
+  //    pointer events — NOT #heroLayers, which is pointer-events:none. (The
+  //    original bug: listener on the layers meant the parallax never fired.) ────
+  {
+    const d = new JSDOM(fs.readFileSync('public/index.html', 'utf8'),
+      { runScripts: 'outside-only', url: 'http://localhost:3000/' });
+    const w = d.window;
+    // permissive matchMedia: motion allowed, real hover pointer
+    w.matchMedia = (q) => ({ matches: false, media: q, addEventListener(){}, removeEventListener(){}, addListener(){}, removeListener(){} });
+    w.requestAnimationFrame = (cb) => w.setTimeout(cb, 0);
+    // record which element the pointermove listener lands on
+    let pmTarget = null;
+    const proto = w.EventTarget.prototype;
+    const orig = proto.addEventListener;
+    proto.addEventListener = function (type, ...rest) {
+      if (type === 'pointermove' && !pmTarget) pmTarget = this;
+      return orig.call(this, type, ...rest);
+    };
+    const dlg = w.document.getElementById('authCard');
+    if (dlg) { dlg.showModal = function () { this.open = true; }; dlg.close = function () { this.open = false; }; }
+    w.fetch = async () => ({ status: 401, json: async () => ({}) });
+    w.eval(fs.readFileSync('public/js/theme.js', 'utf8'));
+    w.eval(fs.readFileSync('public/js/landing.js', 'utf8'));
+    w.document.dispatchEvent(new w.Event('DOMContentLoaded', { bubbles: true }));
+    t('motion allowed -> parallaxActive true', w.VTTLanding.parallaxActive === true);
+    t('parallax listener attaches (pointermove seen)', pmTarget !== null);
+    t('parallax listener target is NOT the pointer-events:none layers box',
+      pmTarget !== w.document.getElementById('heroLayers'),
+      pmTarget && pmTarget.id);
+    t('parallax listener is global (window) so it tracks the mouse everywhere and never recenters',
+      pmTarget === w || pmTarget === w.document || (pmTarget && pmTarget.nodeType === 9),
+      pmTarget && (pmTarget.toString ? pmTarget.toString() : typeof pmTarget));
+  }
+
+  // ── signed-out default: header shows both auth buttons; the one big CTA is
+  //    "Log in", not the old two-button pair (redesign) ────────────────────────
+  t('signed-out: headerSignup + headerLogin visible',
+    !document.getElementById('headerSignup').hasAttribute('hidden')
+    && !document.getElementById('headerLogin').hasAttribute('hidden'));
+  t('signed-out: ctaLogin is the visible hero CTA',
+    !document.getElementById('ctaLogin').hasAttribute('hidden'));
+  t('signed-out: ctaContinue + ctaLogout hidden',
+    document.getElementById('ctaContinue').hasAttribute('hidden')
+    && document.getElementById('ctaLogout').hasAttribute('hidden'));
+
+  // ── auth card: open via the header Sign up button, correct face, focus, Esc ──
+  const signupOpener = document.getElementById('headerSignup');
+  signupOpener.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  t('Sign up -> showModal recorded', window.__showModalCalls === 1, `calls=${window.__showModalCalls}`);
+  t('Sign up -> sign-up face visible', !document.getElementById('formSignup').hasAttribute('hidden'));
+  t('Sign up -> other faces hidden',
     document.getElementById('formLogin').hasAttribute('hidden')
     && document.getElementById('formForgot').hasAttribute('hidden')
     && document.getElementById('formReset').hasAttribute('hidden'));
-  t('CTA signup -> focus on first field (suEmail)', document.activeElement === document.getElementById('suEmail'));
+  t('Sign up -> focus on first field (suEmail)', document.activeElement === document.getElementById('suEmail'));
   t('aria-labelledby tracks the visible face heading',
     document.getElementById('authCard').getAttribute('aria-labelledby') === 'suHeading');
 
   // Esc (cancel event) closes and returns focus to the invoker.
   document.getElementById('authCard').dispatchEvent(new window.Event('cancel', { cancelable: true }));
   t('Esc/cancel -> card closed', document.getElementById('authCard').open === false);
-  t('Esc/cancel -> focus back on invoker (ctaSignup)', document.activeElement === ctaSignup);
+  t('Esc/cancel -> focus back on invoker (headerSignup)', document.activeElement === signupOpener);
 
   // ── login: 200 -> navigate('/dashboard.html') ───────────────────────────────
   {
