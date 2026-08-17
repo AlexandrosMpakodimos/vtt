@@ -76,6 +76,15 @@
     initAuthCard(resetState);
     initSessionCheck();
     initParallax();
+
+    // Enable theme-crossfade transitions only AFTER the first paint, so the
+    // initial theme (set by theme.js before paint) applies instantly with no
+    // flash. From here, toggling the theme animates smoothly.
+    window.requestAnimationFrame(function () {
+      window.requestAnimationFrame(function () {
+        document.documentElement.classList.add('theme-ready');
+      });
+    });
   }
 
   // ── 1. Theme toggle + live system follow (spec §8.3) ───────────────────────
@@ -134,6 +143,13 @@
       out = { open: true, token: params.get('reset'), error: false };
     } else if (params.get('reset_error') === '1') {
       out = { open: true, token: null, error: true };
+    } else if (params.has('verified')) {
+      // Email-verification link redirected here: open the login face with a
+      // relevant message. 'verified=1' = success; anything else = invalid/expired.
+      out = { open: true, verified: params.get('verified') === '1' ? 'ok' : 'invalid' };
+    } else if (params.has('email_changed')) {
+      // Email-CHANGE confirmation link redirected here.
+      out = { open: true, emailChanged: params.get('email_changed') };
     }
 
     if (out.open) {
@@ -204,6 +220,18 @@
   function setStatus(id, msg) {
     var el = $(id);
     if (el) el.textContent = msg;   // server strings rendered verbatim, never as HTML
+  }
+
+  // Like setStatus, but re-triggers a brief pulse animation every call — even if
+  // the text is identical — so re-submitting (e.g. a second forgot-password
+  // request) gives visible feedback that something happened.
+  function flashStatus(id, msg) {
+    var el = $(id);
+    if (!el) return;
+    el.textContent = msg;
+    el.classList.remove('flash');
+    void el.offsetWidth;            // force reflow so the animation restarts
+    el.classList.add('flash');
   }
 
   function reveal(id) { var el = $(id); if (el) el.removeAttribute('hidden'); }
@@ -281,11 +309,36 @@
     // Reset link landed us here (spec §5): open on the reset face last, after
     // wiring, so the form handlers are live.
     if (resetState && resetState.open) {
-      resetToken = resetState.token;   // may be null on the error path
-      openCard('formReset', null);
-      if (resetState.error) {
-        setStatus('rpStatus', 'That reset link is invalid or has expired.');
-        reveal('rpForgotSwitch');
+      if (resetState.verified) {
+        // Arrived from the email-verification link — show the login form with
+        // the outcome so the user knows to log in (or that the link failed).
+        openCard('formLogin', null);
+        if (resetState.verified === 'ok') {
+          setStatus('liStatus', 'Email verified — you can log in now.');
+        } else {
+          setStatus('liStatus', 'That verification link is invalid or has expired. Try logging in, or request a new link.');
+        }
+      } else if (resetState.emailChanged) {
+        // Arrived from the email-CHANGE confirmation link.
+        openCard('formLogin', null);
+        var ec = resetState.emailChanged;
+        var ecMsg = ec === '1'
+          ? 'Your email address has been changed — log in with your new email.'
+          : ec === 'taken'
+            ? 'That address was taken before you confirmed. Request the email change again.'
+            : ec === 'nothing'
+              ? 'There is no pending email change for this account.'
+              : 'That email-change link is invalid or has expired. Please request it again.';
+        setStatus('liStatus', ecMsg);
+      } else {
+        // Reset link (spec §5): open on the reset face last, after wiring, so
+        // the form handlers are live.
+        resetToken = resetState.token;   // may be null on the error path
+        openCard('formReset', null);
+        if (resetState.error) {
+          setStatus('rpStatus', 'That reset link is invalid or has expired.');
+          reveal('rpForgotSwitch');
+        }
       }
     }
   }
@@ -365,7 +418,9 @@
           email: valueOf('fpEmail'),
         }).then(function (r) {
           // Uniform response by design — no enumeration, whatever the status.
-          setStatus('fpStatus', (r.data && r.data.message) || serverError(r));
+          // flashStatus (not setStatus) so re-submitting re-pulses the message
+          // even though the text is identical — visible feedback each time.
+          flashStatus('fpStatus', (r.data && r.data.message) || serverError(r));
         }).catch(function () { setStatus('fpStatus', NETWORK_ERROR); });
       });
     });
@@ -380,7 +435,14 @@
           password: valueOf('rpPassword'),
         }).then(function (r) {
           if (r.status === 200) {
-            setStatus('rpStatus', (r.data && r.data.message) || 'Password reset.');
+            setStatus('rpStatus', (r.data && r.data.message) || 'Password changed. You can log in now.');
+            // Lock the form: the change succeeded, so the field becomes
+            // read-only and submit is disabled. The show/hide toggle still works
+            // (so they can confirm what they set), and "Log in now" is offered.
+            var pw = $('rpPassword');
+            if (pw) { pw.readOnly = true; }
+            if (btn) { btn.disabled = true; }
+            hide('rpBackToLogin');   // avoid two identical "log in" links
             reveal('rpLoginSwitch');
           } else {
             setStatus('rpStatus', serverError(r));
@@ -408,7 +470,16 @@
   function valueOf(id) { var el = $(id); return el ? el.value : ''; }
   function clearFields(ids) { for (var i = 0; i < ids.length; i++) { var el = $(ids[i]); if (el) el.value = ''; } }
   function serverError(r) {
-    if (r && r.data && typeof r.data.error === 'string') return r.data.error;
+    if (r && r.data && typeof r.data.error === 'string') {
+      var msg = r.data.error;
+      // Present the breach/common-password rejection as "too weak" rather than
+      // exposing that it matched a breach corpus — friendlier and less alarming.
+      // Matched on a stable substring so minor server-wording changes still map.
+      if (/common|breach/i.test(msg)) {
+        return 'That password is too weak — please choose a stronger, less common one.';
+      }
+      return msg;
+    }
     return NETWORK_ERROR;
   }
 
