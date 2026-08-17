@@ -262,6 +262,27 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     t('register 201 -> #suResend visible', !doc4.getElementById('suResend').hasAttribute('hidden'));
   }
 
+  // ── register: server breach/common rejection is shown as "too weak", not raw ─
+  {
+    const d4b = makeDom(); const w4b = d4b.window; const doc4b = w4b.document;
+    stubFetch(w4b, (call) => {
+      if (/\/api\/auth\/register$/.test(call.path)) {
+        return { status: 400, data: { error: 'password is too common or has appeared in a data breach' } };
+      }
+      return { status: 401, data: {} };
+    });
+    evalScripts(w4b);
+    doc4b.getElementById('suEmail').value = 'a@b.com';
+    doc4b.getElementById('suUsername').value = 'someone';
+    doc4b.getElementById('suPassword').value = 'password';
+    doc4b.getElementById('formSignup').dispatchEvent(new w4b.Event('submit', { cancelable: true, bubbles: true }));
+    await wait(20);
+    const shown = doc4b.getElementById('suStatus').textContent;
+    t('breach error -> shown as "too weak"', /too weak/i.test(shown), shown);
+    t('breach error -> does NOT expose "breach"/"data breach" to the user',
+      !/breach/i.test(shown), shown);
+  }
+
   // ── ?reset= flow: card opens on reset face, replaceState to /, POST carries token
   {
     const d5 = makeDom('http://localhost:3000/?reset=abc123'); const w5 = d5.window; const doc5 = w5.document;
@@ -287,6 +308,28 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
       rp && JSON.stringify(rp.body));
   }
 
+  // ── ?verified= flow: verify-email link redirects here -> login face + message ─
+  {
+    const d6 = makeDom('http://localhost:3000/?verified=1'); const w6 = d6.window; const doc6 = w6.document;
+    let replaced6 = null;
+    const origR6 = w6.history.replaceState.bind(w6.history);
+    w6.history.replaceState = (s, ti, url) => { replaced6 = url; return origR6(s, ti, url); };
+    stubFetch(w6, () => ({ status: 401, data: {} }));
+    evalScripts(w6);
+    await wait(5);
+    t('?verified=1 -> login face visible', !doc6.getElementById('formLogin').hasAttribute('hidden'));
+    t('?verified=1 -> success message in #liStatus', /verified/i.test(doc6.getElementById('liStatus').textContent));
+    t("?verified=1 -> replaceState landed on '/'", replaced6 === '/', String(replaced6));
+
+    const d7 = makeDom('http://localhost:3000/?verified=invalid'); const w7 = d7.window; const doc7 = w7.document;
+    stubFetch(w7, () => ({ status: 401, data: {} }));
+    evalScripts(w7);
+    await wait(5);
+    t('?verified=invalid -> login face visible', !doc7.getElementById('formLogin').hasAttribute('hidden'));
+    t('?verified=invalid -> invalid/expired message in #liStatus',
+      /invalid|expired/i.test(doc7.getElementById('liStatus').textContent));
+  }
+
   // ── source-level probes ─────────────────────────────────────────────────────
   const themeSrc = fs.readFileSync('public/js/theme.js', 'utf8');
   const landingSrc = fs.readFileSync('public/js/landing.js', 'utf8');
@@ -300,12 +343,21 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     !/<script(?![^>]*\ssrc=)[^>]*>/.test(htmlSrc));
   t('index.html has no on<event>= handler attribute', !/\son[a-z]+=/.test(htmlSrc));
 
-  // Theme-aware hero art: dark theme uses the night set (default), light theme
-  // overrides to the day set. Both must be wired or the toggle won't swap the art.
-  t('hero art defaults to the night set (dark theme)',
-    /\.layer\.back\s*\{[^}]*layer-back-night\.jpg/.test(htmlSrc));
-  t('light theme overrides hero art to the day set',
-    /html\[data-theme="light"\]\s*\.layer\.back\s*\{[^}]*layer-back\.jpg/.test(htmlSrc));
+  // Theme-aware hero art with crossfade. Two overlays (night on ::before, day on
+  // ::after) so transparent mid/front layers don't leak the other theme through
+  // clear pixels — but WITHOUT will-change on them (that promotion caused Chrome's
+  // compositor to desync tiles during rapid toggles, the rectangular-band glitch).
+  t('night art is on the ::before overlay (dark default)',
+    /\.layer\.back::before\s*\{[^}]*layer-back-night\.jpg/.test(htmlSrc));
+  t('day art is on the ::after overlay, shown in light theme',
+    /\.layer\.back::after\s*\{[^}]*layer-back\.jpg/.test(htmlSrc)
+    && /html\[data-theme="light"\][^{]*\.layer::after\s*\{[^}]*opacity:\s*1/.test(htmlSrc));
+  t('crossfade overlays are NOT GPU-promoted (no will-change/backface)',
+    !/\.layer::before,\s*\.layer::after\s*\{[^}]*will-change/.test(htmlSrc));
+  t('hero art crossfades on theme change (opacity transition on the overlays)',
+    /\.theme-ready\s+\.layer::before,\s*\.theme-ready\s+\.layer::after\s*\{[^}]*transition:\s*opacity/.test(htmlSrc));
+  t('UI colours also transition on theme change (global .theme-ready rule)',
+    /\.theme-ready\s+\*\s*\{[^}]*transition:[^}]*color/.test(htmlSrc));
 
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);

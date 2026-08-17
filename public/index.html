@@ -57,6 +57,28 @@
       -webkit-font-smoothing: antialiased;
     }
 
+    /* Smooth theme crossfade. Only applies AFTER first paint (.theme-ready is
+       added by landing.js on the next frame), so the initial theme is set
+       instantly with no flash — the transition is for user toggles only.
+
+       Applied GLOBALLY (every element) rather than a hand-picked list, because a
+       list always leaves gaps: some theme-coloured elements (rules, taglines,
+       feature borders, status text) were snapping instantly while others faded,
+       which read as glitchy in Chrome. Only colour properties transition — never
+       layout — and transform/opacity are excluded so the parallax and the art
+       crossfade keep their own timing. box-shadow is deliberately NOT transitioned
+       (it caused Chrome repaint jank). */
+    .theme-ready * {
+      transition: background-color 0.7s ease, color 0.7s ease, border-color 0.7s ease;
+    }
+    /* Buttons keep their faster hover feedback; combine both so theme change and
+       hover don't clobber each other's transition declaration. */
+    .theme-ready .btn {
+      transition: background-color 0.7s ease, color 0.7s ease, border-color 0.7s ease, box-shadow 0.2s var(--ease);
+    }
+    /* The art crossfade and the effects fade keep their own opacity transitions. */
+    .theme-ready .rays, .theme-ready .embers { transition: opacity 0.6s ease; }
+
     /* Chrome/labels/wordmark/CTA text are not meant to be selected — they are UI,
        not content. Body copy (about/thesis) stays selectable. */
     .no-select { user-select: none; -webkit-user-select: none; }
@@ -142,25 +164,57 @@
     .hero-layers { position: absolute; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; }
     /* Layers are full-bleed background-image divs, not <img>: background-size:cover
        always fills the hero at any viewport aspect ratio and can never expose a
-       top/bottom edge (the failure mode of object-fit on a sized <img>). The
-       extra scale() gives overscan headroom for the parallax translate. */
+       top/bottom edge. The scale() gives overscan headroom for the parallax
+       translate (the parallax JS writes translate3d(...) scale(1.06) each frame).
+
+       Theme-aware art with a CROSSFADE: background-image can't be transitioned,
+       so each layer carries the NIGHT image as its base and the DAY image on a
+       ::before overlay, and we fade the overlay opacity on theme change. Both
+       images are always loaded, so the crossfade is smooth. The .theme-ready
+       gate (added by JS after first paint) keeps the initial load instant. */
+    /* Theme-aware art with a CROSSFADE that works with TRANSPARENT layers.
+       The mid/front layers have alpha (keyed party/foliage), so a single overlay
+       over an image base would let the base show through the overlay's clear
+       pixels (the campfire from the night mid layer bled into the day theme).
+       Fix: the .layer div carries NO image — it only holds the parallax transform.
+       Night art is on ::before, day art on ::after, both full-bleed overlays that
+       crossfade by opacity. Neither "shows through" the other's transparency. */
     .layer {
-      position: absolute; inset: -4%;              /* bleed past all edges */
-      background-size: cover; background-position: center 42%;
-      background-repeat: no-repeat;
-      transform: translate3d(0, 0, 0) scale(1.06); /* overscan for parallax travel */
+      position: absolute; inset: -4%;
+      transform: translate3d(0, 0, 0) scale(1.06);
       will-change: transform;
     }
-    /* Theme-aware hero art: the LIGHT theme shows the daytime scene, the DARK
-       theme shows the same scene at night (campfire + moonlight). Same three
-       layers, same composition — the toggle reads as one place, two times of day.
-       Defaults below are the dark/night set (dark is the primary theme). */
-    .layer.back  { background-image: url("/assets/layer-back-night.jpg"); }
-    .layer.mid   { background-image: url("/assets/layer-mid-night.webp"); }
-    .layer.front { background-image: url("/assets/layer-front-night.webp"); }
-    html[data-theme="light"] .layer.back  { background-image: url("/assets/layer-back.jpg"); }
-    html[data-theme="light"] .layer.mid   { background-image: url("/assets/layer-mid.webp"); }
-    html[data-theme="light"] .layer.front { background-image: url("/assets/layer-front.webp"); }
+    /* Two overlays hold night (::before) and day (::after) art. The day overlay's
+       opacity toggles INSTANTLY on theme change — NOT crossfaded. Crossfading two
+       large background-images made Chrome blend them tile-by-tile, showing as
+       horizontal bands mid-fade (Safari was fine; Chrome was not). An instant swap
+       can't band. The smooth feel comes from the UI colours transitioning; the
+       art simply changes with them. Two overlays (not one) keep the transparent
+       mid/front layers from leaking the other theme through their clear pixels. */
+    .layer::before, .layer::after {
+      content: ""; position: absolute; inset: 0;
+      background-size: cover; background-position: center 42%; background-repeat: no-repeat;
+    }
+    .layer::before { opacity: 1; }
+    .layer::after  { opacity: 0; }
+    html[data-theme="light"] .layer::before { opacity: 0; }
+    html[data-theme="light"] .layer::after  { opacity: 1; }
+
+    .layer.back::before  { background-image: url("/assets/layer-back-night.jpg"); }
+    .layer.mid::before   { background-image: url("/assets/layer-mid-night.webp"); }
+    .layer.front::before { background-image: url("/assets/layer-front-night.webp"); }
+    .layer.back::after  { background-image: url("/assets/layer-back.jpg"); }
+    .layer.mid::after   { background-image: url("/assets/layer-mid.webp"); }
+    .layer.front::after { background-image: url("/assets/layer-front.webp"); }
+
+    /* The day overlay crossfades in/out on theme change. A slower fade (0.9s) gives
+       Chrome's compositor more time per frame, which markedly reduces (though can't
+       fully eliminate) the tile-banding that fast image crossfades can show there;
+       Safari is clean. Only applies after first paint (.theme-ready), so the
+       initial theme is set instantly with no flash. */
+    .theme-ready .layer::before, .theme-ready .layer::after {
+      transition: opacity 0.9s ease;
+    }
     /* Vignette + scrim: darken toward the edges and bottom so the title reads,
        without hiding the art. Two stacked gradients, no flat overlay. */
     .scrim {
@@ -304,6 +358,20 @@
     .section > h2 + .rule { height: 2px; width: 4rem; background: var(--rule); margin-bottom: 1.6rem; }
     .section p { max-width: 46rem; color: var(--text); }
 
+    /* Thesis section: seal beside the text. The seal is single-colour line art,
+       rendered as a CSS mask filled with a theme colour — always legible in both
+       themes (gold-brown, following --accent-strong), never black-on-black or
+       white-on-white. A masked <span role="img"> keeps it accessible. */
+    .thesis-body { display: flex; align-items: flex-start; gap: 2rem; flex-wrap: wrap; }
+    .thesis-body p { flex: 1; min-width: 18rem; margin: 0; }
+    .ionio-seal {
+      flex: none; width: 132px; height: 132px; display: block;
+      background-color: var(--accent-strong);
+      -webkit-mask: url("/assets/ionio-seal.png") center / contain no-repeat;
+      mask: url("/assets/ionio-seal.png") center / contain no-repeat;
+    }
+    @media (max-width: 640px) { .ionio-seal { width: 104px; height: 104px; } }
+
     .feature-list { list-style: none; padding: 0; margin: 2.4rem 0 0; display: grid; gap: 1.5rem; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); }
     .feature-list li { border-left: 2px solid var(--rule); padding: 0.2rem 0 0.2rem 1.1rem; }
     .feature-list h3 { margin: 0 0 0.4rem; font-size: 1.05rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text); }
@@ -348,6 +416,14 @@
       background: transparent; border: none; color: var(--link); cursor: pointer;
     }
     .status { min-height: 1.2em; margin: 0.4rem 0 1rem; color: var(--text); font-size: 0.88rem; }
+    /* Re-submit feedback: a brief pulse so an identical status message visibly
+       re-appears (e.g. requesting a reset for a second email). */
+    .status.flash { animation: statusFlash 0.55s ease; }
+    @keyframes statusFlash {
+      0% { opacity: 0.25; transform: translateY(-2px); }
+      100% { opacity: 1; transform: none; }
+    }
+    @media (prefers-reduced-motion: reduce) { .status.flash { animation: none; } }
     .card-footer { margin-top: 0.6rem; font-size: 0.88rem; color: var(--text-muted); }
     .switch-face {
       font: inherit; background: none; border: none; color: var(--link);
@@ -470,11 +546,13 @@
     <section id="thesis" class="section">
       <h2 class="no-select">The thesis</h2>
       <div class="rule" aria-hidden="true"></div>
-      <p>This application is the artefact of an undergraduate thesis at the
-      <a href="https://di.ionio.gr/en/" target="_blank" rel="noopener">Department of Informatics, Ionian University</a>:
-      building a server-authoritative real-time application — authentication and session
-      management, authorisation boundaries, and validation at every input.</p>
-      <p class="todo">[TODO] Departmental seal pending a vector version and approval for use on a public site. Text attribution only until then.</p>
+      <div class="thesis-body">
+        <span class="ionio-seal" role="img" aria-label="Seal of the Ionian University"></span>
+        <p>This application is the artefact of an undergraduate thesis at the
+        <a href="https://di.ionio.gr/en/" target="_blank" rel="noopener">Department of Informatics, Ionian University</a>:
+        building a server-authoritative real-time application — authentication and session
+        management, authorisation boundaries, and validation at every input.</p>
+      </div>
     </section>
 
     <section id="license" class="section">
@@ -518,7 +596,7 @@
             <input id="suPassword" type="password" autocomplete="new-password" minlength="8" maxlength="64" required>
             <button class="pw-toggle" type="button" aria-controls="suPassword" aria-pressed="false">Show</button>
           </div>
-          <span class="help">8–64 characters — that's the only rule.</span>
+          <span class="help">Must be 8–64 characters long.</span>
         </div>
         <p id="suStatus" class="status" role="status" aria-live="polite"></p>
         <button id="suSubmit" class="btn primary" type="submit">Create account</button>
@@ -578,14 +656,14 @@
             <input id="rpPassword" type="password" autocomplete="new-password" minlength="8" maxlength="64" required>
             <button class="pw-toggle" type="button" aria-controls="rpPassword" aria-pressed="false">Show</button>
           </div>
-          <span class="help">8–64 characters — that's the only rule.</span>
+          <span class="help">Must be 8–64 characters long.</span>
         </div>
         <p id="rpStatus" class="status" role="status" aria-live="polite"></p>
         <button id="rpSubmit" class="btn primary" type="submit">Set new password</button>
         <p class="card-footer">
           <button id="rpLoginSwitch" class="switch-face" type="button" data-face="formLogin" hidden>Log in now</button>
           <button id="rpForgotSwitch" class="switch-face" type="button" data-face="formForgot" hidden>Request a new link</button>
-          <button class="switch-face" type="button" data-face="formLogin">Back to log in</button>
+          <button id="rpBackToLogin" class="switch-face" type="button" data-face="formLogin">Back to log in</button>
         </p>
       </form>
     </div>
