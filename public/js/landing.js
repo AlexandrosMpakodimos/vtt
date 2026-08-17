@@ -522,7 +522,7 @@
   function swap(hideId, showId) { hide(hideId); reveal(showId); }
 
   // ── 6. Parallax (spec §7) ──────────────────────────────────────────────────
-  var K = 18;   // px; front layer (depth 0.6) moves at most ±10.8 px — kept well
+  var K = 32;   // px; front layer (depth 0.6) moves at most ±19.2 px — well within overscan
 
   function initParallax() {
     window.VTTLanding.parallaxActive = false;

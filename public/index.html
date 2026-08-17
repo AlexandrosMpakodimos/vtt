@@ -87,6 +87,20 @@
 
     a { color: var(--link); text-decoration: none; }
     main a:not(.btn) { text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 1px; }
+
+    /* Global keyboard-focus indicator. Every interactive element gets a clear,
+       consistent 2px outline in the theme's focus colour (WCAG 2.2 SC 2.4.7 Focus
+       Visible, 2.4.13 Focus Appearance) rather than relying on the browser default,
+       which is inconsistent and low-contrast on this custom palette. The offset
+       keeps the ring clear of the element so it stays visible (2.4.11). Uses
+       :focus-visible so it shows for keyboard/AT users, not on mouse click. */
+    :focus-visible {
+      outline: 2px solid var(--focus);
+      outline-offset: 2px;
+      border-radius: 2px;
+    }
+    /* Buttons already have a border-radius; match the ring to it. */
+    .btn:focus-visible { outline-offset: 3px; }
     main a:not(.btn):hover { color: var(--text); }
 
     /* Skip link — first focusable, appears on focus (WCAG bypass block). */
@@ -195,6 +209,10 @@
       content: ""; position: absolute; inset: 0;
       background-size: cover; background-position: center 42%; background-repeat: no-repeat;
     }
+    /* The night source images sit ~23px (2.56%) higher than the day ones (the
+       generations weren't pixel-aligned), so the night ::before layers are nudged
+       down to match — otherwise the scene visibly jumps vertically on theme swap. */
+    .layer::before { background-position: center 45%; }
     .layer::before { opacity: 1; }
     .layer::after  { opacity: 0; }
     html[data-theme="light"] .layer::before { opacity: 0; }
@@ -241,36 +259,41 @@
     /* ── Atmospheric effects ── */
     .fx { position: absolute; inset: 0; z-index: 1; pointer-events: none; overflow: hidden; }
 
-    /* God-rays: soft angled light beams from the top-centre sun. LIGHT theme only. */
-    .rays { position: absolute; inset: -10% 0 auto 0; height: 90%; opacity: 0; }
-    html[data-theme="light"] .rays { opacity: 0.85; }
+    /* God-rays fanning out from the sun at top-centre. LIGHT theme only. A
+       repeating-conic-gradient centred on the sun makes the beams radiate from a
+       point (not parallel streaks), masked to fade with distance so they look like
+       shafts of sunlight breaking downward through the canopy. */
+    .rays { position: absolute; inset: 0; z-index: 1; opacity: 0; overflow: hidden; }
+    html[data-theme="light"] .rays { opacity: 1; }
     .rays::before, .rays::after {
-      content: ""; position: absolute; top: -20%; left: 50%; width: 140%; height: 130%;
-      transform-origin: top center; mix-blend-mode: screen;
+      content: ""; position: absolute;
+      /* Anchor the cone's apex at the sun: top-centre of the hero. */
+      top: -60%; left: 50%; width: 220%; height: 200%;
+      transform: translateX(-50%); transform-origin: 50% 0%;
+      mix-blend-mode: screen; pointer-events: none;
     }
     .rays::before {
-      transform: translateX(-50%) rotate(-8deg);
-      background: repeating-linear-gradient(100deg,
-        transparent 0 42px,
-        color-mix(in srgb, #fff6d8 55%, transparent) 46px,
-        transparent 52px 96px);
-      -webkit-mask: radial-gradient(120% 80% at 50% 0%, #000 0%, transparent 72%);
-      mask: radial-gradient(120% 80% at 50% 0%, #000 0%, transparent 72%);
-      animation: rayDrift 14s ease-in-out infinite alternate;
+      background: repeating-conic-gradient(from 180deg at 50% 0%,
+        transparent 0deg 3deg,
+        color-mix(in srgb, #fff4cf 70%, transparent) 4deg 6deg,
+        transparent 7deg 12deg);
+      /* fade the beams out toward the bottom and sides so they read as light shafts */
+      -webkit-mask: radial-gradient(90% 85% at 50% 0%, #000 8%, transparent 68%);
+      mask: radial-gradient(90% 85% at 50% 0%, #000 8%, transparent 68%);
+      animation: rayDrift 16s ease-in-out infinite alternate;
     }
     .rays::after {
-      transform: translateX(-50%) rotate(6deg);
-      background: repeating-linear-gradient(84deg,
-        transparent 0 60px,
-        color-mix(in srgb, #fff1c4 40%, transparent) 64px,
-        transparent 72px 132px);
-      -webkit-mask: radial-gradient(120% 80% at 50% 0%, #000 0%, transparent 68%);
-      mask: radial-gradient(120% 80% at 50% 0%, #000 0%, transparent 68%);
-      animation: rayDrift 19s ease-in-out infinite alternate-reverse;
+      background: repeating-conic-gradient(from 180deg at 50% 0%,
+        transparent 0deg 5deg,
+        color-mix(in srgb, #ffe6a8 55%, transparent) 6deg 8deg,
+        transparent 9deg 18deg);
+      -webkit-mask: radial-gradient(80% 75% at 50% 0%, #000 6%, transparent 62%);
+      mask: radial-gradient(80% 75% at 50% 0%, #000 6%, transparent 62%);
+      animation: rayDrift 23s ease-in-out infinite alternate-reverse;
     }
     @keyframes rayDrift {
-      from { opacity: 0.5; transform: translateX(-52%) rotate(-9deg); }
-      to   { opacity: 0.9; transform: translateX(-48%) rotate(-6deg); }
+      from { opacity: 0.55; transform: translateX(-50%) rotate(-2.5deg); }
+      to   { opacity: 1;    transform: translateX(-50%) rotate(2.5deg); }
     }
 
     /* Floating embers rising from the campfire (bottom-centre). DARK theme only. */
@@ -278,34 +301,37 @@
     html[data-theme="dark"] .embers { opacity: 1; }
     .embers span {
       position: absolute; bottom: 20%; left: 50%;
-      width: 5px; height: 5px; border-radius: 50%;
+      width: var(--s, 5px); height: var(--s, 5px); border-radius: 50%;
       background: radial-gradient(circle, #fff0c0 0%, #ffab4d 40%, #ff8a2c 60%, transparent 72%);
       box-shadow: 0 0 8px 3px color-mix(in srgb, #ffab4d 75%, transparent),
                   0 0 16px 6px color-mix(in srgb, #ff8a2c 35%, transparent);
       opacity: 0; will-change: transform, opacity;
-      animation: emberRise 6s ease-in infinite;
+      animation-name: emberRise; animation-iteration-count: infinite;
+      animation-timing-function: ease-in;
     }
     /* Wider horizontal spread so embers drift across the fire, not just straight up. */
-    .embers span:nth-child(1)  { left: 42%; animation-delay: 0s;   animation-duration: 5.5s; }
-    .embers span:nth-child(2)  { left: 55%; animation-delay: 0.9s; animation-duration: 6.2s; }
-    .embers span:nth-child(3)  { left: 48%; animation-delay: 1.8s; animation-duration: 5.8s; }
-    .embers span:nth-child(4)  { left: 58%; animation-delay: 2.6s; animation-duration: 6.6s; }
-    .embers span:nth-child(5)  { left: 40%; animation-delay: 3.3s; animation-duration: 5.2s; }
-    .embers span:nth-child(6)  { left: 52%; animation-delay: 0.4s; animation-duration: 7.0s; }
-    .embers span:nth-child(7)  { left: 46%; animation-delay: 2.1s; animation-duration: 6.0s; }
-    .embers span:nth-child(8)  { left: 60%; animation-delay: 4.0s; animation-duration: 5.6s; }
-    .embers span:nth-child(9)  { left: 44%; animation-delay: 1.2s; animation-duration: 6.8s; }
-    .embers span:nth-child(10) { left: 50%; animation-delay: 3.7s; animation-duration: 5.4s; }
-    .embers span:nth-child(11) { left: 38%; animation-delay: 2.9s; animation-duration: 6.4s; }
-    .embers span:nth-child(12) { left: 62%; animation-delay: 0.6s; animation-duration: 7.2s; }
+    .embers span:nth-child(1)  { left: 42%; --s: 4px; --sway: -26px; --rise: -380px; animation-delay: 0s;   animation-duration: 5.5s; }
+    .embers span:nth-child(2)  { left: 55%; --s: 6px; --sway:  34px; --rise: -460px; animation-delay: 0.9s; animation-duration: 6.9s; }
+    .embers span:nth-child(3)  { left: 48%; --s: 3px; --sway: -14px; --rise: -320px; animation-delay: 1.8s; animation-duration: 5.1s; }
+    .embers span:nth-child(4)  { left: 58%; --s: 7px; --sway:  22px; --rise: -500px; animation-delay: 2.6s; animation-duration: 7.6s; }
+    .embers span:nth-child(5)  { left: 40%; --s: 5px; --sway: -40px; --rise: -420px; animation-delay: 3.3s; animation-duration: 6.0s; }
+    .embers span:nth-child(6)  { left: 52%; --s: 4px; --sway:  16px; --rise: -350px; animation-delay: 0.4s; animation-duration: 5.8s; }
+    .embers span:nth-child(7)  { left: 46%; --s: 6px; --sway: -30px; --rise: -480px; animation-delay: 2.1s; animation-duration: 7.1s; }
+    .embers span:nth-child(8)  { left: 60%; --s: 3px; --sway:  44px; --rise: -300px; animation-delay: 4.0s; animation-duration: 5.3s; }
+    .embers span:nth-child(9)  { left: 44%; --s: 5px; --sway: -20px; --rise: -440px; animation-delay: 1.2s; animation-duration: 6.6s; }
+    .embers span:nth-child(10) { left: 50%; --s: 7px; --sway:  28px; --rise: -520px; animation-delay: 3.7s; animation-duration: 8.0s; }
+    .embers span:nth-child(11) { left: 38%; --s: 4px; --sway: -36px; --rise: -360px; animation-delay: 2.9s; animation-duration: 6.2s; }
+    .embers span:nth-child(12) { left: 62%; --s: 5px; --sway:  12px; --rise: -410px; animation-delay: 0.6s; animation-duration: 7.4s; }
+    /* Rise with a sideways sway: embers drift one way early, curve back later, and
+       rise to a per-ember height (--rise). Sizes, sway, height, delay and duration
+       all vary per span (below) so no two move alike. */
     @keyframes emberRise {
-      0%   { opacity: 0; transform: translate(-50%, 0) scale(0.5); }
-      10%  { opacity: 1; }
-      75%  { opacity: 0.85; }
-      100% { opacity: 0; transform: translate(calc(-50% + var(--drift, 12px)), -420px) scale(1.15); }
+      0%   { opacity: 0; transform: translate(-50%, 0) scale(0.4); }
+      12%  { opacity: 1; }
+      45%  { transform: translate(calc(-50% + var(--sway, 20px)), calc(var(--rise, -400px) * 0.45)) scale(1); }
+      78%  { opacity: 0.8; }
+      100% { opacity: 0; transform: translate(calc(-50% - var(--sway, 20px) * 0.4), var(--rise, -400px)) scale(1.2); }
     }
-    .embers span:nth-child(odd)  { --drift: -34px; }
-    .embers span:nth-child(even) { --drift: 40px; }
 
     .hero-inner { position: relative; z-index: 3; color: var(--hero-text); max-width: 54rem; }
     .hero h1 {
