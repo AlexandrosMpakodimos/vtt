@@ -29,7 +29,7 @@
 // storage is unconfigured.
 
 (function imagePickerModule() {
-  const KINDS = ['portrait', 'token', 'item', 'map', 'avatar'];
+  const KINDS = ['portrait', 'token', 'item', 'map', 'avatar', 'cover'];
 
   let root = null;
   let state = null;   // { campaignId, kind, onChoose }
@@ -154,7 +154,15 @@
     upBtn.addEventListener('click', () => doUpload(file, msg));
     linkBtn.addEventListener('click', () => doLink(link, msg));
     document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && root && root.back.classList.contains('on')) hide();
+      if (e.key === 'Escape' && root && root.back.classList.contains('on')) {
+        // Swallow the Escape so it closes ONLY the picker. Without this the same
+        // keypress would also reach the host <dialog> and fire its `cancel`,
+        // closing the dialog underneath. (common.js's openDialog cancel handler
+        // additionally checks isOpen() as a belt-and-braces buckle.)
+        e.preventDefault();
+        e.stopPropagation();
+        hide();
+      }
     });
 
     return { back, grid, msg, file, link };
@@ -297,6 +305,13 @@
       kind: KINDS.includes(opts.kind) ? opts.kind : 'portrait',
       onChoose: typeof opts.onChoose === 'function' ? opts.onChoose : null,
     };
+    // A <dialog> opened with showModal() lives in the browser's top layer, which
+    // sits above every normal-flow z-index. A fixed overlay on document.body
+    // would therefore render BEHIND the modal and be unclickable. So mount the
+    // picker inside the open dialog (also top layer) when there is one; fall
+    // back to <body> for pages that use the picker outside any dialog.
+    var host = document.querySelector('dialog[open]') || document.body;
+    if (root.back.parentNode !== host) host.appendChild(root.back);
     root.msg.textContent = '';
     root.link.value = '';
     root.file.value = '';
@@ -333,5 +348,10 @@
     return btn;
   }
 
-  window.VTTImagePicker = { open, attach, KINDS };
+  // Whether the picker overlay is currently shown. common.js's openDialog cancel
+  // handler consults this to decide whether an Escape belongs to the picker (so
+  // it should not also close the host dialog).
+  function isOpen() { return !!(root && root.back && root.back.classList.contains('on')); }
+
+  window.VTTImagePicker = { open, attach, KINDS, isOpen };
 }());

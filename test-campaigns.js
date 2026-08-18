@@ -110,6 +110,8 @@ const connected = (s) =>
   r = await gm.req('GET', `/api/campaigns/search?q=Private+Keep`);
   check('search finds the campaign', r.data.campaigns.some((c) => c.id === priv.id));
   check('search never leaks password_hash', !r.data.campaigns.some((c) => 'password_hash' in c));
+  const foundInSearch = r.data.campaigns.find((c) => c.id === priv.id);
+  check('search exposes owner_username', foundInSearch && foundInSearch.owner_username === gm.username, foundInSearch && foundInSearch.owner_username);
   r = await gm.req('GET', `/api/campaigns/search?q=%25`);
   check('search: bare % is escaped, not a wildcard', r.status === 200 && r.data.campaigns.length === 0, JSON.stringify(r.data.campaigns && r.data.campaigns.length));
   r = await gm.req('GET', `/api/campaigns/search?q=x'; DROP TABLE campaigns;--`);
@@ -278,6 +280,11 @@ const connected = (s) =>
   check('role=player excludes campaigns I own', !r.data.campaigns.some((c) => c.id === priv.id));
   r = await gm.req('GET', '/api/campaigns/mine?role=all');
   check('role=all returns both owned and joined', r.data.campaigns.some((c) => c.id === priv.id) && r.data.campaigns.some((c) => c.id === others.id));
+  // owner_username labels every card with whose game it is (a join on users).
+  const ownedCard = r.data.campaigns.find((c) => c.id === priv.id);
+  const joinedCard = r.data.campaigns.find((c) => c.id === others.id);
+  check('/mine exposes owner_username for an owned game (my name)', ownedCard && ownedCard.owner_username === gm.username, ownedCard && ownedCard.owner_username);
+  check('/mine exposes owner_username for a joined game (the GM\'s name)', joinedCard && joinedCard.owner_username === player2.username, joinedCard && joinedCard.owner_username);
 
   // ---------- archive: per-user, per-view ----------
   r = await gm.req('POST', `/api/campaigns/${others.id}/archive`);

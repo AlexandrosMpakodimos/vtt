@@ -77,6 +77,9 @@ function publicCampaign(c, viewerId) {
     is_open: c.is_open !== false,
     has_password: !!c.password_hash,
     is_gm: viewerId != null && c.owner_id === viewerId,
+    // The GM's display name, present only when the query joined users in (the
+    // list and search do; detail does not). Lets a card show whose game it is.
+    ...(c.owner_username !== undefined ? { owner_username: c.owner_username } : {}),
     active_scene_id: c.active_scene_id,
     settings: c.settings,
     created_at: c.created_at,
@@ -112,6 +115,7 @@ function searchResult(c) {
     is_public: c.is_public,
     is_open: c.is_open !== false,
     has_password: !!c.password_hash,
+    owner_username: c.owner_username,
     member_count: Number(c.member_count) || 0,
     created_at: c.created_at,
   };
@@ -234,6 +238,7 @@ router.get('/mine', async (req, res, next) => {
 
     const query = knex('campaigns as c')
       .join('campaign_members as m', 'm.campaign_id', 'c.id')
+      .join('users as owner', 'owner.id', 'c.owner_id')
       .where('m.user_id', req.user.id)
       .where('m.status', 'active')
       .whereNull('c.deleted_at');
@@ -247,7 +252,7 @@ router.get('/mine', async (req, res, next) => {
 
     const rows = await query
       .orderBy('c.updated_at', 'desc')
-      .select('c.*', 'm.archived_at'); // archived_at feeds the per-viewer `archived` flag
+      .select('c.*', 'm.archived_at', 'owner.username as owner_username'); // archived_at feeds the per-viewer `archived` flag; owner_username labels the card
 
     return res.json({ campaigns: rows.map((c) => publicCampaign(c, req.user.id)) });
   } catch (err) {
@@ -296,13 +301,14 @@ router.get('/search', async (req, res, next) => {
     if (visibility === 'private') query.where('c.is_public', false);
 
     const rows = await query
+      .join('users as owner', 'owner.id', 'c.owner_id')
       .leftJoin('campaign_members as m', function () {
         this.on('m.campaign_id', '=', 'c.id').andOnVal('m.status', '=', 'active');
       })
-      .groupBy('c.id')
+      .groupBy('c.id', 'owner.username')
       .orderBy('c.created_at', 'desc')
       .limit(limit)
-      .select('c.*', knex.raw('count(m.user_id) as member_count'));
+      .select('c.*', 'owner.username as owner_username', knex.raw('count(m.user_id) as member_count'));
 
     return res.json({ campaigns: rows.map(searchResult) });
   } catch (err) {
@@ -648,6 +654,17 @@ router.patch('/:id', requireOwner, async (req, res, next) => {
       .where({ id: req.campaign.id })
       .update(updates)
       .returning([...SAFE_COLUMNS, 'password_hash']);
+
+    // Tell the lobby when the table's open/closed state changed, so every
+    // dashboard watching this campaign flips its pill and Enter affordance
+    // without a refetch. Only on an is_open change — a rename or new cover is
+    // not a lobby concern. The game room is not told in this build (page 3).
+    if (updates.is_open !== undefined) {
+      req.app.get('campaignSockets')?.broadcastLobby(
+        req.campaign.id, 'campaign:state',
+        { campaign_id: req.campaign.id, is_open: updates.is_open },
+      );
+    }
 
     return res.json({ campaign: publicCampaign(row, req.user.id) });
   } catch (err) {

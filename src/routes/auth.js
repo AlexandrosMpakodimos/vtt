@@ -24,6 +24,7 @@ function publicUser(user) {
 const sha256 = (s) => crypto.createHash('sha256').update(s).digest('hex');
 
 async function issueVerificationEmail(user) {
+  // Invalidate earlier signup tokens for this user so only the newest link works.
   await knex('email_verification_tokens').where({ user_id: user.id, purpose: 'signup' }).del();
   const rawToken = crypto.randomBytes(32).toString('hex');
   await knex('email_verification_tokens').insert({
@@ -42,6 +43,7 @@ async function issueVerificationEmail(user) {
 }
 
 async function issuePasswordResetEmail(user) {
+  // Invalidate any earlier reset tokens so only the newest link works.
   await knex('password_reset_tokens').where({ user_id: user.id }).del();
   const rawToken = crypto.randomBytes(32).toString('hex');
   await knex('password_reset_tokens').insert({
@@ -58,12 +60,15 @@ async function issuePasswordResetEmail(user) {
   }
 }
 
+// Delete sessions belonging to a user (Passport stores the id in the session JSON).
+// Pass exceptSid to keep one alive — e.g. the user's current session on a password change.
 async function destroyUserSessions(trx, userId, exceptSid) {
   const q = trx('session').whereRaw("sess -> 'passport' ->> 'user' = ?", [userId]);
   if (exceptSid) q.andWhereNot('sid', exceptSid);
   await q.del();
 }
 
+// POST /api/auth/register — creates an UNVERIFIED account; does NOT log in.
 router.post('/register', async (req, res, next) => {
   try {
     const { email, username, password } = req.body || {};
@@ -87,6 +92,7 @@ router.post('/register', async (req, res, next) => {
 
     await issueVerificationEmail(user);
 
+    // No req.login here — they must verify, then log in.
     return res.status(201).json({
       message: 'Account created. Check your email to verify it before logging in.',
       user: publicUser(user),
@@ -97,6 +103,7 @@ router.post('/register', async (req, res, next) => {
   }
 });
 
+// POST /api/auth/login — blocked until the email is verified.
 router.post('/login', (req, res, next) => {
   if (req.body) req.body.email = normalizeEmail(req.body.email);
   passport.authenticate('local', (err, user, info) => {
@@ -112,6 +119,7 @@ router.post('/login', (req, res, next) => {
   })(req, res, next);
 });
 
+// POST /api/auth/resend-verification — generic response (no enumeration).
 router.post('/resend-verification', async (req, res, next) => {
   try {
     const email = normalizeEmail(req.body && req.body.email);
@@ -127,6 +135,7 @@ router.post('/resend-verification', async (req, res, next) => {
   }
 });
 
+// POST /api/auth/forgot-password — generic response (no enumeration).
 router.post('/forgot-password', async (req, res, next) => {
   try {
     const email = normalizeEmail(req.body && req.body.email);
@@ -201,6 +210,7 @@ router.get('/reset-password', async (req, res, next) => {
   }
 });
 
+// POST /api/auth/reset-password — validate token + new password, update it, log out everywhere.
 router.post('/reset-password', async (req, res, next) => {
   try {
     const { token, password } = req.body || {};
@@ -231,6 +241,7 @@ router.post('/reset-password', async (req, res, next) => {
   }
 });
 
+// PATCH /api/auth/me — update profile fields (username, avatar_url). Logged-in only.
 router.patch('/me', requireAuth, async (req, res, next) => {
   try {
     const body = req.body || {};
@@ -255,6 +266,8 @@ router.patch('/me', requireAuth, async (req, res, next) => {
         if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
           return res.status(400).json({ error: 'avatar_url must use http:// or https://' });
         }
+        // Store the normalized form: new URL() percent-encodes any HTML-significant
+        // characters (" < >), so a stored value can't break out of an attribute later.
         a = parsed.href;
       }
       updates.avatar_url = a || null;
@@ -272,11 +285,13 @@ router.patch('/me', requireAuth, async (req, res, next) => {
   }
 });
 
+// POST /api/auth/change-password — verify current password, set a new one, drop other sessions.
 router.post('/change-password', requireAuth, async (req, res, next) => {
   try {
     const { currentPassword, newPassword } = req.body || {};
     if (!currentPassword) return res.status(400).json({ error: 'currentPassword is required' });
 
+    // Re-authenticate: req.user has no hash (SAFE_COLUMNS), so fetch it.
     const row = await knex('users').where({ id: req.user.id }).first();
     const ok = row && (await verifyPassword(row.password_hash, currentPassword));
     if (!ok) return res.status(400).json({ error: 'current password is incorrect' });
@@ -293,6 +308,7 @@ router.post('/change-password', requireAuth, async (req, res, next) => {
     const password_hash = await hashPassword(p.value);
     await knex.transaction(async (trx) => {
       await trx('users').where({ id: req.user.id }).update({ password_hash });
+      // Keep this session; log out the user's other devices.
       await destroyUserSessions(trx, req.user.id, req.sessionID);
     });
 
@@ -303,6 +319,7 @@ router.post('/change-password', requireAuth, async (req, res, next) => {
 });
 
 async function issueEmailChangeEmail(user, newEmail) {
+  // Invalidate prior email-change tokens so only the newest change link works.
   await knex('email_verification_tokens').where({ user_id: user.id, purpose: 'email_change' }).del();
   const rawToken = crypto.randomBytes(32).toString('hex');
   await knex('email_verification_tokens').insert({
@@ -320,11 +337,13 @@ async function issueEmailChangeEmail(user, newEmail) {
   }
 }
 
+// POST /api/auth/change-email — request an email change; confirm link goes to the NEW address.
 router.post('/change-email', requireAuth, async (req, res, next) => {
   try {
     const { newEmail, currentPassword } = req.body || {};
     if (!currentPassword) return res.status(400).json({ error: 'currentPassword is required' });
 
+    // Re-authenticate: sensitive action, and req.user has no hash.
     const row = await knex('users').where({ id: req.user.id }).first();
     const ok = row && (await verifyPassword(row.password_hash, currentPassword));
     if (!ok) return res.status(400).json({ error: 'current password is incorrect' });
@@ -363,6 +382,7 @@ router.get('/verify-email-change', async (req, res, next) => {
       return res.redirect('/?email_changed=nothing');
     }
 
+    // The address may have been taken in the gap between request and confirmation.
     const taken = await knex('users').where({ email: user.pending_email }).whereNot({ id: user.id }).first();
     if (taken) {
       return res.redirect('/?email_changed=taken');

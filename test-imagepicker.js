@@ -64,8 +64,14 @@ console.log('\n--- the module loads and exposes its surface ---');
 t('VTTImagePicker is defined', !!P);
 t('open is a function', typeof P.open === 'function');
 t('attach is a function', typeof P.attach === 'function');
+// Compare against the SERVER's live allow-list rather than a hardcoded string,
+// so this stays correct as kinds are added (e.g. cover). The picker clamps
+// unknown kinds to 'portrait', so any divergence from the server would silently
+// break a real kind — hence asserting they are identical.
+const serverKinds = require('./src/services/storage.js').KINDS;
 t('the kinds match the server allow-list',
-  P.KINDS.join(',') === 'portrait,token,item,map,avatar', P.KINDS.join(','));
+  P.KINDS.slice().sort().join(',') === serverKinds.slice().sort().join(','),
+  `picker=[${P.KINDS.join(',')}] server=[${serverKinds.join(',')}]`);
 
 console.log('\n--- attach adds a button WITHOUT touching the page markup ---');
 // The picker builds its own DOM precisely so that pages covered by jsdom
@@ -212,6 +218,39 @@ t('...offering exactly the four allowed types',
   await new Promise((r) => setTimeout(r, 10));
   back.querySelector('.vttpick').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
   t('...but clicking the panel does NOT', back.classList.contains('on'));
+  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+
+  console.log('\n--- inside a modal dialog (top layer) ---');
+  // A <dialog> opened modally lives in the top layer; a fixed overlay on <body>
+  // would render behind it. The picker must mount INTO the open dialog instead,
+  // and isOpen() must report its state for the dialog's cancel buckle.
+  t('isOpen() is false before opening', P.isOpen() === false);
+  const dlg = document.createElement('dialog');
+  dlg.id = 'hostDialog';
+  document.body.appendChild(dlg);
+  dlg.setAttribute('open', '');   // jsdom has no showModal; [open] stands in
+  P.open({ campaignId: 'C1', kind: 'portrait', onChoose: () => {} });
+  await new Promise((r) => setTimeout(r, 10));
+  t('the picker mounts inside the open dialog, not <body>', back.parentNode === dlg,
+    back.parentNode && back.parentNode.tagName);
+  t('isOpen() is true while shown', P.isOpen() === true);
+  // Escape must close ONLY the picker; the host dialog stays open. We assert the
+  // keydown default is prevented (so the dialog's cancel is buckled) and the
+  // dialog is still open afterwards.
+  const escEvt = new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+  document.dispatchEvent(escEvt);
+  t('Escape closes the picker', back.classList.contains('on') === false);
+  t('...and its default was prevented (buckles the dialog cancel)', escEvt.defaultPrevented === true);
+  t('...leaving the host dialog open', dlg.hasAttribute('open') === true);
+  t('isOpen() is false again after close', P.isOpen() === false);
+  // A subsequent open with no dialog present falls back to <body>.
+  dlg.removeAttribute('open');
+  document.body.removeChild(dlg);
+  P.open({ campaignId: 'C1', kind: 'portrait', onChoose: () => {} });
+  await new Promise((r) => setTimeout(r, 10));
+  t('with no open dialog, the picker falls back to <body>', back.parentNode === document.body,
+    back.parentNode && back.parentNode.tagName);
+  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
 
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);

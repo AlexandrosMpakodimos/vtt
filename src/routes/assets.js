@@ -107,10 +107,12 @@ async function mayCreate({ userId, kind, campaignId }) {
     if (!member) return { ok: false };
   }
 
-  // A map is the board itself. Everything else is content a member may author
-  // for something they own, and the field-level checks on the actor, token and
-  // item routes still apply when the URL is actually assigned.
-  if (kind === 'map' && !isOwner) return { ok: false, forbidden: true };
+  // A map is the board itself; a cover is the campaign's banner. Both belong to
+  // the campaign as a whole, so only its owner (the GM) may author them.
+  // Everything else is content a member may author for something they own, and
+  // the field-level checks on the actor, token and item routes still apply when
+  // the URL is actually assigned.
+  if ((kind === 'map' || kind === 'cover') && !isOwner) return { ok: false, forbidden: true };
   return { ok: true, isOwner };
 }
 
@@ -137,7 +139,7 @@ router.post('/presign', requireStorage, async (req, res, next) => {
 
     const perm = await mayCreate({ userId: req.user.id, kind, campaignId });
     if (!perm.ok) {
-      if (perm.forbidden) return res.status(403).json({ error: 'only the GM may upload a map' });
+      if (perm.forbidden) return res.status(403).json({ error: `only the GM may upload a ${kind}` });
       return res.status(404).json({ error: 'campaign not found' });
     }
 
@@ -317,7 +319,7 @@ router.post('/external', async (req, res, next) => {
 
     const perm = await mayCreate({ userId: req.user.id, kind, campaignId });
     if (!perm.ok) {
-      if (perm.forbidden) return res.status(403).json({ error: 'only the GM may set a map' });
+      if (perm.forbidden) return res.status(403).json({ error: `only the GM may set a ${kind}` });
       return res.status(404).json({ error: 'campaign not found' });
     }
 

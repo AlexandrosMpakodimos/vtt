@@ -82,6 +82,7 @@ function evalScripts(window) {
   let err = null;
   try {
     window.eval(fs.readFileSync('public/js/theme.js', 'utf8'));
+    window.eval(fs.readFileSync('public/js/common.js', 'utf8'));
     window.eval(fs.readFileSync('public/js/landing.js', 'utf8'));
     // jsdom with runScripts:'outside-only' reports readyState 'loading' at eval
     // time, so landing.js registers a DOMContentLoaded listener and waits (in a
@@ -166,6 +167,7 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     if (dlg) { dlg.showModal = function () { this.open = true; }; dlg.close = function () { this.open = false; }; }
     w.fetch = async () => ({ status: 401, json: async () => ({}) });
     w.eval(fs.readFileSync('public/js/theme.js', 'utf8'));
+    w.eval(fs.readFileSync('public/js/common.js', 'utf8'));
     w.eval(fs.readFileSync('public/js/landing.js', 'utf8'));
     w.document.dispatchEvent(new w.Event('DOMContentLoaded', { bubbles: true }));
     t('motion allowed -> parallaxActive true', w.VTTLanding.parallaxActive === true);

@@ -135,6 +135,9 @@ const KIND_LIMITS = {
   token: 4 * 1024 * 1024,
   item: 2 * 1024 * 1024,
   avatar: 2 * 1024 * 1024,
+  // A campaign's cover banner on the dashboard. Sized like a portrait: a card
+  // image that needs more than a few megabytes is one nobody resized.
+  cover: 4 * 1024 * 1024,
 };
 
 const KINDS = Object.keys(KIND_LIMITS);

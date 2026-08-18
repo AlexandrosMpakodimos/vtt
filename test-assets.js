@@ -157,6 +157,16 @@ async function teardown(gm, pl) {
   }
   note('SVG', 'refused at the allow-list — R2 serves raw bytes, so a scriptable image would be stored XSS');
 
+  // The kind allow-list is shared by both routes; /external runs it without a
+  // bucket, so we can assert deterministically that `cover` is now a valid kind
+  // and that the rejection message enumerates it.
+  const badKindExt = await gm.req('POST', '/api/assets/external', {
+    kind: 'nonsense', campaign_id: camp.id, url: 'https://example.com/x.png',
+  });
+  t('external refuses an unknown kind (400)', badKindExt.status === 400, `${badKindExt.status}`);
+  t('...and the allow-list now includes cover',
+    typeof badKindExt.data.error === 'string' && /cover/.test(badKindExt.data.error), badKindExt.data.error);
+
   console.log('\n--- who may upload what ---');
   const playerMap = await pl.req('POST', '/api/assets/presign', {
     kind: 'map', campaign_id: camp.id, mime: 'image/png', bytes: 1024,
@@ -207,6 +217,20 @@ async function teardown(gm, pl) {
     (await pl.req('POST', '/api/assets/external', {
       kind: 'map', campaign_id: camp.id, url: 'https://example.com/map.png',
     })).status === 403);
+
+  // A campaign cover is the GM's banner: same owner-only rule as the map, and
+  // exercised through /external so it needs no bucket.
+  const gmCover = track(await gm.req('POST', '/api/assets/external', {
+    kind: 'cover', campaign_id: camp.id, url: 'https://example.com/cover.png',
+  }));
+  t('the GM may set a campaign cover by link', gmCover.status === 201, `${gmCover.status}`);
+  t('...recorded against the campaign', gmCover.data.asset.campaign_id === camp.id);
+  const plCover = await pl.req('POST', '/api/assets/external', {
+    kind: 'cover', campaign_id: camp.id, url: 'https://example.com/cover2.png',
+  });
+  t('a player cannot set a campaign cover', plCover.status === 403, `${plCover.status}`);
+  t('...and the refusal names the kind, not just "map"',
+    typeof plCover.data.error === 'string' && /cover/.test(plCover.data.error), plCover.data.error);
 
   console.log('\n--- avatars are personal, not campaign-scoped ---');
   const avatar = track(await pl.req('POST', '/api/assets/external', {

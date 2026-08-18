@@ -33,6 +33,10 @@ const {
 const { mayUseSceneFor, validUuid } = require('./services/sceneAccess');
 
 const roomName = (campaignId) => `campaign:${campaignId}`;
+// The lobby room is separate from the game room. A dashboard viewer joins
+// lobby:<id> to receive presence/state for a campaign WITHOUT joining
+// campaign:<id> (the game room), so they are never counted as "at the table".
+const lobbyName = (campaignId) => `lobby:${campaignId}`;
 
 function initSockets(io) {
   // user_id -> Set of socket ids. Lets a kick/ban evict a live socket, and lets
@@ -59,13 +63,52 @@ function initSockets(io) {
     let evicted = 0;
     for (const sid of ids) {
       const socket = io.sockets.sockets.get(sid);
-      if (!socket || !socket.rooms.has(roomName(campaignId))) continue;
+      if (!socket) continue;
+      // Remove the target from the LOBBY room too, and tell them there: a
+      // dashboard viewer who was kicked should see the card vanish even though
+      // they never joined the game room. The returned count still reflects only
+      // game-room evictions, so existing callers are unchanged.
+      if (socket.rooms.has(lobbyName(campaignId))) {
+        socket.emit('campaign:evicted', { campaign_id: campaignId, reason });
+        socket.leave(lobbyName(campaignId));
+      }
+      if (!socket.rooms.has(roomName(campaignId))) continue;
       socket.emit('campaign:evicted', { campaign_id: campaignId, reason });
       socket.leave(roomName(campaignId));
       evicted += 1;
     }
+    // Presence in this campaign's lobby has dropped by the evicted user.
+    pushPresence(campaignId);
     return evicted;
   }
+
+  // How many DISTINCT users have a socket in the campaign's GAME room. "At the
+  // table" means the game page, not the dashboard — lobby-only sockets are not
+  // counted. Reads socket.data.userId set at connection.
+  function onlineCount(campaignId) {
+    const room = io.sockets.adapter.rooms.get(roomName(campaignId));
+    if (!room) return 0;
+    const users = new Set();
+    for (const sid of room) {
+      const s = io.sockets.sockets.get(sid);
+      if (s && s.data && s.data.userId != null) users.add(s.data.userId);
+    }
+    return users.size;
+  }
+
+  // Tell everyone watching a campaign's lobby how many are now at the table.
+  function pushPresence(campaignId) {
+    io.to(lobbyName(campaignId)).emit('lobby:presence', {
+      campaign_id: campaignId, online: onlineCount(campaignId),
+    });
+  }
+
+  // Exported so HTTP routes can push a lobby event (PATCH /:id uses it for
+  // campaign:state). Mirrors broadcastToken's shape, scoped to the lobby room.
+  function broadcastLobby(campaignId, event, payload) {
+    io.to(lobbyName(campaignId)).emit(event, payload);
+  }
+
 
   // Push a token delta to everyone in a campaign room. Used by the HTTP token
   // routes (place / delete), which do the authoritative write and then hand the
@@ -191,6 +234,10 @@ function initSockets(io) {
     }
 
     track(user.id, socket.id);
+    // Presence counts DISTINCT users among a room's sockets, so each socket
+    // carries its user id where onlineCount can read it (a GM with two tabs is
+    // one person at the table).
+    socket.data.userId = user.id;
     console.log(`Socket connected: ${socket.id} (user: ${user.username})`);
 
     // One bad connection must never take the process down with it.
@@ -214,6 +261,8 @@ function initSockets(io) {
         socket.to(roomName(campaignId)).emit('campaign:user-joined', {
           campaign_id: campaignId, user_id: user.id, username: user.username,
         });
+        // Someone joined the game room: tell the campaign's lobby the new count.
+        pushPresence(campaignId);
         return respond({ ok: true, campaign_id: campaignId });
       } catch (err) {
         console.error('campaign:join failed:', err.message);
@@ -228,8 +277,41 @@ function initSockets(io) {
         socket.to(roomName(campaignId)).emit('campaign:user-left', {
           campaign_id: campaignId, user_id: user.id, username: user.username,
         });
+        // The leaver is gone from the table; refresh the lobby's count.
+        pushPresence(campaignId);
       }
       if (typeof ack === 'function') ack({ ok: true });
+    });
+
+    // Subscribe this socket to the lobby of every campaign the user belongs to.
+    // The server DERIVES the set from the database — the client supplies no ids,
+    // so there is nothing to validate and no id to leak. Idempotent: it first
+    // leaves any lobby rooms it is already in, so a re-subscribe after a list
+    // change simply reconciles to the current membership.
+    socket.on('lobby:subscribe', async (payload, ack) => {
+      const respond = (result) => { if (typeof ack === 'function') ack(result); };
+      try {
+        // Leave every lobby room this socket currently sits in.
+        for (const r of Array.from(socket.rooms)) {
+          if (typeof r === 'string' && r.indexOf('lobby:') === 0) socket.leave(r);
+        }
+        // The user's active memberships in campaigns that still exist.
+        const rows = await knex('campaign_members as m')
+          .join('campaigns as c', 'c.id', 'm.campaign_id')
+          .where('m.user_id', user.id)
+          .andWhere('m.status', 'active')
+          .whereNull('c.deleted_at')
+          .select('c.id');
+        const campaigns = [];
+        for (const row of rows) {
+          socket.join(lobbyName(row.id));
+          campaigns.push({ campaign_id: row.id, online: onlineCount(row.id) });
+        }
+        return respond({ ok: true, campaigns });
+      } catch (err) {
+        console.error('lobby:subscribe failed:', err.message);
+        return respond({ ok: false, error: 'subscribe failed' });
+      }
     });
 
     // token:move — the one high-frequency delta, sent ONCE on drop (not streamed
@@ -584,11 +666,28 @@ function initSockets(io) {
       }
     });
 
+    // `disconnecting` fires while socket.rooms STILL lists the rooms; capture the
+    // game rooms this socket is in so `disconnect` (after it has left them) can
+    // recompute and push presence for each. Lobby rooms need no push — a viewer
+    // leaving the lobby does not change who is at the table.
+    let leavingGameRooms = [];
+    socket.on('disconnecting', () => {
+      leavingGameRooms = [];
+      for (const r of socket.rooms) {
+        if (typeof r === 'string' && r.indexOf('campaign:') === 0) {
+          leavingGameRooms.push(r.slice('campaign:'.length));
+        }
+      }
+    });
+
     socket.on('disconnect', () => {
       // A disconnect is transient and says nothing about membership: the member
       // stays 'active' in the DB and walks straight back in on reconnect.
       // Only a deliberate leave/kick/ban changes status.
       untrack(user.id, socket.id);
+      // Now that this socket has left its rooms, the table count has dropped for
+      // any game room it was in — tell each of those campaigns' lobbies.
+      for (const campaignId of leavingGameRooms) pushPresence(campaignId);
       console.log('Client disconnected:', socket.id);
     });
   });
@@ -597,6 +696,10 @@ function initSockets(io) {
     evictUser, roomName, socketsByUser,
     broadcastToken, broadcastToOwner, broadcastToPlayers,
     broadcastScene, broadcastScenePlayers,
+    // §7 lobby: the dashboard's presence/state channel. broadcastLobby is called
+    // by PATCH /campaigns/:id to fan out campaign:state; lobbyName/onlineCount
+    // are exported alongside so the lobby suite can assert the contract directly.
+    broadcastLobby, lobbyName, onlineCount,
     // M5. The only addition to this file: one helper, no new event handler and
     // therefore no new authorisation surface. Fog cost this file one line and M4
     // cost it none, for the same reason — every combat and chat write is
@@ -611,4 +714,4 @@ function initSockets(io) {
   };
 }
 
-module.exports = { initSockets, roomName };
+module.exports = { initSockets, roomName, lobbyName };

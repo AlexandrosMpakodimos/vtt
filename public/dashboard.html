@@ -1,96 +1,688 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>VTT — Campaigns (dev)</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>Your games — A Virtual Tabletop</title>
+
+  <!-- Data-URI favicon: a simple gold d20 glyph on the near-black ground. -->
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%230c0e13'/%3E%3Cpath d='M16 3 L27 9.5 L27 22.5 L16 29 L5 22.5 L5 9.5 Z' fill='none' stroke='%23c79a5b' stroke-width='1.4'/%3E%3Cpath d='M16 3 L16 29 M5 9.5 L27 22.5 M27 9.5 L5 22.5' stroke='%238a6c3c' stroke-width='1'/%3E%3C/svg%3E">
+
+  <!-- Shared token system (same as the landing). -->
+  <link rel="stylesheet" href="/css/tokens.css">
+
+  <!-- Anti-flash theme script: NO defer, NO async — sets data-theme before first
+       paint, identical to the landing. -->
+  <script src="/js/theme.js"></script>
+
   <style>
-    body { font-family: monospace; max-width: 720px; margin: 40px auto; padding: 0 16px; }
-    fieldset { margin-bottom: 16px; border: 1px solid #999; }
-    legend { font-weight: bold; }
-    label { display: block; margin: 6px 0 2px; }
-    input, select { width: 100%; padding: 6px; box-sizing: border-box; }
-    button { margin-top: 10px; padding: 6px 12px; cursor: pointer; }
-    #out { background: #111; color: #6f6; padding: 12px; white-space: pre-wrap;
-           min-height: 60px; border-radius: 4px; }
-    .row { display: flex; gap: 8px; align-items: center; }
-    .row > * { margin-top: 0; }
-    hr { border: none; border-top: 1px dashed #ccc; margin: 14px 0; }
-    .card { border: 1px solid #ccc; padding: 8px; margin: 6px 0; border-radius: 4px; }
-    .card b { font-size: 14px; }
-    .tag { font-size: 11px; padding: 1px 5px; border: 1px solid #999; border-radius: 3px; }
-    .muted { color: #777; font-size: 12px; }
-    #log { background: #111; color: #9cf; padding: 8px; white-space: pre-wrap;
-           height: 120px; overflow-y: auto; border-radius: 4px; font-size: 12px; }
+    /* Page-local styles. Colour comes entirely from tokens.css; this block is
+       layout, type and motion. The component recipes (.site-header, .wordmark,
+       .btn, .field, dialog, .card-close, .pw-toggle) are carried over from the
+       landing verbatim so the dashboard reads as the same product. Inline
+       <style> is CSP-permitted (style-src). */
+
+    :root {
+      --maxw: 68rem;
+      --pad: clamp(1rem, 4vw, 3rem);
+      --font-body: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      --ease: cubic-bezier(0.22, 1, 0.36, 1);
+      /* d20 glyph reused as a mask so marks follow theme colour. */
+      --d20: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 3 L27 9.5 L27 22.5 L16 29 L5 22.5 L5 9.5 Z M16 3 L16 29 M5 9.5 L27 22.5 M27 9.5 L5 22.5' fill='none' stroke='black' stroke-width='1.6'/%3E%3C/svg%3E");
+    }
+
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+
+    body {
+      margin: 0;
+      background: var(--surface);
+      color: var(--text);
+      font-family: var(--font-body);
+      font-weight: 400;
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* Smooth theme crossfade, applied only AFTER first paint (.theme-ready). */
+    .theme-ready * {
+      transition: background-color 0.7s ease, color 0.7s ease, border-color 0.7s ease;
+    }
+    .theme-ready .btn {
+      transition: background-color 0.7s ease, color 0.7s ease, border-color 0.7s ease, box-shadow 0.2s var(--ease);
+    }
+
+    .no-select { user-select: none; -webkit-user-select: none; }
+    h1, h2, h3 { line-height: 1.14; font-weight: 700; }
+    a { color: var(--link); text-decoration: none; }
+
+    /* Global keyboard-focus indicator (matches the landing). */
+    :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 2px; }
+    .btn:focus-visible { outline-offset: 3px; }
+
+    /* Skip link — first focusable, appears on focus. */
+    .skip {
+      position: absolute; left: 12px; top: -56px;
+      background: var(--surface-raised); color: var(--text);
+      padding: 10px 16px; border: 1px solid var(--rule); border-radius: 2px;
+      z-index: 100; transition: top 0.18s var(--ease);
+    }
+    .skip:focus { top: 12px; }
+
+    /* Header: fixed, solid, wordmark left / actions right. */
+    .site-header {
+      position: fixed; inset: 0 0 auto 0; z-index: 50;
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 1rem; padding: 0.85rem var(--pad);
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      flex-wrap: wrap;
+    }
+    .wordmark {
+      font-weight: 800; font-size: 0.95rem; letter-spacing: 0.22em;
+      text-transform: uppercase; color: var(--accent);
+      display: inline-flex; align-items: center; gap: 0.55rem;
+    }
+    .wordmark::before {
+      content: ""; width: 22px; height: 22px; flex: none;
+      background: var(--accent);
+      -webkit-mask: var(--d20) center / contain no-repeat;
+      mask: var(--d20) center / contain no-repeat;
+    }
+    .header-actions { display: flex; align-items: center; gap: 0.5rem; }
+    #connState { font-size: 0.78rem; color: var(--text-muted); letter-spacing: 0.02em; min-width: 1px; }
+    .profile-btn { gap: 0.5rem; }
+    .profile-btn .avatar {
+      width: 26px; height: 26px; border-radius: 50%; flex: none; object-fit: cover;
+      border: 1px solid var(--border); background: var(--surface-raised);
+    }
+    .profile-btn .avatar.mask {
+      background: var(--accent);
+      -webkit-mask: var(--d20) center / 76% no-repeat; mask: var(--d20) center / 76% no-repeat;
+      border: none;
+    }
+    .profile-btn .pname { font-size: 0.85rem; }
+
+    /* Buttons: gold-glow hover (verbatim from the landing). */
+    .btn {
+      font: inherit; font-weight: 600; cursor: pointer;
+      border-radius: 2px; padding: 0.6rem 1.2rem;
+      min-height: 44px; min-width: 44px;
+      display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem;
+      border: 1px solid transparent; background: transparent; color: inherit;
+      text-decoration: none; letter-spacing: 0.02em;
+      transition: color 0.2s var(--ease), background-color 0.2s var(--ease),
+                  box-shadow 0.2s var(--ease), border-color 0.2s var(--ease);
+    }
+    .btn.secondary { border-color: var(--rule); color: var(--accent); background: transparent; }
+    .btn.secondary:hover {
+      color: var(--on-accent); background: var(--accent);
+      box-shadow: 0 0 6px color-mix(in srgb, var(--accent) 70%, transparent),
+                  0 0 18px color-mix(in srgb, var(--accent) 40%, transparent);
+    }
+    .btn.primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+    .btn.primary:hover {
+      box-shadow: 0 0 8px color-mix(in srgb, var(--accent) 80%, transparent),
+                  0 0 22px color-mix(in srgb, var(--accent) 45%, transparent);
+      transform: translateY(-1px);
+    }
+    .btn.danger { border-color: var(--danger); color: var(--danger); background: transparent; }
+    .btn.danger:hover { color: var(--on-accent); background: var(--danger); border-color: var(--danger); }
+    .btn.icon { padding: 0.55rem; }
+    .btn.icon svg { width: 20px; height: 20px; }
+    .btn.small { min-height: 36px; padding: 0.4rem 0.85rem; font-size: 0.85rem; }
+    .btn:disabled { opacity: 0.55; cursor: default; box-shadow: none; transform: none; }
+    @media (prefers-reduced-motion: reduce) { .btn.primary:hover { transform: none; } }
+
+    /* Main. */
+    main { max-width: var(--maxw); margin: 0 auto; padding: 6rem var(--pad) 4rem; }
+    .games-head {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 1rem; flex-wrap: wrap; margin-bottom: 1.4rem;
+    }
+    .games-head h1 { font-size: 1.9rem; text-transform: uppercase; letter-spacing: 0.05em; margin: 0; }
+    .games-head .actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+
+    /* Tabs (APG): one tab stop, roving tabindex, gold underline on the selected. */
+    .tabs { display: flex; align-items: center; gap: 0.25rem; border-bottom: 1px solid var(--border); margin-bottom: 0.4rem; flex-wrap: wrap; }
+    .tab {
+      font: inherit; font-weight: 600; cursor: pointer;
+      background: transparent; border: none; color: var(--text-muted);
+      padding: 0.6rem 0.9rem; letter-spacing: 0.04em; text-transform: uppercase; font-size: 0.82rem;
+      border-bottom: 2px solid transparent; margin-bottom: -1px;
+    }
+    .tab[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--rule); }
+    .tab:hover { color: var(--text); }
+    .tabs-extra { margin-left: auto; display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.82rem; color: var(--text-muted); }
+    .tabs-extra input { accent-color: var(--accent); }
+
+    #listStatus { min-height: 1.2em; margin: 0.6rem 0; color: var(--text-muted); font-size: 0.88rem; }
+
+    /* Cards grid. */
+    .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(17rem, 1fr)); gap: 1rem; margin: 0.6rem 0 1.4rem; }
+    .card {
+      display: flex; flex-direction: column;
+      background: var(--surface-raised); border: 1px solid var(--border); border-radius: 3px;
+      overflow: hidden;
+      transition: transform 0.18s var(--ease), border-color 0.18s var(--ease);
+    }
+    .card:hover { transform: translateY(-1px); border-color: var(--accent); }
+    @media (prefers-reduced-motion: reduce) { .card, .card:hover { transform: none; transition: border-color 0.18s var(--ease); } }
+    .card-cover { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; background: var(--surface); }
+    .card-cover.mask { background: var(--surface); position: relative; }
+    .card-cover.mask::after {
+      content: ""; position: absolute; inset: 0;
+      background: var(--border);
+      -webkit-mask: var(--d20) center / 34% no-repeat; mask: var(--d20) center / 34% no-repeat;
+    }
+    .card-body { padding: 0.85rem 0.95rem 1rem; display: flex; flex-direction: column; gap: 0.5rem; flex: 1; }
+    .card-name { font-size: 1.05rem; margin: 0; }
+    .card-name + .rule { height: 2px; width: 2.4rem; background: var(--rule); }
+    .card-owner { font-size: 0.78rem; color: var(--text-muted); margin: 0; letter-spacing: 0.02em; }
+    .badge-row { display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; }
+    .badge {
+      font-size: 0.72rem; letter-spacing: 0.04em; text-transform: uppercase;
+      color: var(--text-muted); background: transparent;
+      border: 1px solid var(--border); border-radius: 2px; padding: 0.1rem 0.4rem;
+      display: inline-flex; align-items: center; gap: 0.25rem;
+    }
+    .pill-state { font-size: 0.72rem; letter-spacing: 0.04em; text-transform: uppercase; padding: 0.1rem 0.45rem; border: 1px solid var(--border); border-radius: 2px; }
+    .pill-state.open { color: var(--accent); border-color: var(--rule); }
+    .pill-state.closed { color: var(--text-muted); }
+    .card-online { font-size: 0.72rem; color: var(--text-muted); letter-spacing: 0.03em; }
+    .card-desc {
+      font-size: 0.88rem; color: var(--text); margin: 0;
+      display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+    }
+    .card-note { font-size: 0.85rem; color: var(--text-muted); margin: 0; }
+    .card-actions { display: flex; gap: 0.5rem; margin-top: auto; padding-top: 0.4rem; flex-wrap: wrap; }
+
+    #emptyState { padding: 2rem 0; color: var(--text-muted); }
+    #emptyState .actions { display: flex; gap: 0.5rem; margin-top: 1rem; flex-wrap: wrap; }
+
+    /* Recently deleted disclosure. */
+    .deleted-wrap { margin-top: 1.5rem; border-top: 1px solid var(--border); padding-top: 1rem; }
+    .deleted-toggle {
+      font: inherit; background: transparent; border: none; color: var(--link); cursor: pointer;
+      font-size: 0.88rem; text-transform: uppercase; letter-spacing: 0.04em; padding: 0.2rem 0;
+    }
+    .deleted-toggle:hover { color: var(--text); }
+    #deletedList { margin-top: 0.8rem; display: grid; gap: 0.6rem; }
+    .deleted-row {
+      display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap;
+      border: 1px solid var(--border); border-radius: 3px; padding: 0.6rem 0.8rem; background: var(--surface-raised);
+    }
+    .deleted-row .meta { font-size: 0.82rem; color: var(--text-muted); }
+
+    /* Dialogs (verbatim recipes from the landing auth card). */
+    dialog {
+      border: 1px solid var(--rule); border-radius: 3px; padding: 0;
+      background: var(--surface-raised); color: var(--text);
+      box-shadow: 0 0 0 1px color-mix(in srgb, var(--rule) 30%, transparent), 0 24px 60px rgba(0,0,0,0.5);
+    }
+    dialog::backdrop { background: rgba(6, 7, 10, 0.7); backdrop-filter: blur(2px); }
+    .dialog-narrow { width: min(29rem, 94vw); }
+    .dialog-wide { width: min(46rem, 94vw); }
+    .card-inner { padding: 2rem; position: relative; }
+    .dialog-wide .card-inner { padding: 0; display: flex; flex-direction: column; max-height: 88vh; }
+    .dialog-head {
+      position: sticky; top: 0; z-index: 2; background: var(--surface-raised);
+      padding: 1.4rem 2rem 0.4rem; border-bottom: 1px solid var(--border);
+    }
+    .dialog-body { padding: 1.2rem 2rem 2rem; overflow-y: auto; }
+    .card-close {
+      position: absolute; top: 0.6rem; right: 0.6rem;
+      width: 44px; height: 44px; display: grid; place-items: center;
+      background: transparent; border: none; color: var(--text-muted);
+      font-size: 1.5rem; line-height: 1; cursor: pointer; border-radius: 2px;
+    }
+    .card-close:hover { color: var(--accent); }
+    .card-inner h2, .dialog-head h2 { font-size: 1.3rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--accent); margin: 0 0 0.3rem; }
+    .card-inner h2 + .rule, .dialog-head h2 + .rule { height: 2px; width: 3rem; background: var(--rule); margin-bottom: 1.2rem; }
+    .card-inner h3 { font-size: 0.92rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text); margin: 1.2rem 0 0.6rem; }
+    .rule { display: block; }
+
+    .field { display: grid; gap: 0.35rem; margin-bottom: 1rem; }
+    .field label { font-size: 0.8rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); }
+    .field .help { font-size: 0.78rem; color: var(--text-muted); }
+    .field input, .field select, .field textarea {
+      font: inherit; padding: 0.65rem 0.75rem; border-radius: 2px;
+      border: 1px solid var(--border); background: var(--surface); color: var(--text);
+      min-height: 44px; width: 100%;
+    }
+    .field textarea { min-height: 5rem; resize: vertical; }
+    .field input:focus-visible, .field select:focus-visible, .field textarea:focus-visible {
+      border-color: var(--accent); outline: 2px solid var(--focus); outline-offset: 1px;
+    }
+    .field input[aria-invalid="true"] { border-color: var(--danger); }
+    .field.with-picker { grid-template-columns: 1fr auto; align-items: end; }
+    .field.with-picker label { grid-column: 1 / -1; }
+    .field.with-picker .help { grid-column: 1 / -1; }
+    .vttpick-open {
+      font: inherit; font-size: 0.85rem; min-height: 44px; padding: 0 0.9rem;
+      border: 1px solid var(--rule); border-radius: 2px; background: transparent;
+      color: var(--accent); cursor: pointer; white-space: nowrap;
+    }
+    .vttpick-open:hover { color: var(--on-accent); background: var(--accent); }
+    .img-preview {
+      margin-top: 0.4rem; max-width: 100%; max-height: 8rem; border-radius: 3px;
+      border: 1px solid var(--border); object-fit: cover;
+    }
+
+    .status { min-height: 1.2em; margin: 0.4rem 0 0.6rem; color: var(--text); font-size: 0.88rem; }
+    .field-inline { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+    .danger-block { margin-top: 1.4rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+    .danger-block .help { font-size: 0.8rem; color: var(--text-muted); margin: 0.3rem 0 0.7rem; }
+
+    .dialog-body .tabs { margin-top: -0.2rem; }
+
+    /* Member / result rows. */
+    .row-list { display: grid; gap: 0.5rem; margin: 0.5rem 0 1rem; }
+    .member-row, .result {
+      display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap;
+      border: 1px solid var(--border); border-radius: 3px; padding: 0.5rem 0.7rem; background: var(--surface);
+    }
+    .member-row .who, .result .who { display: flex; align-items: center; gap: 0.5rem; flex: 1; min-width: 8rem; }
+    .member-row .avatar, .result .avatar {
+      width: 24px; height: 24px; border-radius: 50%; flex: none; object-fit: cover;
+      border: 1px solid var(--border); background: var(--surface-raised);
+    }
+    .member-row .name, .result .name { font-size: 0.9rem; }
+    .member-row .meta, .result .meta { font-size: 0.78rem; color: var(--text-muted); }
+    .member-row .row-actions, .result .row-actions { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+    /* Richer search result: thumbnail + stacked name/owner/description. */
+    .result-rich { align-items: flex-start; }
+    .result-rich .who { flex-direction: column; align-items: stretch; gap: 0.15rem; }
+    .result-thumb {
+      width: 84px; height: 52px; flex: none; border-radius: 3px; overflow: hidden;
+      border: 1px solid var(--border); background: var(--surface-raised); position: relative;
+    }
+    .result-thumb.mask::after {
+      content: ""; position: absolute; inset: 0; background: var(--border);
+      -webkit-mask: var(--d20) center / 42% no-repeat; mask: var(--d20) center / 42% no-repeat;
+    }
+    .result-desc {
+      font-size: 0.82rem; color: var(--text); margin: 0.1rem 0 0;
+      display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+    }
+    .result-rich .row-actions { align-items: flex-start; }
+    .pw-wrap { position: relative; display: flex; flex: 1; min-width: 10rem; }
+    .pw-wrap input { flex: 1; padding-right: 4rem; }
+    .pw-toggle {
+      position: absolute; right: 0.3rem; top: 50%; transform: translateY(-50%);
+      min-height: 38px; padding: 0 0.6rem; font: inherit; font-size: 0.78rem;
+      background: transparent; border: none; color: var(--link); cursor: pointer;
+    }
+    .invite-row { display: flex; gap: 0.5rem; align-items: center; margin: 0.4rem 0 0.8rem; }
+    .invite-row input { flex: 1; font: inherit; padding: 0.55rem 0.7rem; border: 1px solid var(--border); border-radius: 2px; background: var(--surface); color: var(--text); }
+    .kv { display: grid; grid-template-columns: auto 1fr; gap: 0.3rem 0.8rem; margin: 0.6rem 0; font-size: 0.9rem; }
+    .kv dt { color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; font-size: 0.76rem; align-self: center; }
+    .kv dd { margin: 0; }
+
+    /* Mobile. */
+    @media (max-width: 640px) {
+      .wordmark { font-size: 0.8rem; letter-spacing: 0.15em; }
+      .profile-btn .pname { display: none; }
+      .cards { grid-template-columns: 1fr; }
+      .card-inner, .dialog-body { padding-left: 1.2rem; padding-right: 1.2rem; }
+      .dialog-head { padding-left: 1.2rem; padding-right: 1.2rem; }
+      .tabs { overflow-x: auto; flex-wrap: nowrap; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .skip { transition: none; }
+    }
   </style>
 </head>
 <body>
-  <h1>VTT campaigns (dev harness)</h1>
-  <p class="muted">Log in via <a href="/auth.html">/auth.html</a> first. <span id="whoami">checking…</span></p>
+  <a class="skip" href="#games">Skip to your games</a>
 
-  <fieldset>
-    <legend>Create campaign</legend>
-    <label>Name</label><input id="c-name" />
-    <label>Description</label><input id="c-desc" />
-    <label>Image URL</label><input id="c-img" placeholder="https://…" />
-    <div class="row">
-      <label><input type="checkbox" id="c-public" style="width:auto" /> public (no password)</label>
+  <header class="site-header">
+    <a class="wordmark no-select" href="/">A Virtual Tabletop</a>
+    <div class="header-actions">
+      <span id="connState" role="status" aria-live="polite"></span>
+      <button id="themeToggle" class="btn icon" type="button" aria-label="Switch to light theme">
+        <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6">
+          <circle cx="12" cy="12" r="4.5"></circle>
+          <path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.4 1.4M17.6 17.6L19 19M19 5l-1.4 1.4M6.4 17.6L5 19"></path>
+        </svg>
+      </button>
+      <button id="profileBtn" class="btn secondary profile-btn" type="button" aria-haspopup="dialog">
+        <span class="avatar mask" id="profileAvatar" aria-hidden="true"></span>
+        <span class="pname" id="profileName">…</span>
+      </button>
     </div>
-    <label>Password (private only)</label><input id="c-password" type="password" />
-    <button id="c-submit">Create</button>
-  </fieldset>
+  </header>
 
-  <fieldset>
-    <legend>My campaigns</legend>
-    <div class="row">
-      <button id="tab-owned">Owned</button>
-      <button id="tab-joined">Joined</button>
-      <span class="muted">| filter:</span>
-      <select id="m-filter">
-        <option value="active">active</option>
-        <option value="archived">archived</option>
-        <option value="all">all</option>
-      </select>
-      <button id="m-deleted">Show deleted (30d)</button>
+  <main>
+    <section id="games" aria-labelledby="gamesHeading">
+      <div class="games-head">
+        <h1 id="gamesHeading">Your games</h1>
+        <div class="actions">
+          <button id="btnCreate" class="btn primary" type="button">Create a game</button>
+          <button id="btnFind" class="btn secondary" type="button">Find a game</button>
+        </div>
+      </div>
+
+      <div class="tabs" id="listTabs" role="tablist" aria-label="Your games">
+        <button id="tabAll" class="tab" type="button" role="tab" aria-selected="true" aria-controls="campaignPanel" tabindex="0">All</button>
+        <button id="tabRunning" class="tab" type="button" role="tab" aria-selected="false" aria-controls="campaignPanel" tabindex="-1">Running</button>
+        <button id="tabPlaying" class="tab" type="button" role="tab" aria-selected="false" aria-controls="campaignPanel" tabindex="-1">Playing</button>
+        <label class="tabs-extra"><input type="checkbox" id="showArchived"> Show archived</label>
+      </div>
+
+      <div id="campaignPanel" role="tabpanel" aria-labelledby="tabAll" tabindex="0">
+        <p id="listStatus" role="status" aria-live="polite"></p>
+        <div class="cards" id="cardsGrid"></div>
+        <div id="emptyState" hidden>
+          <p>No games yet.</p>
+          <div class="actions">
+            <button class="btn primary" type="button" data-empty-create>Create a game</button>
+            <button class="btn secondary" type="button" data-empty-find>Find a game</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="deleted-wrap" id="deletedWrap" hidden>
+        <button id="deletedToggle" class="deleted-toggle" type="button" aria-expanded="false" aria-controls="deletedList">Recently deleted (0)</button>
+        <div id="deletedList" hidden></div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Card template: cloned per campaign, filled via textContent/attributes. -->
+  <template id="cardTemplate">
+    <article class="card" data-id>
+      <span class="card-cover mask" aria-hidden="true"></span>
+      <div class="card-body">
+        <h2 class="card-name"></h2>
+        <span class="rule"></span>
+        <p class="card-owner"></p>
+        <div class="badge-row">
+          <span class="badge badge-role"></span>
+          <span class="badge badge-vis"></span>
+          <span class="pill-state"></span>
+          <span class="badge badge-archived" hidden>Archived</span>
+          <span class="card-online"></span>
+        </div>
+        <p class="card-desc"></p>
+        <p class="card-note" hidden></p>
+        <div class="card-actions">
+          <a class="btn primary small card-enter" href="#">Enter the game</a>
+          <button class="btn secondary small card-manage" type="button">Manage</button>
+        </div>
+      </div>
+    </article>
+  </template>
+
+  <!-- Create dialog -->
+  <dialog id="createDialog" class="dialog-narrow" aria-labelledby="crHeading">
+    <div class="card-inner">
+      <button class="card-close" type="button" data-close aria-label="Close">&times;</button>
+      <h2 id="crHeading">Create a game</h2>
+      <span class="rule"></span>
+      <form id="formCreate" novalidate>
+        <div class="field">
+          <label for="crName">Name</label>
+          <input id="crName" type="text" maxlength="100" required autocomplete="off">
+          <span class="help">1&ndash;100 characters.</span>
+        </div>
+        <div class="field">
+          <label for="crDesc">Description</label>
+          <textarea id="crDesc" maxlength="2000"></textarea>
+          <span class="help">Optional. Up to 2000 characters.</span>
+        </div>
+        <div class="field">
+          <label for="crVis">Visibility</label>
+          <select id="crVis">
+            <option value="public">Public &mdash; anyone can join</option>
+            <option value="private">Private &mdash; needs a password</option>
+          </select>
+        </div>
+        <div class="field" id="crPasswordField" hidden>
+          <label for="crPassword">Password</label>
+          <div class="pw-wrap">
+            <input id="crPassword" type="password" maxlength="128" autocomplete="new-password">
+            <button class="pw-toggle" type="button" aria-controls="crPassword" aria-pressed="false">Show</button>
+          </div>
+          <span class="help">Players type this to join. Not your account password. 4&ndash;128 characters.</span>
+        </div>
+        <p class="status" id="crStatus" role="status" aria-live="polite"></p>
+        <button id="crSubmit" class="btn primary" type="submit">Create game</button>
+      </form>
     </div>
-    <div id="mine"></div>
-  </fieldset>
+  </dialog>
 
-  <fieldset>
-    <legend>Search</legend>
-    <label>Query</label><input id="s-q" placeholder="name or description" />
-    <label>Visibility</label>
-    <select id="s-vis">
-      <option value="all">all</option>
-      <option value="public">public</option>
-      <option value="private">private</option>
-    </select>
-    <button id="s-submit">Search</button>
-    <div id="results"></div>
-  </fieldset>
+  <!-- Find dialog -->
+  <dialog id="findDialog" class="dialog-wide" aria-labelledby="fdHeading">
+    <div class="card-inner">
+      <button class="card-close" type="button" data-close aria-label="Close">&times;</button>
+      <h2 id="fdHeading">Find a game</h2>
+      <span class="rule"></span>
 
-  <fieldset>
-    <legend>Campaign room</legend>
-    <label>Campaign id</label><input id="room-id" />
-    <div class="row">
-      <button id="room-open">Open (detail + socket join)</button>
-      <button id="room-leave">Leave campaign</button>
+      <!-- Join-by-link face (shown when arriving via ?join=). -->
+      <form id="formJoin" hidden novalidate>
+        <div class="field">
+          <label for="jnId">Game id</label>
+          <input id="jnId" type="text" readonly>
+          <span class="help">You followed an invite link.</span>
+        </div>
+        <div class="field" id="jnPasswordField" hidden>
+          <label for="jnPassword">Password</label>
+          <div class="pw-wrap">
+            <input id="jnPassword" type="password" maxlength="128" autocomplete="off">
+            <button class="pw-toggle" type="button" aria-controls="jnPassword" aria-pressed="false">Show</button>
+          </div>
+          <span class="help">This game is private.</span>
+        </div>
+        <p class="status" id="jnStatus" role="status" aria-live="polite"></p>
+        <button id="jnSubmit" class="btn primary" type="submit">Join this game</button>
+      </form>
+
+      <!-- Search face. -->
+      <form id="formFind" novalidate>
+        <div class="field">
+          <label for="fdQuery">Search</label>
+          <input id="fdQuery" type="text" maxlength="100" autocomplete="off" placeholder="Name or description">
+        </div>
+        <div class="field">
+          <label for="fdVis">Visibility</label>
+          <select id="fdVis">
+            <option value="all">All</option>
+            <option value="public">Public</option>
+            <option value="private">Private</option>
+          </select>
+        </div>
+        <p class="status" id="fdStatus" role="status" aria-live="polite"></p>
+        <button id="fdSubmit" class="btn primary" type="submit">Search</button>
+        <div class="row-list" id="fdResults"></div>
+      </form>
     </div>
-    <div id="room"></div>
-    <hr />
-    <div class="muted">socket log</div>
-    <div id="log"></div>
-  </fieldset>
+  </dialog>
 
-  <fieldset>
-    <legend>Manage players (owner only)</legend>
-    <div class="row"><button id="mem-refresh">Load members</button></div>
-    <div id="members"></div>
-  </fieldset>
+  <!-- Campaign dialog (Manage / Details) -->
+  <dialog id="campaignDialog" class="dialog-wide" aria-labelledby="cdTitle">
+    <div class="card-inner">
+      <div class="dialog-head">
+        <button class="card-close" type="button" data-close id="cdClose" aria-label="Close">&times;</button>
+        <h2 id="cdTitle">Game</h2>
+        <span class="rule"></span>
+        <div class="tabs" id="cdTabs" role="tablist" aria-label="Game settings">
+          <button id="cdTabOverview" class="tab" type="button" role="tab" aria-selected="true" aria-controls="cdOverview" tabindex="0">Overview</button>
+          <button id="cdTabMembers" class="tab" type="button" role="tab" aria-selected="false" aria-controls="cdMembers" tabindex="-1">Members</button>
+          <button id="cdTabSettings" class="tab" type="button" role="tab" aria-selected="false" aria-controls="cdSettings" tabindex="-1" hidden>Settings</button>
+        </div>
+      </div>
+      <div class="dialog-body">
+        <!-- Overview -->
+        <div id="cdOverview" role="tabpanel" aria-labelledby="cdTabOverview" tabindex="0">
+          <span class="card-cover mask" id="cdCover" aria-hidden="true" style="max-width:12rem;aspect-ratio:16/9;display:block;border-radius:3px;"></span>
+          <p id="cdDesc" class="card-desc" style="-webkit-line-clamp:6;"></p>
+          <dl class="kv">
+            <dt>Visibility</dt><dd id="cdVis"></dd>
+            <dt>Status</dt><dd id="cdState"></dd>
+            <dt>At the table</dt><dd id="cdOnline">&mdash;</dd>
+            <dt>Created</dt><dd id="cdCreated"></dd>
+          </dl>
+          <div class="field-inline">
+            <button id="cdOpenToggle" class="btn secondary small" type="button" hidden>Close the table</button>
+            <a id="cdEnter" class="btn primary small" href="#" hidden>Enter the game</a>
+          </div>
+          <h3>Invite link</h3>
+          <div class="invite-row">
+            <input id="cdInvite" type="text" readonly aria-label="Invite link">
+            <button id="cdCopyInvite" class="btn secondary small" type="button">Copy</button>
+          </div>
+          <button id="cdLeave" class="btn danger small" type="button" hidden>Leave this game</button>
+          <p class="status" id="cdStatus" role="status" aria-live="polite"></p>
+        </div>
 
-  <div id="out">ready</div>
+        <!-- Members -->
+        <div id="cdMembers" role="tabpanel" aria-labelledby="cdTabMembers" tabindex="0" hidden>
+          <div class="row-list" id="cdMemberList"></div>
+          <h3 id="cdBannedHead" hidden>Banned</h3>
+          <div class="row-list" id="cdBannedList"></div>
+          <div id="cdTransferBlock" hidden>
+            <h3>Transfer ownership</h3>
+            <div class="field-inline">
+              <select id="cdTransferSel" aria-label="New owner"></select>
+              <button id="cdTransferBtn" class="btn secondary small" type="button">Transfer</button>
+            </div>
+            <p class="help">You will remain in the game as a player.</p>
+          </div>
+          <button id="cdRefresh" class="btn secondary small" type="button" style="margin-top:0.8rem;">Refresh</button>
+        </div>
 
-  <script src="/socket.io/socket.io.js"></script>
-  <script src="/js/campaigns.js"></script>
+        <!-- Settings (GM only) -->
+        <div id="cdSettings" role="tabpanel" aria-labelledby="cdTabSettings" tabindex="0" hidden>
+          <form id="formSettings" novalidate>
+            <div class="field">
+              <label for="stName">Name</label>
+              <input id="stName" type="text" maxlength="100" autocomplete="off">
+            </div>
+            <div class="field">
+              <label for="stDesc">Description</label>
+              <textarea id="stDesc" maxlength="2000"></textarea>
+            </div>
+            <div class="field with-picker">
+              <label for="stImg">Cover image</label>
+              <input id="stImg" type="text" maxlength="2000" autocomplete="off" placeholder="https://…">
+            </div>
+            <img id="stImgPreview" class="img-preview" alt="" hidden>
+            <div class="field">
+              <label for="stVis">Visibility</label>
+              <select id="stVis">
+                <option value="public">Public</option>
+                <option value="private">Private</option>
+              </select>
+            </div>
+            <div class="field" id="stPasswordField" hidden>
+              <label for="stPassword">Password</label>
+              <div class="pw-wrap">
+                <input id="stPassword" type="password" maxlength="128" autocomplete="new-password">
+                <button class="pw-toggle" type="button" aria-controls="stPassword" aria-pressed="false">Show</button>
+              </div>
+              <span class="help" id="stPasswordHelp">Leave blank to keep the current password. 4&ndash;128 characters to change it.</span>
+            </div>
+            <p class="status" id="stStatus" role="status" aria-live="polite"></p>
+            <button id="stSubmit" class="btn primary" type="submit">Save changes</button>
+          </form>
+          <div class="danger-block">
+            <h3>Danger zone</h3>
+            <button id="stArchive" class="btn secondary small" type="button">Archive</button>
+            <p class="help">Hides it from your list; other members are unaffected.</p>
+            <button id="stDelete" class="btn danger small" type="button">Delete this game</button>
+            <p class="help">Deleted games can be restored for 30 days from Recently deleted.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- Profile dialog -->
+  <dialog id="profileDialog" class="dialog-narrow" aria-labelledby="pfHeading">
+    <div class="card-inner">
+      <button class="card-close" type="button" data-close aria-label="Close">&times;</button>
+      <h2 id="pfHeading">Your account</h2>
+      <span class="rule"></span>
+      <div class="member-row" style="border:none;padding:0;margin-bottom:1rem;">
+        <div class="who">
+          <span class="avatar" id="pfAvatar" aria-hidden="true"></span>
+          <div>
+            <div class="name" id="pfUsername"></div>
+            <div class="meta"><span id="pfEmail"></span> &middot; <span id="pfVerified"></span></div>
+            <div class="meta" id="pfSince"></div>
+          </div>
+        </div>
+      </div>
+
+      <form id="formProfile" novalidate>
+        <h3>Profile</h3>
+        <div class="field">
+          <label for="pfNameInput">Username</label>
+          <input id="pfNameInput" type="text" maxlength="30" autocomplete="username">
+          <span class="help">3&ndash;30: letters, numbers, underscore.</span>
+        </div>
+        <div class="field with-picker">
+          <label for="pfAvatarInput">Avatar image</label>
+          <input id="pfAvatarInput" type="text" maxlength="2000" autocomplete="off" placeholder="https://…">
+        </div>
+        <p class="status" id="pfStatus" role="status" aria-live="polite"></p>
+        <button id="pfSaveBtn" class="btn primary" type="submit">Save profile</button>
+      </form>
+
+      <form id="formPassword" novalidate>
+        <h3>Password</h3>
+        <div class="field">
+          <label for="pwCurrent">Current password</label>
+          <input id="pwCurrent" type="password" autocomplete="current-password">
+        </div>
+        <div class="field">
+          <label for="pwNew">New password</label>
+          <input id="pwNew" type="password" autocomplete="new-password">
+          <span class="help">8&ndash;64 characters &mdash; that's the only rule. This signs out your other devices.</span>
+        </div>
+        <p class="status" id="pwStatus" role="status" aria-live="polite"></p>
+        <button id="pwSubmit" class="btn primary" type="submit">Change password</button>
+      </form>
+
+      <form id="formEmail" novalidate>
+        <h3>Email</h3>
+        <div class="field">
+          <label for="emNew">New email</label>
+          <input id="emNew" type="email" autocomplete="email">
+        </div>
+        <div class="field">
+          <label for="emPassword">Current password</label>
+          <input id="emPassword" type="password" autocomplete="current-password">
+          <span class="help">A confirmation link goes to the new address. Nothing changes until you click it.</span>
+        </div>
+        <p class="status" id="emStatus" role="status" aria-live="polite"></p>
+        <button id="emSubmit" class="btn primary" type="submit">Change email</button>
+      </form>
+
+      <div class="danger-block">
+        <button id="pfLogout" class="btn secondary small" type="button">Log out</button>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- Confirm dialog (opened over another dialog) -->
+  <dialog id="confirmDialog" class="dialog-narrow" aria-labelledby="cfTitle">
+    <div class="card-inner">
+      <h2 id="cfTitle">Are you sure?</h2>
+      <span class="rule"></span>
+      <p id="cfBody" style="margin:0 0 1.2rem;"></p>
+      <div class="field-inline" style="justify-content:flex-end;">
+        <button id="cfCancel" class="btn secondary small" type="button">Cancel</button>
+        <button id="cfOk" class="btn primary small" type="button">OK</button>
+      </div>
+    </div>
+  </dialog>
+
+  <script src="/socket.io/socket.io.js" defer></script>
+  <script src="/js/common.js" defer></script>
+  <script src="/js/imagepicker.js" defer></script>
+  <script src="/js/dashboard.js" defer></script>
 </body>
 </html>

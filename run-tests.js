@@ -39,7 +39,7 @@ const UNIT = [
   'test-shortcuts.js', 'test-bulk-place.js', 'test-marquee.js',
   'test-fog-ui.js', 'test-fog-validators.js', 'test-sheet-ui.js',
   'test-dice.js', 'test-dice3d.js',
-  'test-combat-ui.js', 'test-align-ui.js', 'test-landing-ui.js', 'test-actors-ui.js',
+  'test-combat-ui.js', 'test-align-ui.js', 'test-landing-ui.js', 'test-dashboard-ui.js', 'test-actors-ui.js',
   'test-storage.js', 'test-imagepicker.js', 'test-events.js', 'test-closednotice.js',
 ];
 
@@ -49,7 +49,7 @@ const DB = [
   'test-active-scene.js', 'test-scene-delete.js', 'test-actors.js',
   'test-items-inventory.js', 'test-combat.js', 'test-speaker-color.js',
   'test-scene-grid.js', 'test-spells.js', 'test-assets.js', 'test-landing-server.js',
-  'test-campaign-open.js',
+  'test-campaign-open.js', 'test-lobby.js',
 ];
 
 // Adversarial security regressions.

@@ -14,14 +14,11 @@
 
   // ── Pure seams the suite drives directly ──────────────────────────────────
   // Exposed at the top so the ui suite can call them without touching the DOM.
+  var C = window.VTTCommon;
 
-  // Theme resolution contract: only the exact strings 'light'/'dark' count as a
-  // stored value; anything else falls through to the system preference. theme.js
-  // inlines this same logic (it cannot import) — IF YOU CHANGE ONE, CHANGE BOTH.
-  function resolveTheme(stored, systemDark) {
-    if (stored === 'light' || stored === 'dark') return stored;
-    return systemDark ? 'dark' : 'light';
-  }
+  // Theme resolution now lives in VTTCommon (shared with the dashboard). The
+  // landing keeps exposing it on VTTLanding for the suite's seam contract.
+  var resolveTheme = C.resolveTheme;
 
   // Depth is read off a data-attribute (untrusted string). Clamp to [0,1];
   // anything non-finite → 0. The array-coercion trap is real for BOTH Number()
@@ -37,36 +34,17 @@
     return n;
   }
 
-  // The only place this file navigates, so jsdom can stub it.
-  function navigate(url) {
-    window.location.href = url;
-  }
+  // Navigation is the shared seam; VTTLanding re-exposes it (the suite stubs it).
+  var navigate = C.navigate;
 
   window.VTTLanding = { resolveTheme: resolveTheme, clampDepth: clampDepth, navigate: navigate };
 
-  // ── House localStorage wrapper (dice3d.js:158 / combat.js:707 shape) ───────
-  function localGet(k) { try { return window.localStorage.getItem(k); } catch (e) { return null; } }
-  function localSet(k, v) { try { window.localStorage.setItem(k, v); } catch (e) { /* private mode */ } }
-
-  var THEME_KEY = 'vtt.theme';
-
-  // ── House api() helper (combat.js:61 shape, minus the closed-notice hook, ──
-  // which is a game-surface concern this page doesn't load). Same-origin, JSON,
-  // {status, data}, parse guarded so a non-JSON/empty body can't throw.
-  async function api(method, path, body) {
-    var res = await fetch(path, {
-      method: method,
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'same-origin',
-      body: body ? JSON.stringify(body) : undefined,
-    });
-    var data = await res.json().catch(function () { return {}; });
-    return { status: res.status, data: data };
-  }
-
-  var NETWORK_ERROR = 'Network error — check your connection and try again.';
-
-  function $(id) { return document.getElementById(id); }
+  // Shared helpers, delegated to VTTCommon.
+  var localGet = C.localGet;
+  var localSet = C.localSet;
+  var api = C.api;
+  var NETWORK_ERROR = C.NETWORK_ERROR;
+  var $ = C.$;
 
   // Run once the DOM is parsed. landing.js is loaded with `defer`, so the DOM is
   // ready; guard anyway for direct eval in the suite.
@@ -88,47 +66,9 @@
   }
 
   // ── 1. Theme toggle + live system follow (spec §8.3) ───────────────────────
-  function currentSystemDark() {
-    return !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
-  }
-
-  function applyTheme(theme) {
-    document.documentElement.setAttribute('data-theme', theme);
-    var toggle = $('themeToggle');
-    if (toggle) {
-      // Label states the ACTION, not the current state.
-      toggle.setAttribute('aria-label',
-        theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme');
-    }
-  }
-
-  function initTheme() {
-    // theme.js already set data-theme before paint; re-resolve so the toggle's
-    // label is correct and so we know whether a value is stored.
-    var stored = localGet(THEME_KEY);
-    applyTheme(resolveTheme(stored, currentSystemDark()));
-
-    var toggle = $('themeToggle');
-    if (toggle) {
-      toggle.addEventListener('click', function () {
-        var now = document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
-        var next = now === 'dark' ? 'light' : 'dark';
-        applyTheme(next);
-        localSet(THEME_KEY, next);   // first click stores; stored wins from now on
-      });
-    }
-
-    // While nothing is stored, follow live OS changes. Once a value is stored,
-    // the stored value wins and this listener does nothing.
-    if (window.matchMedia) {
-      var mq = window.matchMedia('(prefers-color-scheme: dark)');
-      var onChange = function (e) {
-        if (localGet(THEME_KEY) === null) applyTheme(e.matches ? 'dark' : 'light');
-      };
-      if (mq.addEventListener) mq.addEventListener('change', onChange);
-      else if (mq.addListener) mq.addListener(onChange);   // older engines
-    }
-  }
+  // Moved to VTTCommon.initTheme (shared with the dashboard). Same behaviour,
+  // same 'themeToggle' id.
+  var initTheme = C.initTheme;
 
   // ── 2. URL params (spec §5) ────────────────────────────────────────────────
   // Returns {open:false} or {open:true, token, error} for initAuthCard to act on.
@@ -170,7 +110,6 @@
     formForgot: 'fpEmail', formReset: 'rpPassword',
   };
 
-  var cardInvoker = null;     // element focus returns to on close
   var resetToken = null;      // stashed from ?reset=, never in the DOM
 
   function showFace(faceId) {
@@ -190,26 +129,19 @@
     if (el && typeof el.focus === 'function') el.focus();
   }
 
+  // openCard/closeCard now delegate the dialog mechanics (invoker tracking,
+  // showModal guard, close-button/backdrop/cancel wiring, focus return) to
+  // VTTCommon.openDialog/closeDialog. This file keeps only the auth-card FACE
+  // logic: which face is visible and which field takes focus.
   function openCard(faceId, invoker) {
-    cardInvoker = invoker || null;
-    showFace(faceId);
+    showFace(faceId);   // set the visible face + aria-labelledby BEFORE opening
     var card = $('authCard');
     if (!card) return;
-    // Guarded for jsdom, which has no showModal. The suite's stub must RECORD
-    // the call; a no-op that records nothing is the setPointerCapture mistake.
-    if (typeof card.showModal === 'function') card.showModal();
-    else card.setAttribute('open', '');
-    focusFirstField(faceId);
+    C.openDialog(card, { invoker: invoker || null, focus: $(FIRST_FIELD[faceId]) });
   }
 
   function closeCard() {
-    var card = $('authCard');
-    if (card) {
-      if (typeof card.close === 'function' && card.open) card.close();
-      else card.removeAttribute('open');
-    }
-    if (cardInvoker && typeof cardInvoker.focus === 'function') cardInvoker.focus();
-    cardInvoker = null;
+    C.closeDialog($('authCard'));
   }
 
   function switchFace(faceId) {
@@ -254,29 +186,18 @@
   }
 
   function initAuthCard(resetState) {
-    var card = $('authCard');
-
     // Openers.
     bindOpen('headerLogin', 'formLogin');
     bindOpen('headerSignup', 'formSignup');
     bindOpen('ctaLogin', 'formLogin');
     bindOpen('ctaSignup', 'formSignup');
 
-    // Close paths: the close button, a backdrop click, and the dialog's own
-    // close/cancel events. Each funnels through closeCard so focus returns once.
+    // Close paths. The backdrop click and `cancel` (Esc) are wired by
+    // VTTCommon.openDialog on first open. The close button is wired here by id
+    // because #authClose predates the [data-close] convention openDialog looks
+    // for; it funnels through closeCard so focus returns once.
     var closeBtn = $('authClose');
     if (closeBtn) closeBtn.addEventListener('click', function () { closeCard(); });
-    if (card) {
-      card.addEventListener('cancel', function (e) { e.preventDefault(); closeCard(); });
-      card.addEventListener('close', function () {
-        // Native close (Esc) fires this; return focus without re-calling close().
-        if (cardInvoker && typeof cardInvoker.focus === 'function') cardInvoker.focus();
-        cardInvoker = null;
-      });
-      card.addEventListener('click', function (e) {
-        if (e.target === card) closeCard();   // backdrop is the dialog element itself
-      });
-    }
 
     // Footer face-switch links (class .switch-face, data-face target).
     var switches = document.querySelectorAll('.switch-face');
