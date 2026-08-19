@@ -79,7 +79,13 @@
   var onlineByCampaign = {};     // campaign_id -> online count (from the lobby)
 
   // ── Boot ─────────────────────────────────────────────────────────────────
+  var booted = false;
   function boot() {
+    // Idempotent: depending on how the page is loaded, both the readyState
+    // check and a DOMContentLoaded dispatch can fire, and double-init would bind
+    // every handler (e.g. the search submit) twice — causing duplicate requests.
+    if (booted) return;
+    booted = true;
     api('GET', '/api/auth/me').then(function (r) {
       if (r.status !== 200 || !r.data || !r.data.user) { C.navigate('/'); return; }
       me = r.data.user;
@@ -296,19 +302,42 @@
       }
 
       node.querySelector('.card-manage').textContent = st.manageLabel;
+      // Archive is per-user and open to any member (player or GM), so it lives
+      // on the card where everyone can reach it — and toggles both directions,
+      // so an archived card can be brought back.
+      var archiveBtn = node.querySelector('.card-archive');
+      archiveBtn.textContent = c.archived ? 'Unarchive' : 'Archive';
       grid.appendChild(node);
     });
   }
 
-  // Event delegation on the grid for enter/manage.
+  // Event delegation on the grid for manage + archive.
   function initGridDelegation() {
     var grid = $('cardsGrid');
     if (!grid) return;
     grid.addEventListener('click', function (e) {
       var manage = e.target.closest && e.target.closest('.card-manage');
       if (manage) {
-        var card = manage.closest('[data-id]');
-        if (card) openCampaignDialog(card.getAttribute('data-id'), manage);
+        var mcard = manage.closest('[data-id]');
+        if (mcard) openCampaignDialog(mcard.getAttribute('data-id'), manage);
+        return;
+      }
+      var arch = e.target.closest && e.target.closest('.card-archive');
+      if (arch) {
+        var acard = arch.closest('[data-id]');
+        if (!acard) return;
+        var id = acard.getAttribute('data-id');
+        // The button's own label tells us the direction (server allows both for
+        // any member; archive state is per-user).
+        var toArchive = arch.textContent !== 'Unarchive';
+        var path = '/api/campaigns/' + id + '/' + (toArchive ? 'archive' : 'unarchive');
+        withPending(arch, function () {
+          return api('POST', path).then(function (r) {
+            if (r.status === 200) { loadList(); }
+            else { setText('listStatus', serverError(r)); }
+          }).catch(function () { setText('listStatus', NETWORK_ERROR); });
+        });
+        return;
       }
       // .card-enter is a real link (href set) — no JS needed; let it navigate.
     });
@@ -449,6 +478,7 @@
   // ── Find dialog (search + join-by-link) ────────────────────────────────────
   function initFind() {
     bindVisibilityToggle('fdVis', null); // no-op; fdVis has no password field
+    on('fdMore', 'click', loadMoreResults);
     var find = $('formFind');
     if (find) {
       find.addEventListener('submit', function (e) {
@@ -489,22 +519,46 @@
       if (join) join.setAttribute('hidden', '');
       if (find) find.removeAttribute('hidden');
       var results = $('fdResults'); if (results) while (results.firstChild) results.removeChild(results.firstChild);
+      hide('fdMore');
       C.openDialog($('findDialog'), { invoker: invoker, focus: $('fdQuery') });
     }
   }
 
+  var SEARCH_PAGE = 20;              // matches the server's default limit
+  var searchState = { q: '', vis: 'all', offset: 0 };
+
   function doSearch() {
-    var q = $('fdQuery').value;
-    var vis = $('fdVis').value;
+    // A fresh search: reset paging and clear the list.
+    searchState.q = $('fdQuery').value;
+    searchState.vis = $('fdVis').value;
+    searchState.offset = 0;
+    var box = $('fdResults');
+    if (box) while (box.firstChild) box.removeChild(box.firstChild);
+    hide('fdMore');
     setText('fdStatus', 'Searching…');
-    withPending($('fdSubmit'), function () {
-      return api('GET', '/api/campaigns/search?q=' + encodeURIComponent(q) + '&visibility=' + encodeURIComponent(vis)).then(function (r) {
+    fetchSearchPage($('fdSubmit'), true);
+  }
+
+  function loadMoreResults() {
+    fetchSearchPage($('fdMore'), false);
+  }
+
+  function fetchSearchPage(pendingBtn, isFirst) {
+    var url = '/api/campaigns/search?q=' + encodeURIComponent(searchState.q)
+      + '&visibility=' + encodeURIComponent(searchState.vis)
+      + '&limit=' + SEARCH_PAGE + '&offset=' + searchState.offset;
+    return withPending(pendingBtn, function () {
+      return api('GET', url).then(function (r) {
         if (r.status !== 200 || !r.data || !Array.isArray(r.data.campaigns)) {
           setText('fdStatus', serverError(r));
           return;
         }
-        setText('fdStatus', r.data.campaigns.length ? '' : 'No games found.');
-        renderResults(r.data.campaigns);
+        var rows = r.data.campaigns;
+        if (isFirst) setText('fdStatus', rows.length ? '' : 'No games found.');
+        appendResults(rows);
+        searchState.offset += rows.length;
+        // A full page implies there may be more; a short page means we're done.
+        if (rows.length === SEARCH_PAGE) show('fdMore'); else hide('fdMore');
       }).catch(function () { setText('fdStatus', NETWORK_ERROR); });
     });
   }
@@ -513,6 +567,12 @@
     var box = $('fdResults');
     if (!box) return;
     while (box.firstChild) box.removeChild(box.firstChild);
+    appendResults(rows);
+  }
+
+  function appendResults(rows) {
+    var box = $('fdResults');
+    if (!box) return;
     rows.forEach(function (c) {
       var row = document.createElement('div');
       row.className = 'result result-rich';
@@ -968,7 +1028,7 @@
     var pw = $('formPassword');
     if (pw) pw.addEventListener('submit', function (e) {
       e.preventDefault();
-      var body = { current_password: $('pwCurrent').value, new_password: $('pwNew').value };
+      var body = { currentPassword: $('pwCurrent').value, newPassword: $('pwNew').value };
       setText('pwStatus', '');
       withPending($('pwSubmit'), function () {
         return api('POST', '/api/auth/change-password', body).then(function (r) {
@@ -980,7 +1040,7 @@
     var em = $('formEmail');
     if (em) em.addEventListener('submit', function (e) {
       e.preventDefault();
-      var body = { new_email: $('emNew').value, current_password: $('emPassword').value };
+      var body = { newEmail: $('emNew').value, currentPassword: $('emPassword').value };
       setText('emStatus', '');
       withPending($('emSubmit'), function () {
         return api('POST', '/api/auth/change-email', body).then(function (r) {

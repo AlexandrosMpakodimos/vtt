@@ -410,6 +410,7 @@
         <div class="card-actions">
           <a class="btn primary small card-enter" href="#">Enter the game</a>
           <button class="btn secondary small card-manage" type="button">Manage</button>
+          <button class="btn secondary small card-archive" type="button">Archive</button>
         </div>
       </div>
     </article>
@@ -483,7 +484,7 @@
       <form id="formFind" novalidate>
         <div class="field">
           <label for="fdQuery">Search</label>
-          <input id="fdQuery" type="text" maxlength="100" autocomplete="off" placeholder="Name or description">
+          <input id="fdQuery" type="text" maxlength="100" autocomplete="off" placeholder="Name, description, or owner">
         </div>
         <div class="field">
           <label for="fdVis">Visibility</label>
@@ -496,6 +497,7 @@
         <p class="status" id="fdStatus" role="status" aria-live="polite"></p>
         <button id="fdSubmit" class="btn primary" type="submit">Search</button>
         <div class="row-list" id="fdResults"></div>
+        <button id="fdMore" class="btn secondary small" type="button" hidden style="margin-top:0.6rem;">Load more</button>
       </form>
     </div>
   </dialog>

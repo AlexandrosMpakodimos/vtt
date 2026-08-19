@@ -164,7 +164,7 @@ function evalApp(window, beforeBoot) {
     'deletedWrap', 'deletedToggle', 'deletedList',
     'createDialog', 'formCreate', 'crName', 'crDesc', 'crVis', 'crPasswordField', 'crPassword',
     'crStatus', 'crSubmit',
-    'findDialog', 'formFind', 'fdQuery', 'fdVis', 'fdSubmit', 'fdStatus', 'fdResults',
+    'findDialog', 'formFind', 'fdQuery', 'fdVis', 'fdSubmit', 'fdStatus', 'fdResults', 'fdMore',
     'formJoin', 'jnId', 'jnPasswordField', 'jnPassword', 'jnSubmit', 'jnStatus',
     'campaignDialog', 'cdTitle', 'cdClose', 'cdTabs', 'cdTabOverview', 'cdTabMembers',
     'cdTabSettings', 'cdOverview', 'cdCover', 'cdDesc', 'cdVis', 'cdState', 'cdOnline',
@@ -424,6 +424,42 @@ function evalApp(window, beforeBoot) {
     t('logout then navigates to /', navHref === '/', String(navHref));
   }
 
+  // ── change-password / change-email send the keys the server destructures ────
+  // The auth routes read camelCase (currentPassword/newPassword/newEmail); a
+  // snake_case body makes the server see nothing and answer "currentPassword is
+  // required" even with the right password. This asserts the exact wire shape.
+  {
+    const dom = makeDom();
+    const { window, window: { document } } = dom;
+    installFakeIo(window);
+    const calls = stubApi(window);
+    evalApp(window);
+    await wait(20);
+    document.getElementById('profileBtn').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    // change password
+    document.getElementById('pwCurrent').value = 'oldpass123';
+    document.getElementById('pwNew').value = 'newpass456';
+    document.getElementById('formPassword').dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
+    await wait(10);
+    const pw = calls.find((c) => /\/api\/auth\/change-password$/.test(c.path) && c.method === 'POST');
+    t('change-password POSTs', !!pw);
+    t('...with currentPassword + newPassword (camelCase)',
+      pw && pw.body && pw.body.currentPassword === 'oldpass123' && pw.body.newPassword === 'newpass456',
+      JSON.stringify(pw && pw.body));
+    t('...and NOT snake_case current_password',
+      pw && pw.body && !('current_password' in pw.body));
+    // change email
+    document.getElementById('emNew').value = 'new@example.com';
+    document.getElementById('emPassword').value = 'oldpass123';
+    document.getElementById('formEmail').dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
+    await wait(10);
+    const em = calls.find((c) => /\/api\/auth\/change-email$/.test(c.path) && c.method === 'POST');
+    t('change-email POSTs', !!em);
+    t('...with newEmail + currentPassword (camelCase)',
+      em && em.body && em.body.newEmail === 'new@example.com' && em.body.currentPassword === 'oldpass123',
+      JSON.stringify(em && em.body));
+  }
+
   // ── Create dialog: visibility toggle + submit body + 201 opens Settings ────
   {
     const dom = makeDom();
@@ -528,6 +564,84 @@ function evalApp(window, beforeBoot) {
     const r2 = document.querySelector('#fdResults [data-id="c-s2"]');
     t('result without a cover uses the mask thumbnail', r2.querySelector('.result-thumb').classList.contains('mask'));
     t('private result has a Join button', !!Array.prototype.find.call(r2.querySelectorAll('button'), (b) => b.textContent === 'Join'));
+  }
+
+  // ── card archive / unarchive (available to any member, both directions) ────
+  {
+    const dom = makeDom();
+    const { window, window: { document } } = dom;
+    installFakeIo(window);
+    // A game I only PLAY in (is_gm:false) — archive must still be offered.
+    const played = Object.assign({}, CLOSED_AS_PLAYER, { id: 'c-play', is_open: true, archived: false });
+    const calls = stubApi(window, { campaigns: [played] });
+    evalApp(window);
+    await wait(20);
+    const card = document.querySelector('[data-id="c-play"]');
+    const btn = card.querySelector('.card-archive');
+    t('a played (non-GM) game still shows an Archive button', !!btn && btn.textContent === 'Archive');
+    btn.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    await wait(10);
+    t('clicking Archive POSTs /archive', calls.some((c) => /\/api\/campaigns\/c-play\/archive$/.test(c.path) && c.method === 'POST'));
+  }
+  {
+    // An already-archived card offers Unarchive (the revert path that was missing).
+    const dom = makeDom();
+    const { window, window: { document } } = dom;
+    installFakeIo(window);
+    const arch = Object.assign({}, OWNED, { id: 'c-arch', archived: true });
+    const calls = stubApi(window, { campaigns: [arch] });
+    evalApp(window);
+    await wait(20);
+    const card = document.querySelector('[data-id="c-arch"]');
+    const btn = card.querySelector('.card-archive');
+    t('an archived card shows Unarchive', btn.textContent === 'Unarchive');
+    btn.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    await wait(10);
+    t('clicking Unarchive POSTs /unarchive', calls.some((c) => /\/api\/campaigns\/c-arch\/unarchive$/.test(c.path) && c.method === 'POST'));
+  }
+
+  // ── Find pagination: Load more appends a second page ───────────────────────
+  {
+    const dom = makeDom();
+    const { window, window: { document } } = dom;
+    installFakeIo(window);
+    // Server returns a FULL page (20) first, then a short page (2) → then stops.
+    const page1 = Array.from({ length: 20 }, (_, i) => ({
+      id: 'p1-' + i, name: 'Game ' + i, is_public: true, is_open: true, has_password: false,
+      owner_username: 'gm' + i, member_count: 1,
+    }));
+    const page2 = [
+      { id: 'p2-a', name: 'Extra A', is_public: true, is_open: true, has_password: false, owner_username: 'z', member_count: 1 },
+      { id: 'p2-b', name: 'Extra B', is_public: true, is_open: true, has_password: false, owner_username: 'y', member_count: 1 },
+    ];
+    // Offset-aware fake search.
+    const calls = [];
+    window.fetch = async (path, o = {}) => {
+      const method = o.method || 'GET';
+      calls.push({ path, method });
+      const reply = (s, d) => ({ status: s, json: async () => d });
+      if (/\/api\/auth\/me$/.test(path)) return reply(200, { user: USER });
+      if (/\/api\/campaigns\/mine/.test(path)) return reply(200, { campaigns: [] });
+      if (/\/api\/campaigns\/deleted$/.test(path)) return reply(200, { campaigns: [] });
+      if (/\/api\/campaigns\/search/.test(path)) {
+        const m = /offset=(\d+)/.exec(path);
+        const offset = m ? Number(m[1]) : 0;
+        return reply(200, { campaigns: offset === 0 ? page1 : page2 });
+      }
+      return reply(200, {});
+    };
+    evalApp(window);
+    await wait(20);
+    document.getElementById('btnFind').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    document.getElementById('formFind').dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
+    await wait(15);
+    t('first search page renders 20 rows', document.querySelectorAll('#fdResults .result').length === 20);
+    t('Load more is shown after a full page', !document.getElementById('fdMore').hasAttribute('hidden'));
+    document.getElementById('fdMore').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    await wait(15);
+    t('Load more APPENDS the next page (22 total)', document.querySelectorAll('#fdResults .result').length === 22);
+    t('the second request used offset=20', calls.some((c) => /search.*offset=20/.test(c.path)));
+    t('Load more hides after a short page', document.getElementById('fdMore').hasAttribute('hidden'));
   }
 
   console.log(`\n${pass} passed, ${fail} failed`);

@@ -287,6 +287,10 @@ router.get('/search', async (req, res, next) => {
       : 'all';
 
     const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 50);
+    // Offset for "load more": non-negative, and capped so a huge value can't be
+    // used to walk the whole table cheaply. Paired with the stable created_at
+    // ordering below, successive pages don't overlap.
+    const offset = Math.min(Math.max(Number(req.query.offset) || 0, 0), 10000);
 
     const query = knex('campaigns as c').whereNull('c.deleted_at');
 
@@ -295,7 +299,14 @@ router.get('/search', async (req, res, next) => {
       // concatenated into SQL. Escape the LIKE metacharacters so a user
       // searching for "100%" or "a_b" gets a literal match rather than a wildcard.
       const term = `%${q.replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`;
-      query.where((b) => b.whereILike('c.name', term).orWhereILike('c.description', term));
+      // Match the campaign name, its description, OR the GM's username, so
+      // "find games run by <person>" works. owner is joined below; knex assembles
+      // the full statement before executing, so referencing owner.username here
+      // is fine. The term stays a bound parameter (no SQL injection).
+      query.where((b) => b
+        .whereILike('c.name', term)
+        .orWhereILike('c.description', term)
+        .orWhereILike('owner.username', term));
     }
     if (visibility === 'public') query.where('c.is_public', true);
     if (visibility === 'private') query.where('c.is_public', false);
@@ -308,6 +319,7 @@ router.get('/search', async (req, res, next) => {
       .groupBy('c.id', 'owner.username')
       .orderBy('c.created_at', 'desc')
       .limit(limit)
+      .offset(offset)
       .select('c.*', 'owner.username as owner_username', knex.raw('count(m.user_id) as member_count'));
 
     return res.json({ campaigns: rows.map(searchResult) });

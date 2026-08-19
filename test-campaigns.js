@@ -112,6 +112,9 @@ const connected = (s) =>
   check('search never leaks password_hash', !r.data.campaigns.some((c) => 'password_hash' in c));
   const foundInSearch = r.data.campaigns.find((c) => c.id === priv.id);
   check('search exposes owner_username', foundInSearch && foundInSearch.owner_username === gm.username, foundInSearch && foundInSearch.owner_username);
+  // Search also matches the GM's username, so you can find games by who runs them.
+  r = await gm.req('GET', `/api/campaigns/search?q=${encodeURIComponent(gm.username)}`);
+  check('search matches by owner username', r.data.campaigns.some((c) => c.id === priv.id), `q=${gm.username}`);
   r = await gm.req('GET', `/api/campaigns/search?q=%25`);
   check('search: bare % is escaped, not a wildcard', r.status === 200 && r.data.campaigns.length === 0, JSON.stringify(r.data.campaigns && r.data.campaigns.length));
   r = await gm.req('GET', `/api/campaigns/search?q=x'; DROP TABLE campaigns;--`);
