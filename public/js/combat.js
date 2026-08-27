@@ -497,8 +497,11 @@ function renderMessage(m) {
 
 function combatPath() { return `/api/campaigns/${campaign.id}/combat/${combat.id}`; }
 
-async function loadCampaign() {
-  const id = str('campaignId');
+async function loadCampaign(idArg) {
+  // Seam: the harness reads the campaign id from the #campaignId input; the game
+  // shell passes it in through boot(). str() would throw on a page without the
+  // input, so only read it when no id was supplied.
+  const id = idArg != null ? idArg : str('campaignId');
   if (!id) return;
   const r = await api('GET', `/api/campaigns/${id}`);
   show('GET campaign', r);
@@ -908,7 +911,9 @@ function connectSocket() {
 
 // ---------------------------------------------------------------------------
 
-document.getElementById('loadCampaign').addEventListener('click', loadCampaign);
+// Seam: the harness "load" button is gone on the game page (boot supplies the
+// id), so this binding is guarded. Everything below binds ids that survive.
+{ const _lc = document.getElementById('loadCampaign'); if (_lc) _lc.addEventListener('click', () => loadCampaign()); }
 document.getElementById('startCombat').addEventListener('click', startCombat);
 document.getElementById('endCombat').addEventListener('click', endCombat);
 document.getElementById('deleteCombat').addEventListener('click', deleteCombat);
@@ -1077,8 +1082,16 @@ document.addEventListener('vtt-dice-ready', async () => {
 });
 
 // Convenience: /combat.html?campaign=<uuid> preloads, so the GM and player
-// windows can be opened from the same link.
+// windows can be opened from the same link. Guarded: on the game page the
+// #campaignId input is gone and the shell drives boot() instead.
 const preset = new URLSearchParams(window.location.search).get('campaign');
-if (preset) document.getElementById('campaignId').value = preset;
+{ const _ci = document.getElementById('campaignId'); if (_ci && preset) _ci.value = preset; }
 
-whoami().then(() => { if (preset) loadCampaign(); });
+// Seam: on the harness, preset auto-loads as before. On the game page there is
+// no #campaignId input, so this never fires — the shell calls VTTCombat.boot(id).
+{ const _hasInput = !!document.getElementById('campaignId');
+  whoami().then(() => { if (preset && _hasInput) loadCampaign(); }); }
+
+// The game shell's entry point: the encounter/chat/dice loader, parameterised.
+function boot(campaignId) { return loadCampaign(campaignId); }
+window.VTTCombat = { boot };

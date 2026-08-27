@@ -105,7 +105,7 @@
       renderHeader();
       readUrlParams();
       C.initTheme();
-      initTabs('listTabs', onListTab);
+      C.initTabs('listTabs', onListTab);
       initButtons();
       initCreate();
       initFind();
@@ -164,54 +164,11 @@
   }
   var pendingJoinId = null;
 
-  // ── Tabs component (APG) — used for #listTabs and #cdTabs ──────────────────
-  // role=tablist/tab/tabpanel, aria-selected, roving tabindex (0 on selected,
-  // -1 else), Left/Right wrap, Home/End, activation on arrow, click activates.
-  function initTabs(tablistId, onSelect) {
-    var strip = $(tablistId);
-    if (!strip) return;
-    var tabs = Array.prototype.slice.call(strip.querySelectorAll('[role="tab"]'));
-    function select(tab, focusIt) {
-      // The selected tab's panel. When several tabs share ONE panel (the list's
-      // All/Running/Playing all control #campaignPanel), that panel must stay
-      // visible on every switch — only its contents reload. So we show the
-      // selected panel first, then hide only panels that are NOT it.
-      var selectedPanelId = tab.getAttribute('aria-controls');
-      for (var i = 0; i < tabs.length; i++) {
-        var selected = tabs[i] === tab;
-        tabs[i].setAttribute('aria-selected', selected ? 'true' : 'false');
-        tabs[i].setAttribute('tabindex', selected ? '0' : '-1');
-        var panelId = tabs[i].getAttribute('aria-controls');
-        var panel = panelId ? $(panelId) : null;
-        if (!panel) continue;
-        if (panelId === selectedPanelId) {
-          panel.removeAttribute('hidden');
-          panel.setAttribute('aria-labelledby', tab.id);
-        } else {
-          panel.setAttribute('hidden', '');
-        }
-      }
-      if (focusIt && typeof tab.focus === 'function') tab.focus();
-      if (onSelect) onSelect(tab.id);
-    }
-    tabs.forEach(function (tab, idx) {
-      tab.addEventListener('click', function () { select(tab, false); });
-      tab.addEventListener('keydown', function (e) {
-        var next = null;
-        if (e.key === 'ArrowRight' || e.key === 'ArrowDown') next = tabs[(idx + 1) % tabs.length];
-        else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') next = tabs[(idx - 1 + tabs.length) % tabs.length];
-        else if (e.key === 'Home') next = tabs[0];
-        else if (e.key === 'End') next = tabs[tabs.length - 1];
-        if (next) { e.preventDefault(); select(next, true); }
-      });
-    });
-    // Expose a programmatic selector for callers (e.g. open dialog on Settings).
-    strip._select = function (tabId) {
-      var t = tabs.filter(function (x) { return x.id === tabId; })[0];
-      if (t) select(t, false);
-    };
-    return strip;
-  }
+  // ── Tabs component (APG) ───────────────────────────────────────────────────
+  // Moved verbatim to common.js (VTTCommon.initTabs) so the game page's #sideTabs
+  // reuses the same component; call it via C.initTabs above. Behaviour unchanged:
+  // role=tablist/tab/tabpanel, aria-selected, roving tabindex, arrow/Home/End,
+  // and strip._select(tabId) for programmatic selection (used by selectTab).
 
   function onListTab(tabId) {
     activeTab = tabId;

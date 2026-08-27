@@ -117,9 +117,30 @@ async function whoami() {
 }
 
 // --- scene management ---
-document.getElementById('load-scenes').addEventListener('click', loadScenes);
+// Seam: the harness supplies the campaign id through the #campaign-id input and
+// the "Load scenes" button; the game shell supplies it through boot(id). The
+// wiring is guarded so binding does not throw on a page (game.html, the jsdom
+// suite's shell) that has no such input/button.
+{
+  const _loadBtn = document.getElementById('load-scenes');
+  const _cidInput = document.getElementById('campaign-id');
+  if (_loadBtn) {
+    _loadBtn.addEventListener('click', () => {
+      // Harness: the id comes from the #campaign-id input. Game page: the input
+      // is gone, the button is the Scenes-modal refresh, and campaignId is
+      // already set by boot() — so only re-read when the input is present.
+      if (_cidInput) campaignId = _cidInput.value.trim();
+      if (campaignId) loadScenes();
+    });
+  }
+}
+// The game shell's entry point: set the campaign id (bypassing the dead input)
+// then run the file's existing scene-load body unchanged.
+function boot(id) {
+  campaignId = id;
+  return loadScenes();
+}
 async function loadScenes() {
-  campaignId = document.getElementById('campaign-id').value.trim();
   if (!campaignId) return;
   // Ownership decides what this list even means, so settle it before rendering.
   await fetchOwner();
@@ -237,7 +258,10 @@ function closeScene(reason) {
 }
 
 document.getElementById('create-scene').addEventListener('click', async () => {
-  campaignId = document.getElementById('campaign-id').value.trim();
+  // Seam: read the harness's #campaign-id input when present; on the game page
+  // the input is gone and campaignId is already set by boot(), so keep it.
+  const _cid = document.getElementById('campaign-id');
+  if (_cid) campaignId = _cid.value.trim();
   const name = document.getElementById('new-scene-name').value.trim();
   if (!campaignId || !name) return show('need a campaign id and a scene name');
   const r = await api('POST', `/api/campaigns/${campaignId}/scenes`, { name });
@@ -2239,6 +2263,18 @@ async function fetchOwner() {
 }
 
 whoami();
+
+// Seam: the game shell's left-rail ping mode. On the next canvas pointerdown it
+// calls pingAt(event); we convert to the exact (unsnapped) grid point the same
+// way the context menu's "ping here" does (openMenuAt), then reuse sendPing.
+function pingAt(e) {
+  const cp = stagePoint(e);
+  sendPing(cp.x / GRID_PX, cp.y / GRID_PX, false);
+}
+
+// The game shell drives this file through boot(id) and pingAt(e); every other
+// render path, socket handler and shortcut is unchanged and still runs at load.
+window.VTTScene = { boot, pingAt };
 
 // M6: let the token image field be filled from the campaign's image library
 // rather than by pasting a URL. Guarded, because the field must keep working on

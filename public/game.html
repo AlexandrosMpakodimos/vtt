@@ -1,0 +1,845 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>The table — A Virtual Tabletop</title>
+
+  <!-- Data-URI favicon: a simple gold d20 glyph on the near-black ground. -->
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%230c0e13'/%3E%3Cpath d='M16 3 L27 9.5 L27 22.5 L16 29 L5 22.5 L5 9.5 Z' fill='none' stroke='%23c79a5b' stroke-width='1.4'/%3E%3Cpath d='M16 3 L16 29 M5 9.5 L27 22.5 M27 9.5 L5 22.5' stroke='%238a6c3c' stroke-width='1'/%3E%3C/svg%3E">
+
+  <!-- Shared token system (colour, focus ring, themed scrollbars). -->
+  <link rel="stylesheet" href="/css/tokens.css">
+
+  <!-- Anti-flash theme script: NO defer, NO async — sets data-theme before the
+       first paint, exactly as the landing and dashboard do. -->
+  <script src="/js/theme.js"></script>
+
+  <style>
+    /* Page-local styles. Colour comes entirely from tokens.css. The component
+       recipes (.wordmark, .btn, .field, dialog) are carried over verbatim from
+       the dashboard so the table matches the rest of the product; the rest is
+       the game-specific layout — fixed zones floating over a full-viewport
+       canvas (spec §2). Inline <style> is CSP-permitted (style-src 'self'
+       covers the page's own <style>; there is no inline SCRIPT or on*= here). */
+
+    :root {
+      --pad: clamp(0.6rem, 2vw, 1.1rem);
+      --font-body: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      --ease: cubic-bezier(0.22, 1, 0.36, 1);
+      --bar-h: 44px;
+      --side-w: 360px;
+      --rail-w: 52px;
+      /* d20 glyph reused as a mask so marks follow theme colour. */
+      --d20: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 3 L27 9.5 L27 22.5 L16 29 L5 22.5 L5 9.5 Z M16 3 L16 29 M5 9.5 L27 22.5 M27 9.5 L5 22.5' fill='none' stroke='black' stroke-width='1.6'/%3E%3C/svg%3E");
+    }
+
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+
+    html, body { height: 100%; }
+    body {
+      margin: 0; overflow: hidden;               /* the canvas is the page */
+      background: var(--surface); color: var(--text);
+      font-family: var(--font-body); font-weight: 400; line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* Theme crossfade, applied only AFTER first paint (.theme-ready), matching
+       the dashboard. Off for the initial paint so the theme is instant. */
+    .theme-ready .fx {
+      transition: background-color 0.5s ease, color 0.5s ease, border-color 0.5s ease;
+    }
+
+    h1, h2, h3 { line-height: 1.14; font-weight: 700; margin: 0; }
+    a { color: var(--link); text-decoration: none; }
+    .muted { color: var(--text-muted); font-size: 0.82rem; }
+    .no-select { user-select: none; -webkit-user-select: none; }
+    :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 2px; }
+    .btn:focus-visible { outline-offset: 3px; }
+
+    /* ── Buttons (verbatim recipe from the dashboard) ───────────────────────── */
+    .btn {
+      font: inherit; font-weight: 600; cursor: pointer;
+      border-radius: 2px; padding: 0.5rem 1rem;
+      min-height: 40px; min-width: 40px;
+      display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem;
+      border: 1px solid transparent; background: transparent; color: inherit;
+      text-decoration: none; letter-spacing: 0.02em;
+      transition: color 0.2s var(--ease), background-color 0.2s var(--ease),
+                  box-shadow 0.2s var(--ease), border-color 0.2s var(--ease);
+    }
+    .btn.secondary { border-color: var(--rule); color: var(--accent); background: transparent; }
+    .btn.secondary:hover {
+      color: var(--on-accent); background: var(--accent);
+      box-shadow: 0 0 6px color-mix(in srgb, var(--accent) 70%, transparent),
+                  0 0 18px color-mix(in srgb, var(--accent) 40%, transparent);
+    }
+    .btn.primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+    .btn.primary:hover {
+      box-shadow: 0 0 8px color-mix(in srgb, var(--accent) 80%, transparent),
+                  0 0 22px color-mix(in srgb, var(--accent) 45%, transparent);
+      transform: translateY(-1px);
+    }
+    .btn.danger { border-color: var(--danger); color: var(--danger); background: transparent; }
+    .btn.danger:hover { color: var(--on-accent); background: var(--danger); border-color: var(--danger); }
+    .btn.small { min-height: 34px; padding: 0.35rem 0.75rem; font-size: 0.82rem; }
+    .btn.icon { padding: 0.5rem; min-height: 40px; min-width: 40px; }
+    .btn.icon svg { width: 20px; height: 20px; display: block; }
+    .btn:disabled { opacity: 0.55; cursor: default; box-shadow: none; transform: none; }
+    @media (prefers-reduced-motion: reduce) { .btn.primary:hover { transform: none; } }
+
+    /* ── Fields (verbatim recipe from the dashboard) ────────────────────────── */
+    .field { display: grid; gap: 0.3rem; margin-bottom: 0.7rem; }
+    .field label { font-size: 0.76rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); }
+    .field .help { font-size: 0.76rem; color: var(--text-muted); }
+    .field input, .field select, .field textarea {
+      font: inherit; padding: 0.5rem 0.6rem; border-radius: 2px;
+      border: 1px solid var(--border); background: var(--surface); color: var(--text);
+      min-height: 40px; width: 100%;
+    }
+    .row { display: flex; gap: 0.5rem; align-items: flex-end; flex-wrap: wrap; }
+    .row > .field { flex: 1; min-width: 90px; margin-bottom: 0; }
+
+    /* ── Wordmark (verbatim recipe) ─────────────────────────────────────────── */
+    .wordmark {
+      font-weight: 800; font-size: 0.9rem; letter-spacing: 0.2em;
+      text-transform: uppercase; color: var(--accent);
+      display: inline-flex; align-items: center; gap: 0.5rem;
+    }
+    .wordmark::before {
+      content: ""; width: 20px; height: 20px; flex: none;
+      background: var(--accent);
+      -webkit-mask: var(--d20) center / contain no-repeat;
+      mask: var(--d20) center / contain no-repeat;
+    }
+
+    /* ── Top bar (spec §2) ──────────────────────────────────────────────────── */
+    #topBar {
+      position: fixed; inset: 0 0 auto 0; z-index: 40;
+      display: flex; align-items: center; gap: 0.9rem;
+      height: var(--bar-h); padding: 0 var(--pad);
+      background: color-mix(in srgb, var(--surface) 82%, transparent);
+      -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+      border-bottom: 1px solid var(--border); flex-wrap: nowrap;
+    }
+    #topBar .bar-left, #topBar .bar-right { display: flex; align-items: center; gap: 0.6rem; min-width: 0; }
+    #topBar .bar-right { margin-left: auto; }
+    #barBack { flex: none; }
+    #campName { font-weight: 700; letter-spacing: 0.03em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 22vw; }
+    #sceneName { color: var(--text-muted); font-size: 0.85rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 18vw; }
+    #connState { font-size: 0.76rem; color: var(--text-muted); letter-spacing: 0.02em; min-width: 1px; white-space: nowrap; }
+    #whoami { font-size: 0.76rem; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 16vw; }
+
+    /* ── The canvas: fixed, full viewport, beneath everything (spec §2) ─────── */
+    #stage-wrap {
+      position: fixed; inset: 0; z-index: 0;
+      overflow: hidden; background: var(--surface);
+      cursor: default; touch-action: none;
+    }
+    #stage { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+    #grid-pad { position: absolute; inset: 0; }
+    #stage-bg { position: absolute; inset: 0; background-repeat: no-repeat; background-position: 0 0; background-size: cover; }
+    #fog-layer { position: absolute; inset: 0; overflow: visible; pointer-events: none; }
+    #marquee { position: absolute; border: 1px dashed var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); display: none; pointer-events: none; }
+    #zoom-hud {
+      position: fixed; right: 12px; bottom: 12px; z-index: 20;
+      font-size: 0.72rem; color: var(--text-muted); background: color-mix(in srgb, var(--surface) 80%, transparent);
+      border: 1px solid var(--border); border-radius: 2px; padding: 0.15rem 0.45rem; pointer-events: none;
+    }
+    /* The context menu is positioned by scene.js (fixed left/top); style only. */
+    #ctx-menu {
+      position: fixed; z-index: 60; display: none; min-width: 160px;
+      background: var(--surface-raised); border: 1px solid var(--rule); border-radius: 3px;
+      box-shadow: 0 12px 34px rgba(0,0,0,0.5); padding: 0.25rem; font-size: 0.85rem;
+    }
+    #ctx-menu .head { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); padding: 0.3rem 0.5rem; }
+    #ctx-menu .item { padding: 0.35rem 0.6rem; border-radius: 2px; cursor: pointer; }
+    #ctx-menu .item:hover { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--text); }
+    #ctx-menu .sep { height: 1px; background: var(--border); margin: 0.25rem 0.2rem; }
+
+    /* The 3D dice tray: a fixed, click-through canvas over EVERYTHING (spec §1). */
+    #diceTray { position: fixed; inset: 0; z-index: 70; pointer-events: none; }
+
+    /* ── Initiative strip zone (spec §2) ────────────────────────────────────── */
+    #stripZone {
+      position: fixed; top: calc(var(--bar-h) + 8px); left: 50%; transform: translateX(-50%);
+      z-index: 30; max-width: 70vw; width: max-content;
+      display: flex; flex-direction: column; align-items: center; gap: 6px;
+    }
+    .strip-wrap { display: flex; align-items: center; gap: 4px; max-width: 70vw;
+      background: color-mix(in srgb, var(--surface) 85%, transparent); border: 1px solid var(--border);
+      border-radius: 4px; padding: 4px; -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
+    #strip { display: flex; gap: 6px; overflow-x: auto; scroll-behavior: smooth; padding: 2px; }
+    #strip:empty::after { content: "no encounter running"; color: var(--text-muted); font-size: 0.78rem; padding: 0.3rem 0.6rem; }
+    .strip .nav, #stripZone .nav { flex: none; }
+    #rosterInfo { font-size: 0.76rem; color: var(--text-muted); }
+    #encounterPop {
+      position: absolute; top: calc(100% + 6px); left: 50%; transform: translateX(-50%);
+      z-index: 31; width: min(30rem, 92vw); background: var(--surface-raised);
+      border: 1px solid var(--rule); border-radius: 4px; padding: 0.9rem; box-shadow: 0 16px 40px rgba(0,0,0,0.5);
+    }
+
+    /* ── Left rail (spec §2) ────────────────────────────────────────────────── */
+    #railZone {
+      position: fixed; top: calc(var(--bar-h) + 10px); left: 10px; z-index: 32;
+      display: flex; flex-direction: column; gap: 6px;
+      background: color-mix(in srgb, var(--surface) 85%, transparent);
+      border: 1px solid var(--border); border-radius: 6px; padding: 6px;
+      -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+    }
+    .rail-btn {
+      position: relative; width: 40px; height: 40px; padding: 0; flex: none;
+      display: inline-flex; align-items: center; justify-content: center;
+      background: transparent; border: 1px solid transparent; border-radius: 4px;
+      color: var(--text-muted); cursor: pointer;
+    }
+    .rail-btn:hover { color: var(--text); border-color: var(--border); }
+    .rail-btn[aria-pressed="true"] { color: var(--on-accent); background: var(--accent); border-color: var(--accent); }
+    .rail-btn svg { width: 20px; height: 20px; display: block; }
+    /* Label on hover/focus. */
+    .rail-btn .rail-label {
+      position: absolute; left: calc(100% + 8px); top: 50%; transform: translateY(-50%);
+      white-space: nowrap; font-size: 0.76rem; background: var(--surface-raised);
+      border: 1px solid var(--border); border-radius: 3px; padding: 0.15rem 0.5rem;
+      color: var(--text); opacity: 0; pointer-events: none; transition: opacity 0.12s ease;
+    }
+    .rail-btn:hover .rail-label, .rail-btn:focus-visible .rail-label { opacity: 1; }
+    /* Popovers anchored off the rail (place-token, fog). */
+    .rail-pop {
+      position: fixed; left: calc(10px + var(--rail-w) + 6px); top: calc(var(--bar-h) + 10px);
+      z-index: 33; width: min(24rem, 88vw); background: var(--surface-raised);
+      border: 1px solid var(--rule); border-radius: 6px; padding: 0.85rem; box-shadow: 0 16px 40px rgba(0,0,0,0.5);
+    }
+
+    /* ── Right sidebar (spec §2) ────────────────────────────────────────────── */
+    #sideBar {
+      position: fixed; top: var(--bar-h); right: 0; bottom: 0; z-index: 35;
+      width: var(--side-w); max-width: 100vw;
+      display: flex; flex-direction: column;
+      background: color-mix(in srgb, var(--surface) 94%, transparent);
+      border-left: 1px solid var(--border);
+      -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+      transition: transform 0.22s var(--ease);
+    }
+    body.sidebar-collapsed #sideBar { transform: translateX(100%); }
+    @media (prefers-reduced-motion: reduce) { #sideBar { transition: none; } }
+    #sideTabs { display: flex; align-items: center; gap: 0.2rem; border-bottom: 1px solid var(--border); padding: 0 0.4rem; flex: none; }
+    #sideTabs .tab {
+      font: inherit; font-weight: 600; cursor: pointer; background: transparent; border: none; color: var(--text-muted);
+      padding: 0.7rem 0.7rem; letter-spacing: 0.03em; text-transform: uppercase; font-size: 0.76rem;
+      border-bottom: 2px solid transparent; margin-bottom: -1px;
+    }
+    #sideTabs .tab[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--rule); }
+    #sideTabs .tab:hover { color: var(--text); }
+    .side-panel { flex: 1 1 auto; overflow-y: auto; padding: 0.9rem; }
+    .side-panel h3 { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--accent); margin: 0.2rem 0 0.5rem; }
+    .side-panel .subhead { font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); margin: 1rem 0 0.4rem; border-top: 1px solid var(--border); padding-top: 0.7rem; }
+    .side-panel hr { border: none; border-top: 1px solid var(--border); margin: 0.8rem 0; }
+
+    /* Chat log + roster/message lists. */
+    #chat { border: 1px solid var(--border); border-radius: 3px; background: var(--surface); padding: 0.5rem; height: 34vh; overflow-y: auto; font-size: 0.85rem; }
+    #chat:empty::after { content: "no messages yet"; color: var(--text-muted); }
+    #diceLegend, #palette, #paletteMsg, #trayPool { font-size: 0.82rem; }
+    #trayPool.pool { border: 1px dashed var(--border); border-radius: 2px; padding: 0.35rem 0.5rem; min-height: 40px; }
+    .dice-bar .quick { min-width: 40px; }
+    #actorList, #itemList, #assetList, #spellList, #sbList, #tokens, #scene-list { display: grid; gap: 0.4rem; }
+    #sceneSel, #speakAs, #whisperTo, #diceColor { }
+
+    /* ── Sidebar toggle (in the bar) ────────────────────────────────────────── */
+    #sidebarToggle .bars { width: 18px; height: 2px; background: currentColor; position: relative; display: block; }
+    #sidebarToggle .bars::before, #sidebarToggle .bars::after { content: ""; position: absolute; left: 0; width: 18px; height: 2px; background: currentColor; }
+    #sidebarToggle .bars::before { top: -6px; } #sidebarToggle .bars::after { top: 6px; }
+
+    /* ── Dialogs (verbatim recipe from the dashboard) ───────────────────────── */
+    dialog {
+      border: 1px solid var(--rule); border-radius: 3px; padding: 0;
+      background: var(--surface-raised); color: var(--text);
+      box-shadow: 0 0 0 1px color-mix(in srgb, var(--rule) 30%, transparent), 0 24px 60px rgba(0,0,0,0.5);
+    }
+    dialog::backdrop { background: rgba(6, 7, 10, 0.7); backdrop-filter: blur(2px); }
+    .card-inner { padding: 1.4rem; position: relative; max-height: 88vh; overflow-y: auto; width: min(46rem, 94vw); }
+    #alignDialog .card-inner { width: auto; max-height: none; }
+    .dialog-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: 0.4rem; }
+    .card-inner h2 { font-size: 1.2rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--accent); overflow-wrap: anywhere; }
+    .card-inner h2 + .rule { height: 2px; width: 3rem; background: var(--rule); margin: 0.3rem 0 1rem; }
+    .card-close {
+      flex: none; width: 40px; height: 40px; border-radius: 2px; border: 1px solid var(--border);
+      background: transparent; color: var(--text); cursor: pointer; font-size: 1.1rem; line-height: 1;
+    }
+    .card-close:hover { border-color: var(--rule); color: var(--accent); }
+
+    /* Align modal is fullscreen (spec §2: inset 2vh 2vw). */
+    #alignDialog { inset: 2vh 2vw; width: auto; height: auto; max-width: none; max-height: none; }
+    #alignDialog[open] { display: block; }
+    #alignDialog #viewport { position: relative; overflow: hidden; border: 1px solid var(--border);
+      background: var(--surface); height: 64vh; cursor: grab; touch-action: none; }
+    #alignDialog #viewport.dragging { cursor: grabbing; }
+    #alignDialog #map { position: absolute; inset: 0; background-repeat: no-repeat; background-position: 0 0; transform-origin: 0 0; }
+    #alignDialog #overlay { position: absolute; inset: 0; pointer-events: none; }
+    #alignDialog #ruler { position: absolute; inset: 0; pointer-events: none; border: 2px solid var(--accent); box-sizing: border-box; opacity: 0.9; display: none; }
+    #alignDialog .hint { background: color-mix(in srgb, var(--accent) 8%, transparent); border-left: 3px solid var(--rule); padding: 0.5rem 0.7rem; font-size: 0.8rem; margin: 0.5rem 0; }
+    #alignDialog .warn, .warn { color: var(--danger); font-size: 0.8rem; font-weight: 700; }
+
+    /* The framing modal (from actors.html) — a plain fixed overlay, stacks above
+       the sheet dialog (spec §2). Kept as its own layer, as in the harness. */
+    #frameModal { position: fixed; inset: 0; z-index: 80; display: none; align-items: center; justify-content: center; background: rgba(6,7,10,0.7); }
+    #frameModal.open { display: flex; }
+    #frameModal .frame-box { background: var(--surface-raised); border: 1px solid var(--rule); border-radius: 4px; padding: 1.2rem; width: min(34rem, 94vw); box-shadow: 0 24px 60px rgba(0,0,0,0.5); }
+    #frameStage { position: relative; overflow: hidden; border: 1px solid var(--border); background: var(--surface); height: 40vh; margin: 0.6rem 0; }
+    #frameArt { position: absolute; inset: 0; background-repeat: no-repeat; background-position: center; transform-origin: center; }
+
+    /* ── Debug drawer (spec §2) — GM-only, collapsed to nothing by default ──── */
+    #drawer {
+      position: fixed; left: 0; bottom: 0; z-index: 45; width: min(30rem, 90vw);
+      max-height: 40vh; overflow: auto; background: var(--surface-raised);
+      border: 1px solid var(--border); border-radius: 0 6px 0 0; padding: 0.6rem 0.7rem;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.74rem;
+    }
+    #drawer .drawer-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; margin-bottom: 0.4rem; }
+    #out, #log { white-space: pre-wrap; word-break: break-word; }
+    #log { max-height: 24vh; overflow-y: auto; border-top: 1px solid var(--border); padding-top: 0.4rem; margin-top: 0.4rem; }
+
+    /* ── The gate screen (403 / 404 / closed) — plain full-screen state ─────── */
+    #gameGate {
+      position: fixed; inset: 0; z-index: 90; display: none;
+      flex-direction: column; align-items: center; justify-content: center; gap: 1rem;
+      background: var(--surface); color: var(--text); text-align: center; padding: 2rem;
+    }
+    #gameGate.show { display: flex; }
+    #gameGate .gate-title { font-size: 1.4rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--accent); }
+    #gameGate .gate-msg { color: var(--text-muted); max-width: 34rem; }
+
+    /* GM/player visibility. body.is-gm is set by game.js once ownership is known;
+       until then .gm-only content stays hidden (fail-closed for display). */
+    .gm-only { display: none; }
+    body.is-gm .gm-only { display: initial; }
+    body.is-gm .player-only { display: none; }
+    /* Rail/flex GM-only elements need the right display when shown. */
+    body.is-gm .rail-btn.gm-only { display: inline-flex; }
+
+    .assets { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+    .pool { }
+
+    /* Mobile: sidebar becomes a full-width overlay; rail stays; bar may wrap. */
+    @media (max-width: 640px) {
+      #sideBar { width: 100vw; }
+      #topBar { flex-wrap: wrap; height: auto; padding: 0.4rem var(--pad); }
+      #campName { max-width: 40vw; } #sceneName { max-width: 40vw; } #whoami { max-width: 40vw; }
+      #stripZone { max-width: 96vw; }
+    }
+  </style>
+</head>
+<body class="no-select">
+
+  <!-- The canvas is the page. Everything else floats above it. Regions copied
+       verbatim from scene.html so every id/class scene.js binds arrives intact;
+       the height:60vh rule is dropped and the wrap is fixed inset:0 (spec §5). -->
+  <div id="stage-wrap" class="fx">
+    <div id="stage"><div id="grid-pad"></div><div id="stage-bg"></div><svg id="fog-layer" xmlns="http://www.w3.org/2000/svg"></svg><div id="marquee"></div></div>
+    <div id="zoom-hud">100%</div>
+  </div>
+  <div id="ctx-menu"></div>
+
+  <!-- ── Top bar (spec §2) ──────────────────────────────────────────────────── -->
+  <header id="topBar" class="fx">
+    <div class="bar-left">
+      <a id="barBack" class="wordmark" href="/dashboard.html" title="Back to your games">Dashboard</a>
+      <span id="campName">…</span>
+      <span id="sceneName"></span>
+      <button id="btnScenes" class="btn small secondary gm-only" type="button">Scenes</button>
+    </div>
+    <div class="bar-right">
+      <span id="connState" role="status" aria-live="polite"></span>
+      <span id="whoami">checking…</span>
+      <button id="themeToggle" class="btn icon" type="button" aria-label="Switch theme" title="Switch theme">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M19.1 4.9l-1.4 1.4M6.3 17.7l-1.4 1.4"/></svg>
+      </button>
+      <button id="sidebarToggle" class="btn icon" type="button" aria-expanded="true" aria-controls="sideBar" aria-label="Toggle sidebar" title="Toggle sidebar"><span class="bars"></span></button>
+    </div>
+  </header>
+
+  <!-- ── Initiative strip (spec §2). The strip/scroll block is copied verbatim
+       from combat.html; the GM encounter controls live in #encounterPop. ───── -->
+  <div id="stripZone" class="fx">
+    <div class="strip-wrap">
+      <button class="btn icon small gm-only" id="btnEncounter" type="button" aria-label="Encounter controls" title="Encounter controls" aria-expanded="false">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+      </button>
+      <button class="btn icon small nav" id="scrollLeft" type="button" title="scroll left" aria-label="scroll left">‹</button>
+      <div class="strip" id="strip"></div>
+      <button class="btn icon small nav" id="scrollRight" type="button" title="scroll right" aria-label="scroll right">›</button>
+    </div>
+    <p id="rosterInfo" role="status">—</p>
+    <div id="selected" class="gm-only"></div>
+
+    <!-- GM encounter popover: sceneSel (combat's — the surviving instance),
+         combatName, start/end/delete, combatInfo (spec §2 / §4). -->
+    <div id="encounterPop" class="gm-only" hidden>
+      <div class="row">
+        <div class="field" style="flex:2">
+          <label for="sceneSel">scene</label>
+          <select id="sceneSel"></select>
+        </div>
+        <div class="field" style="flex:2">
+          <label for="combatName">encounter name</label>
+          <input id="combatName" placeholder="Ambush at the bridge" />
+        </div>
+      </div>
+      <div class="row">
+        <button id="startCombat" class="btn small primary" type="button">start encounter</button>
+        <button id="endCombat" class="btn small secondary" type="button">end</button>
+        <button id="deleteCombat" class="btn small danger" type="button">delete</button>
+      </div>
+      <p class="muted" id="combatInfo">no encounter loaded</p>
+    </div>
+  </div>
+
+  <!-- ── Left rail (spec §2). Players see token + ping; GM also fog/align/
+       scenes/console. The place-token and fog blocks are copied verbatim from
+       scene.html into their popovers (ids intact). ─────────────────────────── -->
+  <nav id="railZone" class="fx" aria-label="Table tools">
+    <button id="railToken" class="rail-btn" type="button" aria-pressed="false" aria-haspopup="true" aria-expanded="false">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2.5" fill="currentColor" stroke="none"/></svg>
+      <span class="rail-label">Place token</span>
+    </button>
+    <button id="railPing" class="rail-btn" type="button" aria-pressed="false">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M6.3 6.3a8 8 0 0 0 0 11.4M17.7 6.3a8 8 0 0 1 0 11.4"/></svg>
+      <span class="rail-label">Ping (Esc to disarm)</span>
+    </button>
+    <button id="railFog" class="rail-btn gm-only" type="button" aria-pressed="false" aria-haspopup="true" aria-expanded="false">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M4 15a4 4 0 0 1 1.2-7.8A5.5 5.5 0 0 1 16 7a3.8 3.8 0 0 1 4 3.8 3.8 3.8 0 0 1-3.8 4.2z"/></svg>
+      <span class="rail-label">Fog (F)</span>
+    </button>
+    <button id="railAlign" class="rail-btn gm-only" type="button">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M3 3h18v18H3z"/><path d="M9 3v18M15 3v18M3 9h18M3 15h18"/></svg>
+      <span class="rail-label">Align grid</span>
+    </button>
+    <button id="railScenes" class="rail-btn gm-only" type="button">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M4 6h12v10H4z"/><path d="M8 4h12v10"/></svg>
+      <span class="rail-label">Scenes</span>
+    </button>
+    <button id="railConsole" class="rail-btn gm-only" type="button" aria-pressed="false">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M4 5h16v14H4z"/><path d="M8 9l3 3-3 3M13 15h4"/></svg>
+      <span class="rail-label">Debug console</span>
+    </button>
+  </nav>
+
+  <!-- Place-token popover (verbatim from scene.html's "Place a token"; ids intact). -->
+  <div id="tokenPop" class="rail-pop" hidden>
+    <h3>Place a token</h3>
+    <div class="row">
+      <div class="field" style="flex:2">
+        <label for="tok-actor">character</label>
+        <select id="tok-actor" title="place a token for a character">
+          <option value="">— no character —</option>
+        </select>
+      </div>
+      <div class="field"><label for="tok-name">name</label><input id="tok-name" placeholder="token name" /></div>
+    </div>
+    <div class="row">
+      <div class="field" style="flex:2"><label for="tok-img">image url</label><input id="tok-img" placeholder="https://image… (optional)" /></div>
+      <div class="field"><label for="tok-count">how many</label><input id="tok-count" type="number" min="1" max="50" value="1" title="how many to place" /></div>
+      <div class="field">
+        <label for="tok-size">size</label>
+        <select id="tok-size" title="creature size">
+          <option value="">— from character —</option>
+          <option value="medium">Medium (1×1)</option>
+          <option value="tiny">Tiny (½×½)</option>
+          <option value="small">Small (1×1)</option>
+          <option value="large">Large (2×2)</option>
+          <option value="huge">Huge (3×3)</option>
+          <option value="gargantuan">Gargantuan (4×4)</option>
+        </select>
+      </div>
+      <button id="place-token" class="btn small primary" type="button">Place</button>
+    </div>
+    <p class="muted">Placed at the pointer. Multiples are packed and numbered (<i>Goblin, Goblin 2…</i>). GM: unlimited · player: 1.</p>
+  </div>
+
+  <!-- Fog popover (verbatim from scene.html's #fog-panel; id and controls intact).
+       F still toggles fog mode from the keyboard (scene.js owns the shortcut). -->
+  <div id="fog-panel" class="rail-pop gm-only" hidden>
+    <h3>Fog of war</h3>
+    <div class="row">
+      <label for="fog-mode" style="display:inline-flex;align-items:center;gap:0.35rem;margin:0">
+        <input type="checkbox" id="fog-mode" /> fog mode <span class="muted">(F)</span>
+      </label>
+      <select id="fog-tool" title="what a drag does">
+        <option value="select">select / move</option>
+        <option value="cover">cover (draw fog)</option>
+        <option value="reveal">reveal (erase fog)</option>
+      </select>
+      <select id="fog-shape" title="shape to draw">
+        <option value="rect">rectangle</option>
+        <option value="circle">circle</option>
+        <option value="poly">polygon</option>
+      </select>
+    </div>
+    <div class="row">
+      <button id="fog-cover-all" class="btn small secondary" type="button">Cover whole scene</button>
+      <button id="fog-clear-all" class="btn small secondary" type="button">Clear all fog</button>
+    </div>
+    <p class="muted">Cover paints fog; Reveal erases it. Drag for a rectangle or circle; for a polygon click each corner then Enter (Esc cancels). Select to pick/move a region · T flips cover/reveal.</p>
+  </div>
+
+  <!-- ── Right sidebar (spec §2): three tabs — Chat & Dice / Characters /
+       Library. The APG tablist is driven by VTTCommon.initTabs(#sideTabs). ─── -->
+  <aside id="sideBar" class="fx" aria-label="Table panels">
+    <div id="sideTabs" role="tablist" aria-label="Panels">
+      <button class="tab" id="tabChat" role="tab" aria-controls="panelChat" aria-selected="true" tabindex="0" type="button">Chat &amp; Dice</button>
+      <button class="tab" id="tabChars" role="tab" aria-controls="panelChars" aria-selected="false" tabindex="-1" type="button">Characters</button>
+      <button class="tab" id="tabLibrary" role="tab" aria-controls="panelLibrary" aria-selected="false" tabindex="-1" type="button">Library</button>
+    </div>
+
+    <!-- Chat & Dice panel (verbatim from combat.html's chat & dice fieldset). -->
+    <section class="side-panel" id="panelChat" role="tabpanel" aria-labelledby="tabChat">
+      <div id="chat" aria-live="polite"></div>
+      <div class="row">
+        <div class="field" style="flex:2"><label for="speakAs">speaking as</label><select id="speakAs"></select></div>
+        <div class="field" style="flex:3"><label for="chatText">message</label><input id="chatText" placeholder="I attack the goblin" /></div>
+        <button id="sendChat" class="btn small primary" type="button">say</button>
+      </div>
+      <div class="row dice-bar">
+        <div style="flex:0 0 100%"><label class="muted">dice tray — click to add, click again to stack</label></div>
+        <button class="btn small quick" data-sides="4" type="button">d4</button>
+        <button class="btn small quick" data-sides="6" type="button">d6</button>
+        <button class="btn small quick" data-sides="8" type="button">d8</button>
+        <button class="btn small quick" data-sides="10" type="button">d10</button>
+        <button class="btn small quick" data-sides="12" type="button">d12</button>
+        <button class="btn small quick" data-sides="20" type="button">d20</button>
+        <button class="btn small quick" data-sides="100" type="button">d100</button>
+      </div>
+      <div class="row dice-bar">
+        <div class="field" style="flex:2"><label for="trayMod">modifier</label><input id="trayMod" type="number" value="0" /></div>
+        <div class="field" style="flex:3"><label>pool</label><div id="trayPool" class="pool">empty</div></div>
+        <button id="trayRoll" class="btn small secondary" type="button">roll pool</button>
+        <button id="trayClear" class="btn small secondary" type="button">clear</button>
+      </div>
+      <div class="row">
+        <div class="field" style="flex:2"><label for="diceFormula">roll</label><input id="diceFormula" value="2d6+3" /></div>
+        <div class="field" style="flex:2"><label for="diceLabel">label (optional)</label><input id="diceLabel" placeholder="Perception" /></div>
+        <button id="sendRoll" class="btn small primary" type="button">roll</button>
+      </div>
+      <div class="row">
+        <div class="field" style="flex:3"><label for="whisperTo">whisper to (empty = everyone)</label><select id="whisperTo" multiple size="3"></select></div>
+      </div>
+      <div class="subhead">3D dice</div>
+      <div class="row">
+        <label for="dice3d" style="display:inline-flex;align-items:center;gap:0.35rem"><input id="dice3d" type="checkbox" checked /> 3D dice</label>
+        <div class="field" style="flex:2"><label for="diceColor">dice colour</label><select id="diceColor"></select></div>
+      </div>
+      <div class="row">
+        <label for="diceGrab" style="display:inline-flex;align-items:center;gap:0.35rem"><input id="diceGrab" type="checkbox" checked /> grab dice</label>
+        <div class="field"><label for="diceFade">fade after (s)</label><input id="diceFade" type="number" value="6" min="0" max="60" /></div>
+        <button id="diceClear" class="btn small secondary" type="button">clear tray</button>
+      </div>
+      <div>
+        <label class="muted">whose dice are whose — click a free swatch to claim it</label>
+        <div id="diceLegend" class="muted">—</div>
+        <div id="palette" class="palette"></div>
+        <div id="paletteMsg" class="muted"></div>
+      </div>
+    </section>
+
+    <!-- Characters panel (verbatim from actors.html's characters fieldset). -->
+    <section class="side-panel" id="panelChars" role="tabpanel" aria-labelledby="tabChars" hidden>
+      <h3>Create a character</h3>
+      <div class="row">
+        <div class="field" style="flex:2"><label for="acName">name</label><input id="acName" placeholder="Aria" /></div>
+        <div class="field"><label for="acImg">img url</label><input id="acImg" placeholder="https://…" /></div>
+        <div class="field"><label for="acHp">hp</label><input id="acHp" type="number" value="10" /></div>
+      </div>
+      <p class="muted player-only">You create a character shell — the GM fills in its capabilities (size, max HP, level, ability scores) afterwards.</p>
+      <div class="gm-only">
+        <div class="row">
+          <div class="field"><label for="acSize">size</label>
+            <select id="acSize">
+              <option>Tiny</option><option>Small</option>
+              <option selected>Medium</option><option>Large</option>
+              <option>Huge</option><option>Gargantuan</option>
+            </select>
+          </div>
+          <div class="field"><label for="acHpMax">hp max</label><input id="acHpMax" type="number" value="10" /></div>
+          <div class="field"><label for="acAc">AC</label><input id="acAc" type="number" value="10" /></div>
+          <div class="field"><label for="acLevel">level</label><input id="acLevel" type="number" value="1" /></div>
+          <div class="field"><label for="acSpeed">speed</label><input id="acSpeed" type="number" value="30" /></div>
+        </div>
+        <div class="row">
+          <div class="field"><label for="acStr">STR</label><input id="acStr" type="number" value="10" /></div>
+          <div class="field"><label for="acDex">DEX</label><input id="acDex" type="number" value="10" /></div>
+          <div class="field"><label for="acCon">CON</label><input id="acCon" type="number" value="10" /></div>
+          <div class="field"><label for="acInt">INT</label><input id="acInt" type="number" value="10" /></div>
+          <div class="field"><label for="acWis">WIS</label><input id="acWis" type="number" value="10" /></div>
+          <div class="field"><label for="acCha">CHA</label><input id="acCha" type="number" value="10" /></div>
+        </div>
+        <div class="row">
+          <div class="field"><label for="acIsNpc">is NPC (stats stay GM-only)</label>
+            <select id="acIsNpc"><option value="false">no — player character</option><option value="true">yes — NPC</option></select>
+          </div>
+          <div class="field"><label for="acOwner">controlled by</label>
+            <select id="acOwner"><option value="">nobody (GM runs it)</option></select>
+          </div>
+        </div>
+      </div>
+      <button id="createActor" class="btn small primary" type="button">create character</button>
+      <span class="muted" id="actorCap"></span>
+      <hr />
+      <div id="actorList"></div>
+    </section>
+
+    <!-- Library panel: items + spells + image library (verbatim from actors.html
+         items/spell-catalogue/spellbook/image-library fieldsets). ─────────── -->
+    <section class="side-panel" id="panelLibrary" role="tabpanel" aria-labelledby="tabLibrary" hidden>
+      <h3>Items</h3>
+      <div class="gm-only"><button id="newItem" class="btn small secondary" type="button">+ new item</button></div>
+      <p class="muted player-only">Only the GM authors items. Unidentified entries show their category and picture only.</p>
+      <div id="itemList"></div>
+
+      <div class="subhead">Spell catalogue</div>
+      <div class="row gm-only">
+        <div class="field" style="flex:2"><label for="spName">name</label><input id="spName" placeholder="Magic Missile" /></div>
+        <div class="field"><label for="spLevel">level</label>
+          <select id="spLevel">
+            <option value="0">cantrip</option>
+            <option value="1">1st</option><option value="2">2nd</option>
+            <option value="3">3rd</option><option value="4">4th</option>
+            <option value="5">5th</option><option value="6">6th</option>
+            <option value="7">7th</option><option value="8">8th</option>
+            <option value="9">9th</option>
+          </select>
+        </div>
+        <div class="field" style="flex:3"><label for="spDesc">description</label><input id="spDesc" placeholder="Three darts of force." /></div>
+        <button id="createSpell" class="btn small primary" type="button">add spell</button>
+      </div>
+      <div class="row">
+        <div class="field" style="flex:2"><label for="spFilter">show</label>
+          <select id="spFilter">
+            <option value="">every level</option>
+            <option value="0">cantrips</option>
+            <option value="1">1st</option><option value="2">2nd</option>
+            <option value="3">3rd</option><option value="4">4th</option>
+            <option value="5">5th</option><option value="6">6th</option>
+            <option value="7">7th</option><option value="8">8th</option>
+            <option value="9">9th</option>
+          </select>
+        </div>
+      </div>
+      <div id="spellList"></div>
+
+      <div class="subhead">Spellbook — <span id="sbWho" class="muted">select a character</span></div>
+      <div class="row">
+        <div class="field" style="flex:3"><label for="sbSpell">spell</label><select id="sbSpell"></select></div>
+        <div class="field"><label for="sbSource">source</label>
+          <select id="sbSource">
+            <option value="">—</option>
+            <option value="class">class</option>
+            <option value="race">race</option>
+            <option value="item">item</option>
+            <option value="other">other</option>
+          </select>
+        </div>
+        <button id="learnSpell" class="btn small secondary" type="button">learn</button>
+      </div>
+      <div id="sbList"></div>
+
+      <div class="subhead">Image library</div>
+      <p class="muted">An upload goes straight from your browser to the bucket. A pasted link is stored as-is; every viewer connects directly to that host.</p>
+      <div class="row">
+        <div class="field"><label for="assetKind">kind</label>
+          <select id="assetKind">
+            <option value="portrait">portrait</option>
+            <option value="token">token art</option>
+            <option value="item">item art</option>
+            <option value="map">map (GM only)</option>
+            <option value="avatar">my profile picture</option>
+          </select>
+        </div>
+        <div class="field" style="flex:2"><label for="assetFile">upload a file</label><input id="assetFile" type="file" accept="image/png,image/jpeg,image/webp,image/gif" /></div>
+        <button id="assetUpload" class="btn small secondary" type="button">upload</button>
+      </div>
+      <div class="row">
+        <div class="field" style="flex:3"><label for="assetUrl">…or paste an image link</label><input id="assetUrl" placeholder="https://example.com/portrait.png" /></div>
+        <button id="assetLink" class="btn small secondary" type="button">add link</button>
+      </div>
+      <p class="muted" id="assetMsg"></p>
+      <div id="assetList" class="assets"></div>
+    </section>
+  </aside>
+
+  <!-- ── Modals (native <dialog> via VTTCommon.openDialog) ─────────────────── -->
+
+  <!-- Sheet modal: wraps the character-sheet container sheet.js renders into,
+       plus its inventory row (verbatim from actors.html). -->
+  <dialog id="sheetDialog" class="dialog-wide" aria-labelledby="sheetHeadTitle">
+    <div class="card-inner">
+      <div class="dialog-head">
+        <h2 id="sheetHeadTitle">Character sheet — <span id="sheetWho" class="muted">none selected</span></h2>
+        <button class="card-close" type="button" data-close aria-label="Close">✕</button>
+      </div>
+      <div class="rule"></div>
+      <div id="sheetPanel"><p class="muted">select a character</p></div>
+      <div class="subhead">Inventory — <span id="invWho" class="muted">select a character</span></div>
+      <div class="row">
+        <div class="field" style="flex:3"><label for="invItem">item</label><select id="invItem"></select></div>
+        <div class="field"><label for="invQty">qty</label><input id="invQty" type="number" value="1" min="1" /></div>
+        <button id="addToBag" class="btn small secondary" type="button">add to bag</button>
+      </div>
+      <p class="muted">Attunement is capped at 3 per character, enforced atomically — a fourth returns 409.</p>
+      <div id="invList"></div>
+    </div>
+  </dialog>
+
+  <!-- Item editor modal: wraps itemsheet.js's editor (verbatim from actors.html). -->
+  <dialog id="itemDialog" class="dialog-wide" aria-labelledby="itemHeadTitle">
+    <div class="card-inner">
+      <div class="dialog-head">
+        <h2 id="itemHeadTitle">Item editor — <span id="itemWho" class="muted">none selected</span></h2>
+        <button class="card-close" type="button" data-close aria-label="Close">✕</button>
+      </div>
+      <div class="rule"></div>
+      <div id="itemEditor"><p class="muted">pick an item, or “+ new item”</p></div>
+    </div>
+  </dialog>
+
+  <!-- Scenes modal (GM-only): the relocated scene-management block from
+       scene.html. #load-scenes (the button) survives here as the GM's refresh;
+       the #campaign-id input path is gone (boot supplies the id). -->
+  <dialog id="scenesDialog" class="dialog-wide" aria-labelledby="scenesHeadTitle">
+    <div class="card-inner">
+      <div class="dialog-head">
+        <h2 id="scenesHeadTitle">Scenes</h2>
+        <button class="card-close" type="button" data-close aria-label="Close">✕</button>
+      </div>
+      <div class="rule"></div>
+      <div class="row">
+        <button id="load-scenes" class="btn small secondary" type="button">Refresh scenes</button>
+        <span class="muted"><b>open</b> loads a scene for you only · <b>activate</b> moves every player into it.</span>
+      </div>
+      <div class="row">
+        <div class="field" style="flex:3"><label for="new-scene-name">new scene name</label><input id="new-scene-name" placeholder="scene name" /></div>
+        <button id="create-scene" class="btn small primary" type="button">Create scene</button>
+      </div>
+      <div id="scene-list"></div>
+      <p class="muted">Canvas <span id="scene-title"></span></p>
+      <div class="muted" id="shortcuts">
+        <b>shortcuts:</b> arrows = nudge 1 · shift+arrows = nudge 5 · Esc = clear selection · Ctrl/Cmd+A = select all
+        <span class="gm-only"> · <i>GM only:</i> Ctrl/Cmd+C copy · Ctrl/Cmd+X cut · Ctrl/Cmd+V paste · Ctrl/Cmd+D duplicate · Del delete · F toggle fog</span>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- Align modal (fullscreen): align.html's alignment fieldset verbatim. Its
+       own campaign/scene loaders die — game.js injects the current scene. -->
+  <dialog id="alignDialog" aria-labelledby="alignHeadTitle">
+    <div class="card-inner">
+      <div class="dialog-head">
+        <h2 id="alignHeadTitle">Align the grid</h2>
+        <button class="card-close" type="button" data-close aria-label="Close">✕</button>
+      </div>
+      <div class="rule"></div>
+      <div class="row">
+        <div class="field" style="flex:5"><label for="mapUrl">map image url</label><input id="mapUrl" placeholder="https://…/battlemap.jpg" /></div>
+        <button id="setMap" class="btn small secondary" type="button">set map</button>
+      </div>
+      <p class="muted" id="info">no scene loaded</p>
+      <div class="hint"><b>Drag the map</b> to move it · <b>scroll</b> to change the cell size · arrow keys nudge by 1px, shift by 10. The overlay shows the grid your tokens will use.</div>
+      <div id="viewport" tabindex="0">
+        <div id="map"></div>
+        <div id="overlay"></div>
+        <div id="ruler"></div>
+      </div>
+      <div class="row">
+        <div class="field"><label for="cellSize">cell size (px)</label><input id="cellSize" type="number" value="70" min="5" max="500" /></div>
+        <div class="field"><label for="offX">offset x</label><input id="offX" type="number" value="0" step="0.5" /></div>
+        <div class="field"><label for="offY">offset y</label><input id="offY" type="number" value="0" step="0.5" /></div>
+        <div class="field"><label for="gridType">overlay</label>
+          <select id="gridType"><option value="square">square</option><option value="hex">hex</option><option value="none">none</option></select>
+        </div>
+        <div class="field"><label for="gridColor">line colour</label><input id="gridColor" type="color" value="#3a3a3a" /></div>
+        <div class="field"><label for="gridOpacity">opacity</label><input id="gridOpacity" type="number" value="0.5" min="0" max="1" step="0.05" /></div>
+      </div>
+      <div class="row">
+        <button id="measure" class="btn small secondary" type="button">measure two lines instead</button>
+        <button id="reset" class="btn small secondary" type="button">reset</button>
+        <button id="save" class="btn small primary" type="button">save alignment</button>
+        <span class="muted" id="saveMsg"></span>
+      </div>
+      <p class="warn" id="hazard"></p>
+    </div>
+  </dialog>
+
+  <!-- The framing modal (from actors.html): stacks above the sheet dialog. -->
+  <div id="frameModal">
+    <div class="frame-box">
+      <b>Frame the picture</b>
+      <p class="muted">Drag to move · scroll to zoom. This is the crop tokens will use.</p>
+      <div class="frame-stage" id="frameStage"><div class="art" id="frameArt"></div></div>
+      <div class="row">
+        <div class="field"><label for="frameScale">zoom</label><input id="frameScale" type="number" step="0.05" min="0.1" max="5" value="1" /></div>
+        <div class="field"><label for="frameX">offset x</label><input id="frameX" type="number" step="0.01" min="-2" max="2" value="0" /></div>
+        <div class="field"><label for="frameY">offset y</label><input id="frameY" type="number" step="0.01" min="-2" max="2" value="0" /></div>
+      </div>
+      <div class="row">
+        <button id="frameReset" class="btn small secondary" type="button">reset</button>
+        <button id="frameCancel" class="btn small secondary" type="button">cancel</button>
+        <button id="frameSave" class="btn small primary" type="button">save framing</button>
+        <span class="muted" id="frameMsg"></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Quick-place tokens on the scene (GM combat tooling; verbatim from
+       combat.html's "tokens on this scene"). Lives in the encounter popover's
+       reach; kept in the strip zone's DOM so combat.js binds it. -->
+  <div id="tokens" hidden></div>
+  <div class="gm-only" hidden>
+    <label for="tokName" class="muted">quick-place a token</label>
+    <input id="tokName" placeholder="Goblin" />
+    <label for="tokProp" class="muted">prop?</label>
+    <input id="tokProp" type="checkbox" />
+    <button id="placeToken" class="btn small secondary" type="button">place</button>
+  </div>
+
+  <!-- ── Debug drawer (spec §2): GM-only, hidden by default. The shared sinks
+       out/log/clearLog + campaignInfo that all four files write to. ────────── -->
+  <div id="drawer" class="gm-only" hidden>
+    <div class="drawer-head">
+      <span class="muted" id="campaignInfo">no campaign loaded</span>
+      <button id="clearLog" class="btn small secondary" type="button">clear</button>
+    </div>
+    <div id="out">ready</div>
+    <div id="log"></div>
+  </div>
+
+  <!-- ── The gate screen: not-a-member / closed campaign (spec §3). ─────────── -->
+  <div id="gameGate">
+    <div class="wordmark">A Virtual Tabletop</div>
+    <div class="gate-title">You're not at this table</div>
+    <p class="gate-msg" id="gameGateMsg">This campaign isn't open to you, or it doesn't exist.</p>
+    <a class="btn secondary" href="/dashboard.html">Back to your games</a>
+  </div>
+
+  <!-- The 3D dice tray canvas: fixed, click-through, over everything. -->
+  <div id="diceTray"></div>
+
+  <!-- Script order per the build skill: socket.io → theme (head) → dice3d
+       (module) → common → imagepicker → closednotice → scene → combat →
+       actors → sheet → itemsheet → align → game. defer throughout (theme is in
+       the head, no defer). The harness boot bodies run at load behind
+       element-existence guards; game.js orchestrates via the boot() seams. -->
+  <script src="/socket.io/socket.io.js" defer></script>
+  <script type="module" src="/js/dice3d.js"></script>
+  <script src="/js/common.js" defer></script>
+  <script src="/js/imagepicker.js" defer></script>
+  <script src="/js/closednotice.js" defer></script>
+  <script src="/js/scene.js" defer></script>
+  <script src="/js/combat.js" defer></script>
+  <script src="/js/actors.js" defer></script>
+  <script src="/js/sheet.js" defer></script>
+  <script src="/js/itemsheet.js" defer></script>
+  <script src="/js/align.js" defer></script>
+  <script src="/js/game.js" defer></script>
+</body>
+</html>

@@ -106,7 +106,10 @@ const round2 = (n) => Math.round(n * 100) / 100;
 // ---------------------------------------------------------------------------
 
 async function loadCampaign() {
-  const id = document.getElementById('campaignId').value.trim();
+  // Harness only: reads align's own #campaignId input. On the game page this
+  // input is gone and the shell calls boot(id, scene) instead.
+  const _ci = document.getElementById('campaignId');
+  const id = _ci ? _ci.value.trim() : '';
   if (!id) return;
   const r = await api('GET', `/api/campaigns/${id}`);
   show('GET campaign', r);
@@ -340,8 +343,17 @@ document.getElementById('reset').addEventListener('click', () => {
   render();
 });
 
-document.getElementById('sceneSel').addEventListener('change', (e) => selectScene(e.target.value));
-document.getElementById('loadCampaign').addEventListener('click', loadCampaign);
+// Seam: align's own scene picker and load button die on the game page — the
+// #sceneSel there is combat's encounter picker, not align's, and the shell
+// injects the current scene through boot(). Both bindings are therefore guarded
+// behind align's own #campaignId input, which only the align harness has.
+{
+  const _ownInput = document.getElementById('campaignId');
+  if (_ownInput) {
+    document.getElementById('sceneSel').addEventListener('change', (e) => selectScene(e.target.value));
+    document.getElementById('loadCampaign').addEventListener('click', loadCampaign);
+  }
+}
 
 // M6: the map image can be chosen from the library instead of pasted. Map is a
 // GM-only kind server-side, and this page is GM-only anyway, so the picker and
@@ -358,8 +370,21 @@ if (window.VTTImagePicker) {
 }
 
 const preset = new URLSearchParams(window.location.search).get('campaign');
-if (preset) {
-  document.getElementById('campaignId').value = preset;
-  loadCampaign();
+{
+  const _ownInput = document.getElementById('campaignId');
+  if (_ownInput && preset) {
+    _ownInput.value = preset;
+    loadCampaign();
+  }
 }
 render();
+
+// The game shell's entry point (spec §2): align operates on the CURRENT scene,
+// injected by game.js, instead of its own campaign/scene pickers. The shell only
+// opens this for the GM, so is_gm is assumed here (the server still enforces it
+// on save). Loading the scene reuses selectScene unchanged.
+function boot(campaignId, scene) {
+  campaign = { id: campaignId, is_gm: true };
+  if (scene && scene.id) return selectScene(scene.id);
+}
+window.VTTAlign = { boot };

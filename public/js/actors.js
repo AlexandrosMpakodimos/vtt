@@ -786,8 +786,12 @@ function renderInventory(rows) {
 // actions
 // ---------------------------------------------------------------------------
 
-async function loadCampaign() {
-  const id = document.getElementById('campaignId').value.trim();
+async function loadCampaign(idArg) {
+  // Seam: the harness reads the id from #campaignId; the game shell passes it in
+  // via boot() (deferred to the first Characters/Library open). Reading the
+  // input would throw on a page without it, so only read when no id was given.
+  const _ci = document.getElementById('campaignId');
+  const id = idArg != null ? idArg : (_ci ? _ci.value.trim() : '');
   if (!id) return;
   const r = await api('GET', `/api/campaigns/${id}`);
   show('GET campaign', r);
@@ -1109,7 +1113,9 @@ function connectSocket() {
 
 // ---------------------------------------------------------------------------
 
-document.getElementById('loadCampaign').addEventListener('click', loadCampaign);
+// Seam: the harness "load" button is gone on the game page; guarded. All other
+// bindings below use ids that survive into game.html.
+{ const _lc = document.getElementById('loadCampaign'); if (_lc) _lc.addEventListener('click', () => loadCampaign()); }
 document.getElementById('createActor').addEventListener('click', createActor);
 document.getElementById('newItem').addEventListener('click', newItem);
 document.getElementById('addToBag').addEventListener('click', addToBag);
@@ -1137,6 +1143,14 @@ document.getElementById('learnSpell').addEventListener('click', learnSpell);
 document.getElementById('spFilter').addEventListener('change', loadSpells);
 
 const preset = new URLSearchParams(window.location.search).get('campaign');
-if (preset) document.getElementById('campaignId').value = preset;
+{ const _ci = document.getElementById('campaignId'); if (_ci && preset) _ci.value = preset; }
 
-whoami().then(() => { if (preset) loadCampaign(); });
+// Seam: on the harness, preset auto-loads. On the game page there is no
+// #campaignId input, so this never fires — the shell defers VTTActors.boot(id)
+// to the first Characters/Library open (the heavy half of the old boot).
+{ const _hasInput = !!document.getElementById('campaignId');
+  whoami().then(() => { if (preset && _hasInput) loadCampaign(); }); }
+
+// The game shell's entry point: the characters/items/spells/assets loader.
+function boot(campaignId) { return loadCampaign(campaignId); }
+window.VTTActors = { boot };
