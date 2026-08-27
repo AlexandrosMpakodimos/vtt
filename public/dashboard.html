@@ -30,6 +30,10 @@
       --ease: cubic-bezier(0.22, 1, 0.36, 1);
       /* d20 glyph reused as a mask so marks follow theme colour. */
       --d20: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 3 L27 9.5 L27 22.5 L16 29 L5 22.5 L5 9.5 Z M16 3 L16 29 M5 9.5 L27 22.5 M27 9.5 L5 22.5' fill='none' stroke='black' stroke-width='1.6'/%3E%3C/svg%3E");
+      /* pencil glyph, used as a mask for the avatar edit overlay */
+      --edit-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M4 16.5 L14.5 6 L18 9.5 L7.5 20 L4 20 Z M13 7.5 L16.5 11' fill='none' stroke='black' stroke-width='1.8' stroke-linejoin='round' stroke-linecap='round'/%3E%3C/svg%3E");
+      /* padlock glyph, used as a mask for the password tag */
+      --lock-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='5' y='11' width='14' height='9' rx='1.5' fill='black'/%3E%3Cpath d='M8 11 V7.5 a4 4 0 0 1 8 0 V11' fill='none' stroke='black' stroke-width='2'/%3E%3C/svg%3E");
     }
 
     * { box-sizing: border-box; }
@@ -94,7 +98,7 @@
     #connState { font-size: 0.78rem; color: var(--text-muted); letter-spacing: 0.02em; min-width: 1px; }
     .profile-btn { gap: 0.5rem; }
     .profile-btn .avatar {
-      width: 26px; height: 26px; border-radius: 50%; flex: none; object-fit: cover;
+      width: 34px; height: 34px; border-radius: 50%; flex: none; object-fit: cover;
       border: 1px solid var(--border); background: var(--surface-raised);
     }
     .profile-btn .avatar.mask {
@@ -102,7 +106,7 @@
       -webkit-mask: var(--d20) center / 76% no-repeat; mask: var(--d20) center / 76% no-repeat;
       border: none;
     }
-    .profile-btn .pname { font-size: 0.85rem; }
+    .profile-btn .pname { font-size: 0.85rem; max-width: 12rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
     /* Buttons: gold-glow hover (verbatim from the landing). */
     .btn {
@@ -160,15 +164,34 @@
     #listStatus { min-height: 1.2em; margin: 0.6rem 0; color: var(--text-muted); font-size: 0.88rem; }
 
     /* Cards grid. */
-    .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(17rem, 1fr)); gap: 1rem; margin: 0.6rem 0 1.4rem; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(17rem, 1fr)); gap: 1rem; margin: 0.6rem 0 1.4rem; align-items: start; }
     .card {
       display: flex; flex-direction: column;
       background: var(--surface-raised); border: 1px solid var(--border); border-radius: 3px;
       overflow: hidden;
-      transition: transform 0.18s var(--ease), border-color 0.18s var(--ease);
+      transition: border-color 0.18s var(--ease), box-shadow 0.25s var(--ease);
     }
-    .card:hover { transform: translateY(-1px); border-color: var(--accent); }
-    @media (prefers-reduced-motion: reduce) { .card, .card:hover { transform: none; transition: border-color 0.18s var(--ease); } }
+    /* Hover: the outline goes gold and gains a soft glow, rather than filling. */
+    .card:not([data-expanded="true"]):hover {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent),
+                  0 0 14px color-mix(in srgb, var(--accent) 35%, transparent);
+    }
+    @media (prefers-reduced-motion: reduce) { .card { transition: none; } }
+    /* When a card is open, its collapsed head stays in the grid as a backdrop
+       placeholder (slightly dimmed); the panel itself floats in the overlay. */
+    .card[data-expanded="true"] { border-color: var(--accent); }
+    .card[data-expanded="true"] .card-head { opacity: 0.5; }
+
+    /* Collapsed head is the expand trigger (a real button). */
+    .card-head {
+      display: flex; flex-direction: column; align-items: stretch; gap: 0;
+      background: transparent; border: none; padding: 0; margin: 0; cursor: pointer;
+      color: inherit; font: inherit; text-align: left; width: 100%;
+      position: relative;
+    }
+    .card-head:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+
     .card-cover { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; background: var(--surface); }
     .card-cover.mask { background: var(--surface); position: relative; }
     .card-cover.mask::after {
@@ -176,9 +199,8 @@
       background: var(--border);
       -webkit-mask: var(--d20) center / 34% no-repeat; mask: var(--d20) center / 34% no-repeat;
     }
-    .card-body { padding: 0.85rem 0.95rem 1rem; display: flex; flex-direction: column; gap: 0.5rem; flex: 1; }
-    .card-name { font-size: 1.05rem; margin: 0; }
-    .card-name + .rule { height: 2px; width: 2.4rem; background: var(--rule); }
+    .card-head-body { padding: 0.85rem 0.95rem; display: flex; flex-direction: column; gap: 0.4rem; flex: 1; min-width: 0; }
+    .card-name { font-size: 1.05rem; font-weight: 700; margin: 0; overflow: hidden; text-overflow: ellipsis; }
     .card-owner { font-size: 0.78rem; color: var(--text-muted); margin: 0; letter-spacing: 0.02em; }
     .badge-row { display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; }
     .badge {
@@ -191,12 +213,113 @@
     .pill-state.open { color: var(--accent); border-color: var(--rule); }
     .pill-state.closed { color: var(--text-muted); }
     .card-online { font-size: 0.72rem; color: var(--text-muted); letter-spacing: 0.03em; }
-    .card-desc {
-      font-size: 0.88rem; color: var(--text); margin: 0;
-      display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+
+    .card-head-actions { display: flex; align-items: center; gap: 0.5rem; padding: 0 0.95rem 0.85rem; }
+
+    /* ── Floating overlay ─────────────────────────────────────────────────── */
+    body.overlay-open { overflow: hidden; }
+    .card-overlay { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; }
+    .card-overlay[hidden] { display: none; }
+    .card-overlay-scrim {
+      position: absolute; inset: 0; background: var(--scrim, rgba(0,0,0,0.55));
+      -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px);
+      opacity: 0; transition: opacity 0.28s var(--ease);
     }
-    .card-note { font-size: 0.85rem; color: var(--text-muted); margin: 0; }
-    .card-actions { display: flex; gap: 0.5rem; margin-top: auto; padding-top: 0.4rem; flex-wrap: wrap; }
+    .card-overlay.open .card-overlay-scrim { opacity: 1; }
+    .card-overlay-stage { position: absolute; inset: 0; pointer-events: none; }
+
+    /* The floating rectangle. JS positions it (FLIP) via inline transform. */
+    .card-panel {
+      position: fixed; pointer-events: auto;
+      display: flex; flex-direction: column; overflow: hidden;
+      background: var(--surface-raised); border: 1px solid var(--accent); border-radius: 6px;
+      box-shadow: 0 24px 60px rgba(0,0,0,0.5);
+      transform-origin: top left;
+    }
+    /* Animate the FLIP (position/size via transform) + opacity. */
+    .card-panel.flipping { transition: transform 0.34s var(--ease), opacity 0.2s var(--ease); }
+    @media (prefers-reduced-motion: reduce) {
+      .card-panel.flipping { transition: none; }
+      .card-overlay-scrim { transition: none; }
+    }
+
+    /* Pinned header (banner + title + tabs): does not scroll. */
+    .cp-head { flex: none; }
+    .card-banner { position: relative; width: 100%; background: var(--surface); border-bottom: 1px solid var(--border); }
+    .card-banner-img { display: block; width: 100%; aspect-ratio: 24 / 7; object-fit: cover; background: var(--surface); position: relative; }
+    .card-banner-img.mask { aspect-ratio: 24 / 6; }
+    .card-banner-img.mask::after {
+      content: ""; position: absolute; inset: 0; background: var(--border);
+      -webkit-mask: var(--d20) center / 10% no-repeat; mask: var(--d20) center / 10% no-repeat;
+    }
+    .cp-close {
+      position: absolute; top: 0.5rem; right: 0.5rem; width: 2rem; height: 2rem; z-index: 2;
+      display: flex; align-items: center; justify-content: center;
+      background: rgba(0,0,0,0.45); color: #fff; border: none; border-radius: 50%;
+      font-size: 1rem; line-height: 1; cursor: pointer;
+    }
+    .cp-close:hover { background: rgba(0,0,0,0.65); }
+    .cp-close:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+    .cp-head-text { padding: 0.9rem clamp(1rem, 3vw, 1.6rem) 0; }
+    .cd-title { font-size: 1.4rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--accent); margin: 0 0 0.15rem; }
+    .cd-owner { font-size: 0.82rem; color: var(--text-muted); margin: 0 0 0.7rem; }
+    .cp-head-text .cd-tabs { margin-bottom: 0; }
+
+    /* Scrollable body: only this scrolls, contained within the rectangle. */
+    .cp-body { flex: 1 1 auto; overflow-y: auto; padding: 1rem clamp(1rem, 3vw, 1.6rem) 1.4rem; }
+    .cd-panel { padding-top: 0.4rem; }
+    .cd-note { font-size: 0.85rem; color: var(--text-muted); margin: 0 0 0.8rem; }
+    .cd-facts { margin: 1rem 0; }
+    .cd-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; margin: 0.6rem 0 0.4rem; }
+    /* Enter the game is the primary call to action: larger, bolder, and pushed to
+       its own prominence so it stands apart from the secondary buttons. */
+    /* Header: identity (title + owner) on the left, Enter the game on the right. */
+    .cp-head-main { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: 0.7rem; }
+    .cp-head-id { min-width: 0; }
+    .cp-head-main .cd-owner { margin-bottom: 0; }
+    /* The title is the name editor: a pencil appears beside it for the GM. */
+    .cd-title-line { display: flex; align-items: center; gap: 0.5rem; min-width: 0; }
+    .cd-title-line .cd-title { margin: 0; overflow-wrap: anywhere; }
+    .cd-title-edit {
+      flex: none; width: 1.6rem; height: 1.6rem; padding: 0; border: none; background: none; cursor: pointer;
+      border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; opacity: 0.7;
+    }
+    .cd-title-edit:hover, .cd-title-edit:focus-visible { opacity: 1; outline: none; }
+    .cd-title-edit:focus-visible { box-shadow: 0 0 0 2px var(--focus); }
+    .cd-title-edit.active { opacity: 1; background: color-mix(in srgb, var(--accent) 18%, transparent); }
+    .cd-title-edit-icon {
+      width: 1rem; height: 1rem; background: var(--accent);
+      -webkit-mask: var(--edit-icon) center / contain no-repeat; mask: var(--edit-icon) center / contain no-repeat;
+    }
+    .cd-title-input {
+      font-size: 1.4rem; font-weight: 700; letter-spacing: 0.02em; flex: 1; min-width: 0; margin: 0;
+      padding: 0.1rem 0.5rem; border-radius: 3px; box-sizing: border-box;
+      border: 1px solid var(--accent); background: var(--surface); color: var(--text);
+    }
+    .cd-title-input:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+    /* Enter the game: prominent but sized to sit in harmony with the title. */
+    .cp-head-main .cd-enter {
+      flex: none; font-size: 0.82rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+      padding: 0.5rem 1.1rem; min-height: 38px; border-radius: 4px; white-space: nowrap;
+      box-shadow: 0 0 0 1px var(--accent), 0 4px 12px color-mix(in srgb, var(--accent) 30%, transparent);
+    }
+    .cp-head-main .cd-enter:hover {
+      box-shadow: 0 0 0 1px var(--accent), 0 0 8px var(--accent), 0 6px 16px color-mix(in srgb, var(--accent) 40%, transparent);
+    }
+    @media (max-width: 520px) {
+      .cp-head-main { flex-direction: column; }
+      .cp-head-main .cd-enter { width: 100%; text-align: center; }
+    }
+    .cd-save-hint { font-size: 0.82rem; color: var(--accent); margin: 0.6rem 0 0.2rem; }
+    /* Read-only inputs (player view, and GM fields before edit) read as text, not boxes. */
+    .cp-body .field input[readonly], .cp-body .field textarea[readonly],
+    .cp-body .field select[disabled] {
+      background: transparent; border-color: transparent; padding-left: 0; color: var(--text); cursor: default;
+    }
+    .cp-body .field input:not([readonly]), .cp-body .field textarea:not([readonly]),
+    .cp-body .field select:not([disabled]) {
+      background: var(--surface); border-color: var(--border);
+    }
 
     #emptyState { padding: 2rem 0; color: var(--text-muted); }
     #emptyState .actions { display: flex; gap: 0.5rem; margin-top: 1rem; flex-wrap: wrap; }
@@ -236,12 +359,285 @@
       width: 44px; height: 44px; display: grid; place-items: center;
       background: transparent; border: none; color: var(--text-muted);
       font-size: 1.5rem; line-height: 1; cursor: pointer; border-radius: 2px;
+      -webkit-appearance: none; appearance: none; -webkit-tap-highlight-color: transparent;
     }
     .card-close:hover { color: var(--accent); }
-    .card-inner h2, .dialog-head h2 { font-size: 1.3rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--accent); margin: 0 0 0.3rem; }
+    .card-inner h2, .dialog-head h2 { font-size: 1.3rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--accent); margin: 0 0 0.3rem; overflow-wrap: anywhere; word-break: break-word; }
     .card-inner h2 + .rule, .dialog-head h2 + .rule { height: 2px; width: 3rem; background: var(--rule); margin-bottom: 1.2rem; }
     .card-inner h3 { font-size: 0.92rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text); margin: 1.2rem 0 0.6rem; }
     .rule { display: block; }
+
+    /* ── Account: landscape ID card ───────────────────────────────────────── */
+    .dialog-idcard { width: min(44rem, 95vw); }
+    .idcard { position: relative; padding: 2rem 2.2rem; }
+    /* Title matches the game panel's .cd-title (1.4rem). */
+    .idcard-title { font-size: 1.4rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--accent); margin: 0 0 1.4rem; }
+    .idcard-title:focus { outline: none; }
+    .idcard-body { display: flex; gap: 2rem; align-items: flex-start; }
+
+    /* Left: framed portrait. Hover reveals an edit-pencil overlay; the whole
+       thing is a button that opens the image picker. */
+    .idcard-photo { flex: none; width: 10.5rem; display: flex; flex-direction: column; align-items: center; gap: 0.6rem; }
+    .idcard-avatar-btn {
+      position: relative; width: 10.5rem; height: 10.5rem; padding: 0; border: none; background: none;
+      cursor: pointer; border-radius: 8px;
+      /* decorative gold frame */
+      box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px color-mix(in srgb, var(--accent-strong) 55%, transparent),
+                  0 10px 26px rgba(0,0,0,0.42);
+    }
+    .idcard-avatar-btn:focus-visible { outline: 2px solid var(--focus); outline-offset: 4px; }
+    .idcard-avatar {
+      width: 100%; height: 100%; border-radius: 6px; overflow: hidden;
+      background: var(--surface); position: relative; display: block;
+    }
+    .idcard-avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .idcard-avatar.mask::after {
+      content: ""; position: absolute; inset: 0; background: var(--accent-strong);
+      -webkit-mask: var(--d20) center / 58% no-repeat; mask: var(--d20) center / 58% no-repeat;
+    }
+    /* Edit overlay: a pencil icon (SVG data-URL via mask) instead of a word. */
+    .idcard-avatar-overlay {
+      position: absolute; inset: 0; border-radius: 6px;
+      display: flex; align-items: center; justify-content: center;
+      background: rgba(0,0,0,0.5);
+      opacity: 0; transition: opacity 0.16s var(--ease);
+    }
+    .idcard-avatar-overlay::before {
+      content: ""; width: 2rem; height: 2rem; background: #fff;
+      -webkit-mask: var(--edit-icon) center / contain no-repeat; mask: var(--edit-icon) center / contain no-repeat;
+    }
+    .idcard-avatar-btn:hover .idcard-avatar-overlay,
+    .idcard-avatar-btn:focus-visible .idcard-avatar-overlay { opacity: 1; }
+    /* URL field kept as a fallback path; the click opens the picker directly. */
+    .idcard-avatar-field { width: 100%; }
+    .idcard-avatar-field input {
+      width: 100%; font: inherit; padding: 0.65rem 0.75rem; border-radius: 2px;
+      border: 1px solid var(--border); background: var(--surface); color: var(--text); min-height: 44px;
+    }
+
+    /* Right: details */
+    .idcard-details { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.85rem; }
+    .idcard-row { display: flex; flex-direction: column; gap: 0.35rem; }
+    /* Label matches the game panel's .field label. */
+    .idcard-label { font-size: 0.8rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); }
+    /* One line per value: text (or in-place input) on the left, Change at the end. */
+    .idcard-line { display: flex; align-items: center; gap: 0.6rem; }
+    /* Values read at the page's base font, like the panel's field content. */
+    .idcard-value-text { font: inherit; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+    /* In-place name input matches a standard .field input. */
+    .idcard-inline-input {
+      font: inherit; flex: 1; min-width: 0; padding: 0.65rem 0.75rem; border-radius: 2px;
+      border: 1px solid var(--border); background: var(--surface); color: var(--text); min-height: 44px;
+    }
+    .idcard-inline-input:focus-visible { border-color: var(--accent); outline: 2px solid var(--focus); outline-offset: 1px; }
+    .idcard-change {
+      margin-left: auto; flex: none; cursor: pointer;
+      background: transparent; border: 1px solid var(--border); border-radius: 3px;
+      color: var(--text-muted); font-size: 0.8rem; letter-spacing: 0.03em; text-transform: uppercase;
+      padding: 0.4rem 0.85rem; min-height: 36px;
+    }
+    .idcard-change:hover { color: var(--accent); border-color: var(--rule); }
+    .idcard-change:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+    .idcard-change.active { color: var(--accent); border-color: var(--accent); }
+    .idcard-dots { letter-spacing: 0.15em; color: var(--text-muted); }
+    .idcard-badge {
+      flex: none; font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.06em;
+      padding: 0.08rem 0.4rem; border-radius: 2px; border: 1px solid var(--border); color: var(--text-muted);
+    }
+    .idcard-badge.verified { color: var(--accent); border-color: var(--rule); }
+    .idcard-help { font-size: 0.78rem; color: var(--text-muted); }
+
+    /* Revealed email/password inputs — the exact page .field input treatment. */
+    .idcard-edit { display: flex; flex-direction: column; gap: 0.5rem; padding: 0.55rem 0 0.2rem; }
+    .idcard-edit input {
+      width: 100%; font: inherit; padding: 0.65rem 0.75rem; border-radius: 2px;
+      border: 1px solid var(--border); background: var(--surface); color: var(--text); min-height: 44px;
+    }
+    .idcard-edit input:focus-visible { border-color: var(--accent); outline: 2px solid var(--focus); outline-offset: 1px; }
+    .idcard-edit .help { font-size: 0.78rem; color: var(--text-muted); }
+
+    .idcard-status { margin: 1rem 0 0; min-height: 1.2rem; font-size: 0.88rem; }
+    .idcard-status:empty { margin: 0; min-height: 0; }
+    .idcard-actions { display: flex; justify-content: space-between; align-items: center; gap: 0.6rem; margin-top: 1.1rem; }
+
+    @media (max-width: 520px) {
+      .idcard-body { flex-direction: column; align-items: center; }
+      .idcard-details { width: 100%; }
+    }
+
+    /* ── Overview (game card), ID-card treatment ───────────────────────────── */
+
+    /* A reusable pencil edit button (same as the header title's), used for the
+       description and the joining rows so the whole card shares one affordance. */
+    .idcard-edit-btn {
+      flex: none; width: 1.6rem; height: 1.6rem; padding: 0; border: none; background: none; cursor: pointer;
+      border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; opacity: 0.7;
+    }
+    .idcard-edit-btn:hover, .idcard-edit-btn:focus-visible { opacity: 1; outline: none; }
+    .idcard-edit-btn:focus-visible { box-shadow: 0 0 0 2px var(--focus); }
+    .idcard-edit-btn.active { opacity: 1; background: color-mix(in srgb, var(--accent) 18%, transparent); }
+    .idcard-edit-icon {
+      width: 1rem; height: 1rem; background: var(--accent);
+      -webkit-mask: var(--edit-icon) center / contain no-repeat; mask: var(--edit-icon) center / contain no-repeat;
+    }
+
+    /* Description: full width, edits in place. Label + pencil on one head row, the
+       text (or the textarea that replaces it) below at full width. */
+    .ovcard-desc { margin-bottom: 1.4rem; }
+    .ovcard-desc-head { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.35rem; }
+    .ovcard-desc-head .idcard-edit-btn { margin-left: auto; }
+    .ovcard-desc .cd-desc-text {
+      margin: 0; color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5;
+    }
+    .ovcard-desc .cd-desc-text:empty::before { content: "No description"; color: var(--text-muted); }
+    .ovcard-desc .cd-f-desc {
+      width: 100%; font: inherit; line-height: 1.5; padding: 0.65rem 0.75rem; border-radius: 2px; box-sizing: border-box;
+      border: 1px solid var(--border); background: var(--surface); color: var(--text);
+      min-height: 5rem; resize: none; overflow: hidden;
+    }
+    .ovcard-desc .cd-f-desc:focus-visible { border-color: var(--accent); outline: 2px solid var(--focus); outline-offset: 1px; }
+
+    /* Details: joining grouped with the read-only facts as one block. Each line is
+       LABEL … value, with joining additionally carrying a pencil + reveal editor. */
+    .ov-details { border-top: 1px solid var(--rule); padding-top: 0.9rem; margin-bottom: 1rem; }
+    .ov-details-head {
+      font-size: 0.76rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em;
+      color: var(--text-muted); margin: 0 0 0.6rem;
+    }
+    .ov-detail { gap: 0.35rem; }
+    .ov-detail + .ov-detail-line, .ov-detail-line + .ov-detail-line, .ov-detail-line + .ov-detail { margin-top: 0.55rem; }
+    .ov-detail-line { display: flex; align-items: center; gap: 0.8rem; }
+    .ov-detail-line .idcard-label { flex: none; min-width: 7.5rem; }
+    .ov-detail-line .idcard-value-text { flex: 1; }
+    .ov-detail-line .idcard-edit-btn { margin-left: auto; }
+
+    /* The Joining editor's dropdown sits at a natural width, not full-bleed. */
+    .cd-vis-edit { margin-top: 0.5rem; }
+    .cd-vis-edit .vtt-dd { max-width: 16rem; }
+    .cd-vis-edit .cd-pw-field { margin-top: 0.6rem; }
+
+    /* Unsaved-changes bar: sticks to the bottom of the scrolling panel body and
+       only shows while dirty, so Save is always reachable but never shifts the
+       layout by appearing among the other action buttons. */
+    /* Unsaved-changes bar: a flex footer of the card panel, flush at the very
+       bottom (outside the scrolling body, nothing beneath it). Shown only when
+       dirty, so Save never shifts the layout by appearing among other buttons. */
+    .cd-savebar {
+      flex: none; margin: 0; padding: 0.8rem clamp(1rem, 3vw, 1.6rem);
+      display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+      background: var(--surface-raised); border-top: 1px solid var(--accent);
+      box-shadow: 0 -6px 18px rgba(0,0,0,0.28);
+    }
+    .cd-save-hint { font-size: 0.85rem; color: var(--accent); font-weight: 600; }
+
+    /* GM cover editor lives on the big banner: a hover overlay with a pencil. */
+    .card-banner-edit {
+      position: absolute; inset: 0; padding: 0; border: none; cursor: pointer; z-index: 1;
+      background: rgba(0,0,0,0); display: flex; align-items: center; justify-content: center;
+      transition: background 0.16s var(--ease);
+    }
+    .card-banner-edit:hover, .card-banner-edit:focus-visible { background: rgba(0,0,0,0.4); outline: none; }
+    .card-banner-edit-icon {
+      width: 2.4rem; height: 2.4rem; background: #fff; opacity: 0; transition: opacity 0.16s var(--ease);
+      -webkit-mask: var(--edit-icon) center / contain no-repeat; mask: var(--edit-icon) center / contain no-repeat;
+    }
+    .card-banner-edit:hover .card-banner-edit-icon, .card-banner-edit:focus-visible .card-banner-edit-icon { opacity: 1; }
+
+    @media (max-width: 520px) {
+      .ov-detail-line { flex-wrap: wrap; gap: 0.15rem 0.8rem; }
+      .ov-detail-line .idcard-label { min-width: 0; }
+      .ov-detail-line .idcard-value-text { flex: 1 1 100%; }
+      .ov-detail-line .idcard-edit-btn { position: absolute; right: 0; }
+      .ov-detail { position: relative; }
+    }
+
+    /* ── Find a game ───────────────────────────────────────────────────────── */
+    .dialog-find { width: min(46rem, 95vw); }
+    .find-inner { position: relative; padding: 2rem 2.2rem; display: flex; flex-direction: column; max-height: 88vh; }
+    .find-title { font-size: 1.4rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--accent); margin: 0 0 1.4rem; }
+    .find-title:focus { outline: none; }
+
+    /* Search bar: query grows, filter is intrinsic, button aligns to the inputs. */
+    .find-controls { display: grid; grid-template-columns: 1fr 15rem auto; gap: 0.6rem; align-items: end; }
+    .find-controls .field { margin: 0; }
+    /* The Show filter is fixed to the width of its longest option
+       ("Password-protected") so the control doesn't resize as the choice changes. */
+    .find-vis { width: 15rem; }
+    .find-controls label { font-size: 0.8rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); margin-bottom: 0.35rem; display: block; }
+    .find-controls input, .find-controls select {
+      font: inherit; padding: 0.65rem 0.75rem; border-radius: 2px; min-height: 44px;
+      border: 1px solid var(--border); background: var(--surface); color: var(--text); box-sizing: border-box; width: 100%;
+    }
+    .find-controls input:focus-visible, .find-controls select:focus-visible { border-color: var(--accent); outline: 2px solid var(--focus); outline-offset: 1px; }
+    .find-go { align-self: end; min-height: 44px; white-space: nowrap; }
+
+    /* Custom themed dropdown (replaces the native <select> so the open option
+       list matches the site instead of the OS popup). Same .field footprint. */
+    .vtt-dd { position: relative; }
+    .vtt-dd-btn {
+      font: inherit; text-align: left; cursor: pointer; width: 100%; min-height: 44px;
+      padding: 0.65rem 2rem 0.65rem 0.75rem; border-radius: 2px;
+      border: 1px solid var(--border); background: var(--surface); color: var(--text);
+      display: flex; align-items: center; white-space: nowrap;
+    }
+    .vtt-dd-btn::after { content: ""; position: absolute; right: 0.7rem; top: 50%; width: 0.5rem; height: 0.5rem;
+      border-right: 2px solid var(--text-muted); border-bottom: 2px solid var(--text-muted);
+      transform: translateY(-70%) rotate(45deg); pointer-events: none; }
+    .vtt-dd-btn:focus-visible { border-color: var(--accent); outline: 2px solid var(--focus); outline-offset: 1px; }
+    .vtt-dd[data-open="true"] .vtt-dd-btn { border-color: var(--accent); }
+    /* Fixed to the viewport (positioned in JS from the button's rect) so the
+       open list escapes the dialog's overflow clipping and floats over the modal. */
+    .vtt-dd-list {
+      position: fixed; z-index: 200; margin: 0; padding: 0.25rem; list-style: none;
+      background: var(--surface-raised); border: 1px solid var(--accent); border-radius: 4px;
+      box-shadow: 0 12px 30px rgba(0,0,0,0.45); max-height: 15rem; overflow-y: auto;
+    }
+    .vtt-dd-list[hidden] { display: none; }
+    .vtt-dd-opt {
+      padding: 0.55rem 0.7rem; border-radius: 2px; cursor: pointer; font-size: 0.92rem; color: var(--text);
+    }
+    .vtt-dd-opt:hover, .vtt-dd-opt[data-active="true"] { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
+    .vtt-dd-opt[aria-selected="true"] { color: var(--accent); font-weight: 600; }
+
+    /* Results: a scroll region of cards echoing the dashboard game cards. */
+    .find-results { display: flex; flex-direction: column; gap: 0.6rem; margin-top: 1.1rem;
+                    overflow-y: auto; padding-right: 0.2rem; }
+    .find-card {
+      display: flex; gap: 0.9rem; align-items: center; padding: 0.6rem 0.9rem 0.6rem 0.6rem;
+      border: 1px solid var(--border); border-radius: 5px; background: var(--surface); min-height: 4.6rem;
+    }
+    .find-card:hover { border-color: var(--rule); }
+    .find-thumb { flex: none; width: 6.5rem; aspect-ratio: 16 / 10; border-radius: 3px; overflow: hidden;
+                  background: var(--surface-raised); position: relative; }
+    .find-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .find-thumb.mask::after { content: ""; position: absolute; inset: 0; background: var(--border);
+      -webkit-mask: var(--d20) center / 44% no-repeat; mask: var(--d20) center / 44% no-repeat; }
+    .find-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.2rem; justify-content: center; }
+    .find-name { font-size: 1.05rem; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .find-owner { font-size: 0.78rem; color: var(--text-muted); letter-spacing: 0.02em; }
+    .find-tags { display: flex; gap: 0.4rem; align-items: center; margin-top: 0.25rem; }
+    /* Only password-required games carry a tag; open games show nothing. */
+    .find-lock { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.06em;
+      color: var(--accent); border: 1px solid var(--rule); border-radius: 2px; padding: 0.05rem 0.4rem;
+      display: inline-flex; align-items: center; gap: 0.3rem; }
+    .find-lock::before { content: ""; width: 0.7rem; height: 0.7rem; background: var(--accent);
+      -webkit-mask: var(--lock-icon) center / contain no-repeat; mask: var(--lock-icon) center / contain no-repeat; }
+    .find-count { font-size: 0.72rem; color: var(--text-muted); }
+    .find-actions { flex: none; display: flex; flex-direction: column; justify-content: center; align-items: flex-end; gap: 0.4rem; }
+    .find-actions input { font: inherit; font-size: 0.85rem; padding: 0.4rem 0.5rem; min-height: 36px;
+      border: 1px solid var(--border); background: var(--surface-raised); color: var(--text); border-radius: 2px; width: 8rem; }
+    /* Non-actionable states shown in place of a Join button. */
+    .find-state { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); white-space: nowrap; }
+    .find-state.full { color: var(--danger); font-weight: 600; }
+    .find-more { margin: 1.4rem auto 1rem; display: block; }
+    .find-empty { color: var(--text-muted); font-size: 0.9rem; text-align: center; padding: 1.4rem 0; }
+
+    @media (max-width: 560px) {
+      .find-controls { grid-template-columns: 1fr; }
+      .find-vis { width: auto; }
+      .find-card { flex-wrap: wrap; }
+      .find-actions { flex-direction: row; width: 100%; align-items: center; }
+    }
 
     .field { display: grid; gap: 0.35rem; margin-bottom: 1rem; }
     .field label { font-size: 0.8rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); }
@@ -284,12 +680,15 @@
       border: 1px solid var(--border); border-radius: 3px; padding: 0.5rem 0.7rem; background: var(--surface);
     }
     .member-row .who, .result .who { display: flex; align-items: center; gap: 0.5rem; flex: 1; min-width: 8rem; }
+    /* The name/meta column must be allowed to shrink (min-width:0) so a long
+       username ellipsis-truncates instead of pushing into the action buttons. */
+    .member-row .who > :last-child, .result .who > :last-child { min-width: 0; flex: 1; }
     .member-row .avatar, .result .avatar {
-      width: 24px; height: 24px; border-radius: 50%; flex: none; object-fit: cover;
+      width: 44px; height: 44px; border-radius: 50%; flex: none; object-fit: cover;
       border: 1px solid var(--border); background: var(--surface-raised);
     }
-    .member-row .name, .result .name { font-size: 0.9rem; }
-    .member-row .meta, .result .meta { font-size: 0.78rem; color: var(--text-muted); }
+    .member-row .name, .result .name { font-size: 0.9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .member-row .meta, .result .meta { font-size: 0.78rem; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .member-row .row-actions, .result .row-actions { display: flex; gap: 0.4rem; flex-wrap: wrap; }
     /* Richer search result: thumbnail + stacked name/owner/description. */
     .result-rich { align-items: flex-start; }
@@ -357,7 +756,7 @@
   <main>
     <section id="games" aria-labelledby="gamesHeading">
       <div class="games-head">
-        <h1 id="gamesHeading">Your games</h1>
+        <h1 id="gamesHeading">My Games</h1>
         <div class="actions">
           <button id="btnCreate" class="btn primary" type="button">Create a game</button>
           <button id="btnFind" class="btn secondary" type="button">Find a game</button>
@@ -366,8 +765,8 @@
 
       <div class="tabs" id="listTabs" role="tablist" aria-label="Your games">
         <button id="tabAll" class="tab" type="button" role="tab" aria-selected="true" aria-controls="campaignPanel" tabindex="0">All</button>
-        <button id="tabRunning" class="tab" type="button" role="tab" aria-selected="false" aria-controls="campaignPanel" tabindex="-1">Running</button>
-        <button id="tabPlaying" class="tab" type="button" role="tab" aria-selected="false" aria-controls="campaignPanel" tabindex="-1">Playing</button>
+        <button id="tabRunning" class="tab" type="button" role="tab" aria-selected="false" aria-controls="campaignPanel" tabindex="-1">Hosting</button>
+        <button id="tabPlaying" class="tab" type="button" role="tab" aria-selected="false" aria-controls="campaignPanel" tabindex="-1">Joined</button>
         <label class="tabs-extra"><input type="checkbox" id="showArchived"> Show archived</label>
       </div>
 
@@ -391,26 +790,166 @@
   </main>
 
   <!-- Card template: cloned per campaign, filled via textContent/attributes. -->
+  <!-- Card: a click-to-expand disclosure. The head is the trigger (image +
+       title + badges + a small Enter). Expanding reveals an inline region with
+       Overview + Members. In Overview the detail fields ARE the display: for a
+       GM they're editable and reveal a Save button on change; for a player they
+       are read-only. The expanded card spans the full grid width. -->
   <template id="cardTemplate">
-    <article class="card" data-id>
-      <span class="card-cover mask" aria-hidden="true"></span>
-      <div class="card-body">
-        <h2 class="card-name"></h2>
-        <span class="rule"></span>
-        <p class="card-owner"></p>
-        <div class="badge-row">
-          <span class="badge badge-role"></span>
-          <span class="badge badge-vis"></span>
-          <span class="pill-state"></span>
-          <span class="badge badge-archived" hidden>Archived</span>
-          <span class="card-online"></span>
-        </div>
-        <p class="card-desc"></p>
-        <p class="card-note" hidden></p>
-        <div class="card-actions">
-          <a class="btn primary small card-enter" href="#">Enter the game</a>
-          <button class="btn secondary small card-manage" type="button">Manage</button>
-          <button class="btn secondary small card-archive" type="button">Archive</button>
+    <article class="card" data-id data-expanded="false">
+      <button class="card-head" type="button" aria-expanded="false">
+        <span class="card-cover mask" aria-hidden="true"></span>
+        <span class="card-head-body">
+          <span class="card-name"></span>
+          <span class="card-owner"></span>
+          <span class="badge-row">
+            <span class="badge badge-role"></span>
+            <span class="badge badge-vis"></span>
+            <span class="pill-state"></span>
+            <span class="badge badge-archived" hidden>Archived</span>
+            <span class="card-online"></span>
+          </span>
+        </span>
+        <span class="card-head-actions">
+          <a class="btn primary small card-enter" href="#">Enter</a>
+        </span>
+      </button>
+
+      <div class="card-expand" hidden>
+        <div class="card-panel">
+          <!-- Pinned header: banner + title + tabs + close (do not scroll). -->
+          <div class="cp-head">
+            <div class="card-banner">
+              <span class="card-banner-img mask" aria-hidden="true"></span>
+              <button class="card-banner-edit cd-cover-btn" type="button" aria-label="Change cover image" hidden>
+                <span class="card-banner-edit-icon" aria-hidden="true"></span>
+              </button>
+              <button class="cp-close cd-collapse" type="button" aria-label="Close">✕</button>
+            </div>
+            <div class="cp-head-text">
+              <div class="cp-head-main">
+                <div class="cp-head-id">
+                  <!-- The title doubles as the name editor for a GM: click it (or
+                       the pencil) to edit in place; a player just sees the title. -->
+                  <div class="cd-title-line">
+                    <h2 class="cd-title cd-name-text"></h2>
+                    <input class="cd-title-input cd-f-name" type="text" maxlength="100" autocomplete="off" aria-label="Game name" hidden>
+                    <button class="cd-title-edit cd-name-btn" type="button" aria-label="Rename game" hidden>
+                      <span class="cd-title-edit-icon" aria-hidden="true"></span>
+                    </button>
+                  </div>
+                  <p class="cd-owner"></p>
+                </div>
+                <a class="btn primary cd-enter" href="#" hidden>Enter the game</a>
+              </div>
+              <div class="tabs cd-tabs" role="tablist" aria-label="Game">
+                <button class="tab cd-tab-ov" type="button" role="tab" aria-selected="true" tabindex="0">Overview</button>
+                <button class="tab cd-tab-mem" type="button" role="tab" aria-selected="false" tabindex="-1">Members</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Scrollable body: only this scrolls, contained within the card. -->
+          <div class="cp-body">
+            <!-- OVERVIEW — ID-card treatment: the cover is the "portrait", each
+                 setting is a "label — value — Change" row (GM) or read-only (player). -->
+            <div class="cd-panel cd-ov" role="tabpanel">
+              <p class="cd-note" hidden></p>
+
+              <!-- The cover is edited via the big banner above (GM only); the
+                   hidden input carries its value. The name is edited via the big
+                   title in the header. Description on top; game details below. -->
+              <input class="cd-f-img" type="hidden">
+
+              <!-- Description: full width, edits in place (text ↔ textarea). -->
+              <div class="idcard-row ovcard-desc">
+                <div class="ovcard-desc-head">
+                  <span class="idcard-label">Description</span>
+                  <button class="idcard-edit-btn cd-desc-btn" type="button" aria-label="Edit description" hidden>
+                    <span class="idcard-edit-icon" aria-hidden="true"></span>
+                  </button>
+                </div>
+                <p class="cd-desc-text"></p>
+                <textarea class="cd-f-desc" maxlength="2000" aria-label="Description" hidden></textarea>
+              </div>
+
+              <!-- Details: Joining (editable) grouped with the read-only facts. -->
+              <div class="ov-details">
+                <h3 class="ov-details-head">Details</h3>
+                <div class="idcard-row ov-detail">
+                  <div class="ov-detail-line">
+                    <span class="idcard-label">Joining</span>
+                    <span class="idcard-value-text cd-vis-text"></span>
+                    <button class="idcard-edit-btn cd-vis-btn" type="button" aria-label="Edit who can join" hidden>
+                      <span class="idcard-edit-icon" aria-hidden="true"></span>
+                    </button>
+                  </div>
+                  <div class="idcard-edit cd-vis-edit" hidden>
+                    <div class="vtt-dd cd-vis-dd" data-value="public">
+                      <input type="hidden" class="cd-f-vis" value="public">
+                      <button type="button" class="vtt-dd-btn" aria-haspopup="listbox" aria-expanded="false">Anyone</button>
+                      <ul class="vtt-dd-list" role="listbox" aria-label="Who can join" tabindex="-1" hidden></ul>
+                    </div>
+                    <div class="cd-pw-field" hidden>
+                      <div class="pw-wrap">
+                        <input class="cd-f-pw" type="password" maxlength="128" autocomplete="new-password" placeholder="Password">
+                        <button class="pw-toggle cd-pw-toggle" type="button" aria-pressed="false">Show</button>
+                      </div>
+                      <span class="help">Set a password (4–128 characters). Leave blank only if the game already has one you want to keep.</span>
+                    </div>
+                  </div>
+                </div>
+                <div class="ov-detail-line">
+                  <span class="idcard-label">Status</span>
+                  <span class="idcard-value-text cd-status"></span>
+                </div>
+                <div class="ov-detail-line">
+                  <span class="idcard-label">At the table</span>
+                  <span class="idcard-value-text cd-online">—</span>
+                </div>
+                <div class="ov-detail-line">
+                  <span class="idcard-label">Created</span>
+                  <span class="idcard-value-text cd-created"></span>
+                </div>
+              </div>
+
+              <div class="cd-actions">
+                <button class="btn secondary small cd-openclose" type="button" hidden></button>
+                <!-- Archive is per-user and open to any member (player or GM). -->
+                <button class="btn secondary small cd-archive" type="button">Archive</button>
+                <button class="btn danger small cd-leave" type="button" hidden>Leave this game</button>
+              </div>
+
+              <h3>Invite link</h3>
+              <div class="invite-row">
+                <input class="cd-invite" type="text" readonly aria-label="Invite link">
+                <button class="btn secondary small cd-copy" type="button">Copy</button>
+              </div>
+
+              <div class="danger-block cd-danger" hidden>
+                <h3>Danger zone</h3>
+                <button class="btn danger small cd-delete" type="button">Delete this game</button>
+                <p class="help">Deleted games can be restored for 30 days from Recently deleted.</p>
+              </div>
+
+              <p class="status cd-status-msg" role="status" aria-live="polite"></p>
+            </div>
+
+            <!-- MEMBERS -->
+            <div class="cd-panel cd-mem" role="tabpanel" hidden>
+              <div class="row-list cd-member-list"></div>
+              <h3 class="cd-banned-head" hidden>Banned</h3>
+              <div class="row-list cd-banned-list"></div>
+            </div>
+          </div>
+
+          <!-- Unsaved-changes bar: a fixed footer flush at the very bottom of the
+               modal (outside the scroll area, no space beneath). Shows only when
+               there are edits, so Save never shoves the layout. -->
+          <div class="cd-savebar" hidden>
+            <span class="cd-save-hint">Unsaved changes</span>
+            <button class="btn primary small cd-save" type="button">Save changes</button>
+          </div>
         </div>
       </div>
     </article>
@@ -434,10 +973,10 @@
           <span class="help">Optional. Up to 2000 characters.</span>
         </div>
         <div class="field">
-          <label for="crVis">Visibility</label>
+          <label for="crVis">Joining</label>
           <select id="crVis">
-            <option value="public">Public &mdash; anyone can join</option>
-            <option value="private">Private &mdash; needs a password</option>
+            <option value="public">Anyone can join</option>
+            <option value="private">Password required</option>
           </select>
         </div>
         <div class="field" id="crPasswordField" hidden>
@@ -455,11 +994,10 @@
   </dialog>
 
   <!-- Find dialog -->
-  <dialog id="findDialog" class="dialog-wide" aria-labelledby="fdHeading">
-    <div class="card-inner">
+  <dialog id="findDialog" class="dialog-find" aria-labelledby="fdHeading">
+    <div class="find-inner">
       <button class="card-close" type="button" data-close aria-label="Close">&times;</button>
-      <h2 id="fdHeading">Find a game</h2>
-      <span class="rule"></span>
+      <h2 id="fdHeading" class="find-title" tabindex="-1">Find a game</h2>
 
       <!-- Join-by-link face (shown when arriving via ?join=). -->
       <form id="formJoin" hidden novalidate>
@@ -482,194 +1020,108 @@
 
       <!-- Search face. -->
       <form id="formFind" novalidate>
-        <div class="field">
-          <label for="fdQuery">Search</label>
-          <input id="fdQuery" type="text" maxlength="100" autocomplete="off" placeholder="Name, description, or owner">
-        </div>
-        <div class="field">
-          <label for="fdVis">Visibility</label>
-          <select id="fdVis">
-            <option value="all">All</option>
-            <option value="public">Public</option>
-            <option value="private">Private</option>
-          </select>
+        <div class="find-controls">
+          <div class="field find-q">
+            <label for="fdQuery">Search</label>
+            <input id="fdQuery" type="text" maxlength="100" autocomplete="off" placeholder="Name, description, or owner">
+          </div>
+          <div class="field find-vis">
+            <label for="fdVisBtn">Show</label>
+            <div class="vtt-dd" id="fdVisDD" data-value="all">
+              <input type="hidden" id="fdVis" value="all">
+              <button type="button" class="vtt-dd-btn" id="fdVisBtn" aria-haspopup="listbox" aria-expanded="false">All games</button>
+              <ul class="vtt-dd-list" id="fdVisList" role="listbox" aria-label="Show" tabindex="-1" hidden></ul>
+            </div>
+          </div>
+          <button id="fdSubmit" class="btn primary find-go" type="submit">Search</button>
         </div>
         <p class="status" id="fdStatus" role="status" aria-live="polite"></p>
-        <button id="fdSubmit" class="btn primary" type="submit">Search</button>
-        <div class="row-list" id="fdResults"></div>
-        <button id="fdMore" class="btn secondary small" type="button" hidden style="margin-top:0.6rem;">Load more</button>
+        <div class="find-results" id="fdResults"></div>
+        <button id="fdMore" class="btn secondary small find-more" type="button" hidden>Load more</button>
       </form>
     </div>
   </dialog>
 
   <!-- Campaign dialog (Manage / Details) -->
-  <dialog id="campaignDialog" class="dialog-wide" aria-labelledby="cdTitle">
-    <div class="card-inner">
-      <div class="dialog-head">
-        <button class="card-close" type="button" data-close id="cdClose" aria-label="Close">&times;</button>
-        <h2 id="cdTitle">Game</h2>
-        <span class="rule"></span>
-        <div class="tabs" id="cdTabs" role="tablist" aria-label="Game settings">
-          <button id="cdTabOverview" class="tab" type="button" role="tab" aria-selected="true" aria-controls="cdOverview" tabindex="0">Overview</button>
-          <button id="cdTabMembers" class="tab" type="button" role="tab" aria-selected="false" aria-controls="cdMembers" tabindex="-1">Members</button>
-          <button id="cdTabSettings" class="tab" type="button" role="tab" aria-selected="false" aria-controls="cdSettings" tabindex="-1" hidden>Settings</button>
-        </div>
-      </div>
-      <div class="dialog-body">
-        <!-- Overview -->
-        <div id="cdOverview" role="tabpanel" aria-labelledby="cdTabOverview" tabindex="0">
-          <span class="card-cover mask" id="cdCover" aria-hidden="true" style="max-width:12rem;aspect-ratio:16/9;display:block;border-radius:3px;"></span>
-          <p id="cdDesc" class="card-desc" style="-webkit-line-clamp:6;"></p>
-          <dl class="kv">
-            <dt>Visibility</dt><dd id="cdVis"></dd>
-            <dt>Status</dt><dd id="cdState"></dd>
-            <dt>At the table</dt><dd id="cdOnline">&mdash;</dd>
-            <dt>Created</dt><dd id="cdCreated"></dd>
-          </dl>
-          <div class="field-inline">
-            <button id="cdOpenToggle" class="btn secondary small" type="button" hidden>Close the table</button>
-            <a id="cdEnter" class="btn primary small" href="#" hidden>Enter the game</a>
-          </div>
-          <h3>Invite link</h3>
-          <div class="invite-row">
-            <input id="cdInvite" type="text" readonly aria-label="Invite link">
-            <button id="cdCopyInvite" class="btn secondary small" type="button">Copy</button>
-          </div>
-          <button id="cdLeave" class="btn danger small" type="button" hidden>Leave this game</button>
-          <p class="status" id="cdStatus" role="status" aria-live="polite"></p>
-        </div>
-
-        <!-- Members -->
-        <div id="cdMembers" role="tabpanel" aria-labelledby="cdTabMembers" tabindex="0" hidden>
-          <div class="row-list" id="cdMemberList"></div>
-          <h3 id="cdBannedHead" hidden>Banned</h3>
-          <div class="row-list" id="cdBannedList"></div>
-          <div id="cdTransferBlock" hidden>
-            <h3>Transfer ownership</h3>
-            <div class="field-inline">
-              <select id="cdTransferSel" aria-label="New owner"></select>
-              <button id="cdTransferBtn" class="btn secondary small" type="button">Transfer</button>
-            </div>
-            <p class="help">You will remain in the game as a player.</p>
-          </div>
-          <button id="cdRefresh" class="btn secondary small" type="button" style="margin-top:0.8rem;">Refresh</button>
-        </div>
-
-        <!-- Settings (GM only) -->
-        <div id="cdSettings" role="tabpanel" aria-labelledby="cdTabSettings" tabindex="0" hidden>
-          <form id="formSettings" novalidate>
-            <div class="field">
-              <label for="stName">Name</label>
-              <input id="stName" type="text" maxlength="100" autocomplete="off">
-            </div>
-            <div class="field">
-              <label for="stDesc">Description</label>
-              <textarea id="stDesc" maxlength="2000"></textarea>
-            </div>
-            <div class="field with-picker">
-              <label for="stImg">Cover image</label>
-              <input id="stImg" type="text" maxlength="2000" autocomplete="off" placeholder="https://…">
-            </div>
-            <img id="stImgPreview" class="img-preview" alt="" hidden>
-            <div class="field">
-              <label for="stVis">Visibility</label>
-              <select id="stVis">
-                <option value="public">Public</option>
-                <option value="private">Private</option>
-              </select>
-            </div>
-            <div class="field" id="stPasswordField" hidden>
-              <label for="stPassword">Password</label>
-              <div class="pw-wrap">
-                <input id="stPassword" type="password" maxlength="128" autocomplete="new-password">
-                <button class="pw-toggle" type="button" aria-controls="stPassword" aria-pressed="false">Show</button>
-              </div>
-              <span class="help" id="stPasswordHelp">Leave blank to keep the current password. 4&ndash;128 characters to change it.</span>
-            </div>
-            <p class="status" id="stStatus" role="status" aria-live="polite"></p>
-            <button id="stSubmit" class="btn primary" type="submit">Save changes</button>
-          </form>
-          <div class="danger-block">
-            <h3>Danger zone</h3>
-            <button id="stArchive" class="btn secondary small" type="button">Archive</button>
-            <p class="help">Hides it from your list; other members are unaffected.</p>
-            <button id="stDelete" class="btn danger small" type="button">Delete this game</button>
-            <p class="help">Deleted games can be restored for 30 days from Recently deleted.</p>
-          </div>
-        </div>
-      </div>
-    </div>
-  </dialog>
 
   <!-- Profile dialog -->
-  <dialog id="profileDialog" class="dialog-narrow" aria-labelledby="pfHeading">
-    <div class="card-inner">
+  <dialog id="profileDialog" class="dialog-idcard" aria-labelledby="pfHeading">
+    <div class="idcard">
       <button class="card-close" type="button" data-close aria-label="Close">&times;</button>
-      <h2 id="pfHeading">Your account</h2>
-      <span class="rule"></span>
-      <div class="member-row" style="border:none;padding:0;margin-bottom:1rem;">
-        <div class="who">
-          <span class="avatar" id="pfAvatar" aria-hidden="true"></span>
-          <div>
-            <div class="name" id="pfUsername"></div>
-            <div class="meta"><span id="pfEmail"></span> &middot; <span id="pfVerified"></span></div>
-            <div class="meta" id="pfSince"></div>
+      <h2 id="pfHeading" class="idcard-title" tabindex="-1">My Account</h2>
+
+      <div class="idcard-body">
+        <!-- Left: framed portrait. Hover shows an edit affordance; click opens
+             the avatar-URL editor. -->
+        <div class="idcard-photo">
+          <button class="idcard-avatar-btn" id="pfAvatarBtn" type="button" aria-label="Change avatar">
+            <span class="idcard-avatar" id="pfAvatar" aria-hidden="true"></span>
+            <span class="idcard-avatar-overlay" aria-hidden="true"></span>
+          </button>
+          <input id="pfAvatarInput" type="hidden">
+        </div>
+
+        <!-- Right: identity details. Each row: label, value, right-aligned Change. -->
+        <div class="idcard-details">
+          <div class="idcard-row">
+            <span class="idcard-label">Name</span>
+            <div class="idcard-line">
+              <span class="idcard-value-text" id="pfUsername"></span>
+              <input class="idcard-inline-input" id="pfNameInput" type="text" maxlength="30" autocomplete="username" aria-label="Username" hidden>
+              <button class="idcard-change" id="pfUsernameBtn" type="button">Change</button>
+            </div>
+            <span class="help idcard-help" id="pfNameHelp" hidden>3&ndash;30: letters, numbers, underscore.</span>
           </div>
+
+          <div class="idcard-row">
+            <span class="idcard-label">Email</span>
+            <div class="idcard-line">
+              <span class="idcard-value-text" id="pfEmail"></span>
+              <span class="idcard-badge" id="pfVerified"></span>
+              <button class="idcard-change" id="pfEmailBtn" type="button">Change</button>
+            </div>
+            <div class="idcard-edit" id="pfEmailEdit" hidden>
+              <input id="emNew" type="email" autocomplete="email" placeholder="New email" aria-label="New email">
+              <input id="emPassword" type="password" autocomplete="current-password" placeholder="Current password" aria-label="Current password to confirm email change">
+              <span class="help">A confirmation link goes to the new address. Nothing changes until you click it.</span>
+              <p class="status" id="emStatus" role="status" aria-live="polite"></p>
+            </div>
+          </div>
+
+          <div class="idcard-row">
+            <span class="idcard-label">Password</span>
+            <div class="idcard-line">
+              <span class="idcard-value-text idcard-dots">••••••••</span>
+              <button class="idcard-change" id="pfPasswordBtn" type="button">Change</button>
+            </div>
+            <div class="idcard-edit" id="pfPasswordEdit" hidden>
+              <input id="pwCurrent" type="password" autocomplete="current-password" placeholder="Current password" aria-label="Current password">
+              <input id="pwNew" type="password" autocomplete="new-password" placeholder="New password" aria-label="New password">
+              <span class="help">8&ndash;64 characters. This signs out your other devices.</span>
+              <p class="status" id="pwStatus" role="status" aria-live="polite"></p>
+            </div>
+          </div>
+
         </div>
       </div>
 
-      <form id="formProfile" novalidate>
-        <h3>Profile</h3>
-        <div class="field">
-          <label for="pfNameInput">Username</label>
-          <input id="pfNameInput" type="text" maxlength="30" autocomplete="username">
-          <span class="help">3&ndash;30: letters, numbers, underscore.</span>
-        </div>
-        <div class="field with-picker">
-          <label for="pfAvatarInput">Avatar image</label>
-          <input id="pfAvatarInput" type="text" maxlength="2000" autocomplete="off" placeholder="https://…">
-        </div>
-        <p class="status" id="pfStatus" role="status" aria-live="polite"></p>
-        <button id="pfSaveBtn" class="btn primary" type="submit">Save profile</button>
-      </form>
-
-      <form id="formPassword" novalidate>
-        <h3>Password</h3>
-        <div class="field">
-          <label for="pwCurrent">Current password</label>
-          <input id="pwCurrent" type="password" autocomplete="current-password">
-        </div>
-        <div class="field">
-          <label for="pwNew">New password</label>
-          <input id="pwNew" type="password" autocomplete="new-password">
-          <span class="help">8&ndash;64 characters &mdash; that's the only rule. This signs out your other devices.</span>
-        </div>
-        <p class="status" id="pwStatus" role="status" aria-live="polite"></p>
-        <button id="pwSubmit" class="btn primary" type="submit">Change password</button>
-      </form>
-
-      <form id="formEmail" novalidate>
-        <h3>Email</h3>
-        <div class="field">
-          <label for="emNew">New email</label>
-          <input id="emNew" type="email" autocomplete="email">
-        </div>
-        <div class="field">
-          <label for="emPassword">Current password</label>
-          <input id="emPassword" type="password" autocomplete="current-password">
-          <span class="help">A confirmation link goes to the new address. Nothing changes until you click it.</span>
-        </div>
-        <p class="status" id="emStatus" role="status" aria-live="polite"></p>
-        <button id="emSubmit" class="btn primary" type="submit">Change email</button>
-      </form>
-
-      <div class="danger-block">
+      <p class="status idcard-status" id="pfStatus" role="status" aria-live="polite"></p>
+      <div class="idcard-actions">
         <button id="pfLogout" class="btn secondary small" type="button">Log out</button>
+        <button id="pfSaveBtn" class="btn primary small" type="button" hidden>Save changes</button>
       </div>
     </div>
   </dialog>
 
   <!-- Confirm dialog (opened over another dialog) -->
+  <!-- Floating-card overlay: a collapsed card's panel is moved in here on open,
+       animated from the card's position to a centred rectangle over a scrim.
+       The grid underneath does not move. -->
+  <div id="cardOverlay" class="card-overlay" hidden>
+    <div class="card-overlay-scrim" id="cardOverlayScrim"></div>
+    <div class="card-overlay-stage" id="cardOverlayStage"></div>
+  </div>
+
   <dialog id="confirmDialog" class="dialog-narrow" aria-labelledby="cfTitle">
     <div class="card-inner">
       <h2 id="cfTitle">Are you sure?</h2>
@@ -677,6 +1129,7 @@
       <p id="cfBody" style="margin:0 0 1.2rem;"></p>
       <div class="field-inline" style="justify-content:flex-end;">
         <button id="cfCancel" class="btn secondary small" type="button">Cancel</button>
+        <button id="cfThird" class="btn secondary small" type="button" hidden></button>
         <button id="cfOk" class="btn primary small" type="button">OK</button>
       </div>
     </div>

@@ -175,6 +175,58 @@
     if (invoker && typeof invoker.focus === 'function') invoker.focus();
   }
 
+  // ── Animate a container's height change (universal, all browsers) ──────────
+  // height:auto can't be transitioned directly, so FLIP it: measure, mutate,
+  // measure, then transition from the old pixel height to the new one and clear
+  // back to auto on completion. Reduced-motion (or no layout, e.g. jsdom) applies
+  // the change instantly. Reusable anywhere a reveal/collapse changes size:
+  //   VTTCommon.animateResize(container, function () { field.hidden = false; });
+  var REDUCE_MOTION = false;
+  try { REDUCE_MOTION = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) {}
+
+  function animateResize(el, mutate, opts) {
+    opts = opts || {};
+    var duration = typeof opts.duration === 'number' ? opts.duration : 260;
+    var easing = opts.easing || 'cubic-bezier(0.22, 1, 0.36, 1)';
+
+    if (!el || typeof mutate !== 'function') { if (mutate) mutate(); return; }
+
+    // No animation path: reduced-motion, or an environment without real layout.
+    var start = el.getBoundingClientRect ? el.getBoundingClientRect().height : 0;
+    if (REDUCE_MOTION || !start) { mutate(); return; }
+
+    // If a previous resize is still running on this element, settle it first so
+    // we measure from a stable base and don't stack transitions.
+    if (el._vttResizeCleanup) el._vttResizeCleanup();
+
+    mutate();                                   // apply the DOM change (jumps to new auto height)
+    var end = el.getBoundingClientRect().height;
+    if (end === start) return;                  // nothing actually changed size
+
+    // Invert to the old height, then play to the new one.
+    el.style.overflow = 'hidden';
+    el.style.height = start + 'px';
+    // force reflow so the browser registers the start height before transitioning
+    void el.offsetHeight;
+    el.style.transition = 'height ' + duration + 'ms ' + easing;
+    el.style.height = end + 'px';
+
+    var done = false;
+    function cleanup() {
+      if (done) return; done = true;
+      el.removeEventListener('transitionend', onEnd);
+      el.style.transition = '';
+      el.style.height = '';
+      el.style.overflow = '';
+      el._vttResizeCleanup = null;
+    }
+    function onEnd(e) { if (e.target === el && e.propertyName === 'height') cleanup(); }
+    el.addEventListener('transitionend', onEnd);
+    el._vttResizeCleanup = cleanup;
+    // Fallback in case transitionend doesn't fire (e.g. height ended up equal).
+    window.setTimeout(cleanup, duration + 60);
+  }
+
   window.VTTCommon = {
     resolveTheme: resolveTheme,
     localGet: localGet,
@@ -187,5 +239,6 @@
     initTheme: initTheme,
     openDialog: openDialog,
     closeDialog: closeDialog,
+    animateResize: animateResize,
   };
 }());

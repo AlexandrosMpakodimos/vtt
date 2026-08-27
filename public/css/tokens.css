@@ -68,3 +68,22 @@ html[data-theme="light"] {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
+
+/* Scrollbars — themed to the signature gold so every scrollable region (page,
+ * dialogs, the floating card body, chat, sheets) matches the rest of the UI
+ * instead of the browser default. Applied globally via tokens.css so all pages
+ * inherit it. Firefox uses the standard properties; WebKit/Blink use the
+ * pseudo-elements. Both draw from the same tokens, so they follow the theme. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--accent) transparent;
+}
+::-webkit-scrollbar { width: 12px; height: 12px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--accent);
+  border: 3px solid var(--surface);   /* inset look, so the thumb reads as a gold bar */
+  border-radius: 8px;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--accent-strong); }
+::-webkit-scrollbar-corner { background: transparent; }
