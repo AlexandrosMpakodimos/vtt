@@ -136,7 +136,7 @@ t('...offering exactly the four allowed types',
   console.log('\n--- clearing the field is a supported choice ---');
   btn.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
   await new Promise((r) => setTimeout(r, 10));
-  [...back.querySelectorAll('button')].find((b) => b.textContent === 'clear the field')
+  [...back.querySelectorAll('button')].find((b) => b.textContent === 'Clear the field')
     .dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
   t('choosing "clear" empties the field', target.value === '', target.value);
   t('...and still fires the events', inputFired === 2 && changeFired === 2);
@@ -154,7 +154,7 @@ t('...offering exactly the four allowed types',
     configurable: true,
     value: [{ name: 'a.png', type: 'image/png', size: 4096 }],
   });
-  [...back.querySelectorAll('button')].find((b) => b.textContent === 'upload')
+  [...back.querySelectorAll('button')].find((b) => b.textContent === 'Upload')
     .dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
   await new Promise((r) => setTimeout(r, 30));
 
@@ -177,7 +177,7 @@ t('...offering exactly the four allowed types',
   calls.length = 0;
   const linkInput = back.querySelector('.vttpick-link');
   linkInput.value = 'https://elsewhere.example/pasted.png';
-  [...back.querySelectorAll('button')].find((b) => b.textContent === 'add link')
+  [...back.querySelectorAll('button')].find((b) => b.textContent === 'Add URL')
     .dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
   await new Promise((r) => setTimeout(r, 20));
   const extCall = calls.find((c) => /external$/.test(c.path));
@@ -194,7 +194,7 @@ t('...offering exactly the four allowed types',
   Object.defineProperty(f2, 'files', {
     configurable: true, value: [{ name: 'a.png', type: 'image/png', size: 10 }],
   });
-  [...back.querySelectorAll('button')].find((b) => b.textContent === 'upload')
+  [...back.querySelectorAll('button')].find((b) => b.textContent === 'Upload')
     .dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
   await new Promise((r) => setTimeout(r, 20));
   t('a 503 tells the user to paste a link instead',
@@ -250,6 +250,59 @@ t('...offering exactly the four allowed types',
   await new Promise((r) => setTimeout(r, 10));
   t('with no open dialog, the picker falls back to <body>', back.parentNode === document.body,
     back.parentNode && back.parentNode.tagName);
+  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+
+  console.log('\n--- every stored image (hosted or pasted-link) can be deleted from the grid ---');
+  P.open({ campaignId: 'C1', kind: 'portrait', onChoose: () => {} });
+  await new Promise((r) => setTimeout(r, 10));
+  {
+    const gridItems = [...document.querySelectorAll('.vttpick-item')];
+    const hostedItems = gridItems.filter((i) => !i.classList.contains('external'));
+    const externalItem = gridItems.find((i) => i.classList.contains('external'));
+    t('every hosted image has a delete control', hostedItems.length > 0 && hostedItems.every((i) => i.querySelector('.vttpick-del')));
+    t('an external (pasted-link) image now has one too', externalItem && !!externalItem.querySelector('.vttpick-del'));
+
+    // Deleting must not "choose" the image (no field fill).
+    const tgt = document.getElementById('target');
+    if (tgt) tgt.value = 'UNCHANGED';
+    calls.length = 0;
+    const before = document.querySelectorAll('.vttpick-item').length;
+    hostedItems[0].querySelector('.vttpick-del').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 10));
+    t('clicking the ✕ DELETEs that asset by id',
+      calls.some((c) => c.method === 'DELETE' && /\/api\/assets\/A1$/.test(c.path)),
+      calls.map((c) => c.method + ' ' + c.path).join(' | '));
+    t('...and removes the tile from the grid',
+      document.querySelectorAll('.vttpick-item').length === before - 1,
+      String(document.querySelectorAll('.vttpick-item').length));
+    t('...without choosing the image (field untouched)', !tgt || tgt.value === 'UNCHANGED', tgt && tgt.value);
+
+    // External (pasted-link) images are real rows too — deleting one DELETEs it.
+    calls.length = 0;
+    const ext = [...document.querySelectorAll('.vttpick-item')].find((i) => i.classList.contains('external'));
+    ext.querySelector('.vttpick-del').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 10));
+    t('deleting an external image DELETEs it by id too',
+      calls.some((c) => c.method === 'DELETE' && /\/api\/assets\/A2$/.test(c.path)),
+      calls.map((c) => c.method + ' ' + c.path).join(' | '));
+  }
+  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+
+  console.log('\n--- the image currently in use is marked ---');
+  // Open with `current` set to a known asset URL → that tile gets .current.
+  P.open({ campaignId: 'C1', kind: 'portrait', current: 'https://pub-x.r2.dev/c/C1/portrait/a.png', onChoose: () => {} });
+  await new Promise((r) => setTimeout(r, 10));
+  {
+    const marked = [...document.querySelectorAll('.vttpick-item.current')];
+    t('exactly one tile is marked current', marked.length === 1, String(marked.length));
+    t('...and it is the one whose url matches',
+      marked[0] && marked[0].querySelector('img').src === 'https://pub-x.r2.dev/c/C1/portrait/a.png',
+      marked[0] && marked[0].querySelector('img').src);
+    // With no current set, nothing is marked.
+    P.open({ campaignId: 'C1', kind: 'portrait', onChoose: () => {} });
+  }
+  await new Promise((r) => setTimeout(r, 10));
+  t('with no current value, no tile is marked', document.querySelectorAll('.vttpick-item.current').length === 0);
   document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
 
   console.log(`\n${pass} passed, ${fail} failed`);

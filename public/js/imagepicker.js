@@ -60,30 +60,103 @@
     if (document.getElementById('vtt-picker-style')) return;
     const style = document.createElement('style');
     style.id = 'vtt-picker-style';
+    // Themed to match the app's dialogs (the ID card in particular): dark surface,
+    // gold accents, the page's own font. Draws entirely from the shared tokens so
+    // it follows light/dark. Scoped under .vttpick so nothing leaks to host pages.
     style.textContent = `
-      .vttpick-back { position: fixed; inset: 0; background: #0009; z-index: 80;
-                      display: none; align-items: center; justify-content: center; }
+      .vttpick-back { position: fixed; inset: 0; background: var(--scrim, rgba(0,0,0,0.55));
+                      -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px);
+                      z-index: 80; display: none; align-items: center; justify-content: center; }
       .vttpick-back.on { display: flex; }
-      .vttpick { background: #fff; border-radius: 6px; padding: 16px; width: 640px;
-                 max-width: 92vw; max-height: 86vh; overflow-y: auto;
-                 font-family: monospace; }
-      .vttpick h3 { margin: 0 0 4px; font-size: 14px; }
-      .vttpick .muted { color: #777; font-size: 12px; }
-      .vttpick .row { display: flex; gap: 8px; align-items: flex-end; margin-top: 8px; }
-      .vttpick .row > div { flex: 1; }
-      .vttpick label { display: block; font-size: 11px; margin-bottom: 2px; }
-      .vttpick input, .vttpick select { width: 100%; padding: 5px; box-sizing: border-box;
-                                        font-family: monospace; }
-      .vttpick button { padding: 5px 10px; cursor: pointer; font-family: monospace; }
-      .vttpick-grid { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
-      .vttpick-item { width: 112px; border: 1px solid #ccc; border-radius: 4px; padding: 4px;
-                      cursor: pointer; text-align: center; font-size: 11px; background: #fff; }
-      .vttpick-item:hover { border-color: #06c; background: #f2f7ff; }
-      .vttpick-item img { width: 100%; height: 70px; object-fit: cover; border-radius: 3px;
-                          background: #eee; display: block; }
-      .vttpick-item.external { border-color: #a40; }
-      .vttpick-item.external .src { color: #a40; }
-      .vttpick .msg { font-size: 12px; margin-top: 6px; min-height: 16px; }
+      .vttpick { position: relative; background: var(--surface-raised); color: var(--text);
+                 border: 1px solid var(--accent); border-radius: 8px;
+                 box-shadow: 0 24px 60px rgba(0,0,0,0.5);
+                 padding: 1.6rem 1.8rem; width: 34rem; max-width: 94vw; max-height: 88vh; overflow-y: auto; }
+      .vttpick h3 { margin: 0 0 1.1rem; font-size: 1.4rem; text-transform: uppercase;
+                    letter-spacing: 0.04em; color: var(--accent); }
+      .vttpick .muted { color: var(--text-muted); font-size: 0.78rem; }
+
+      /* Upload + URL rows share one grid template so the two inputs are exactly
+         the same width and the two buttons line up. Label spans the top; the
+         input and its button share the row below, vertically centred on each
+         other (not dropped to the bottom). */
+      .vttpick .field-row {
+        display: grid; grid-template-columns: 1fr auto; grid-template-rows: auto auto;
+        gap: 0.35rem 0.6rem; align-items: center; margin-top: 0.9rem;
+      }
+      .vttpick .field-row label { grid-column: 1 / -1; }
+      .vttpick label { display: block; font-size: 0.8rem; font-weight: 600; text-transform: uppercase;
+                       letter-spacing: 0.05em; color: var(--text-muted); }
+      .vttpick input {
+        width: 100%; font: inherit; padding: 0.65rem 0.75rem; border-radius: 2px; min-height: 44px;
+        border: 1px solid var(--border); background: var(--surface); color: var(--text); box-sizing: border-box;
+      }
+      .vttpick input:focus-visible { border-color: var(--accent); outline: 2px solid var(--focus); outline-offset: 1px; }
+      /* Both action buttons: identical look, identical size, centred on the input. */
+      .vttpick .field-row button {
+        font: inherit; font-size: 0.8rem; letter-spacing: 0.03em; text-transform: uppercase; cursor: pointer;
+        min-width: 7rem; min-height: 44px; border-radius: 3px; align-self: center;
+        border: 1px solid var(--accent); background: transparent; color: var(--accent);
+      }
+      .vttpick .field-row button:hover {
+        background: var(--accent); color: var(--on-accent); border-color: var(--accent);
+        box-shadow: 0 0 8px color-mix(in srgb, var(--accent) 80%, transparent),
+                    0 0 22px color-mix(in srgb, var(--accent) 45%, transparent);
+      }
+      .vttpick .field-row button:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+
+      /* Footer buttons (Clear / Cancel): quieter, they aren't the primary action. */
+      .vttpick .foot { display: flex; gap: 0.6rem; margin-top: 1.2rem; }
+      .vttpick .foot button {
+        font: inherit; font-size: 0.8rem; letter-spacing: 0.03em; text-transform: uppercase; cursor: pointer;
+        padding: 0.55rem 0.9rem; min-height: 44px; border-radius: 3px;
+        border: 1px solid var(--border); background: transparent; color: var(--text-muted);
+      }
+      .vttpick .foot button:hover {
+        background: var(--accent); color: var(--on-accent); border-color: var(--accent);
+        box-shadow: 0 0 8px color-mix(in srgb, var(--accent) 80%, transparent),
+                    0 0 22px color-mix(in srgb, var(--accent) 45%, transparent);
+      }
+      .vttpick .foot button:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+
+      /* Modal close ✕ — styled like the account modal's .card-close. */
+      .vttpick-close {
+        position: absolute; top: 0.6rem; right: 0.6rem; width: 44px; height: 44px;
+        display: grid; place-items: center; padding: 0;
+        background: transparent; border: none; color: var(--text-muted);
+        font-size: 1.5rem; line-height: 1; cursor: pointer; border-radius: 2px;
+      }
+      .vttpick-close:hover { color: var(--accent); }
+
+      /* Image carousel: a single horizontal row that scrolls when it overflows. */
+      .vttpick-grid { display: flex; flex-wrap: nowrap; gap: 0.7rem; margin-top: 1.1rem;
+                      overflow-x: auto; padding-bottom: 0.4rem; scroll-snap-type: x proximity; }
+      .vttpick-item {
+        position: relative; flex: 0 0 auto; width: 7.5rem; scroll-snap-align: start;
+        border: 1px solid var(--border); border-radius: 4px; padding: 0.35rem;
+        cursor: pointer; background: var(--surface); line-height: 0;
+      }
+      .vttpick-item:hover { border-color: var(--accent);
+        box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent); }
+      .vttpick-item img { width: 100%; height: 4.4rem; object-fit: cover; border-radius: 3px;
+                          background: var(--surface-raised); display: block; }
+      /* The image currently in use gets a distinct gold outline. */
+      .vttpick-item.current {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 2px var(--accent), 0 0 10px color-mix(in srgb, var(--accent) 35%, transparent);
+      }
+
+      /* Per-image delete ✕ — styled like the expanded game modal's .cp-close. */
+      .vttpick-del {
+        position: absolute; top: 0.3rem; right: 0.3rem; width: 1.6rem; height: 1.6rem; min-height: 0;
+        display: flex; align-items: center; justify-content: center; padding: 0; z-index: 1;
+        border: none; border-radius: 50%; background: rgba(0,0,0,0.45); color: #fff;
+        font-size: 1rem; line-height: 1; cursor: pointer;
+        opacity: 0; transition: opacity 0.14s var(--ease);
+      }
+      .vttpick-item:hover .vttpick-del, .vttpick-del:focus-visible { opacity: 1; }
+      .vttpick-del:hover { background: rgba(0,0,0,0.65); color: var(--danger); }
+      .vttpick .msg { font-size: 0.8rem; margin-top: 0.6rem; min-height: 1.1rem; }
     `;
     document.head.appendChild(style);
   }
@@ -93,17 +166,16 @@
     const back = el('div', { cls: 'vttpick-back' });
     const box = el('div', { cls: 'vttpick' });
 
-    box.appendChild(el('h3', { text: 'Choose an image' }));
-    box.appendChild(el('p', {
-      cls: 'muted',
-      text: 'Click one to use it. An upload goes straight from your browser to the '
-          + 'bucket and is checked server-side before it can be used. A pasted link is '
-          + 'stored as-is — every player who views it connects to that host directly.',
-    }));
+    // Top-right close, matching the app's dialogs.
+    const xClose = el('button', { cls: 'vttpick-close', text: '\u00d7' });
+    xClose.setAttribute('aria-label', 'Close');
+    box.appendChild(xClose);
 
-    const upRow = el('div', { cls: 'row' });
-    const fileWrap = el('div');
-    fileWrap.appendChild(el('label', { text: 'upload a file' }));
+    box.appendChild(el('h3', { text: 'Choose an image' }));
+
+    // Upload row: label (spanning), file input, Upload button — a 2-col grid.
+    const upRow = el('div', { cls: 'field-row' });
+    upRow.appendChild(el('label', { text: 'Upload a file' }));
     const file = document.createElement('input');
     file.type = 'file';
     // Deliberately the same four types the server allows, and deliberately not
@@ -112,21 +184,20 @@
     // picker that wastes an upload.
     file.accept = 'image/png,image/jpeg,image/webp,image/gif';
     file.className = 'vttpick-file';
-    fileWrap.appendChild(file);
-    upRow.appendChild(fileWrap);
-    const upBtn = el('button', { text: 'upload' });
+    upRow.appendChild(file);
+    const upBtn = el('button', { text: 'Upload' });
     upRow.appendChild(upBtn);
     box.appendChild(upRow);
 
-    const linkRow = el('div', { cls: 'row' });
-    const linkWrap = el('div');
-    linkWrap.appendChild(el('label', { text: '…or paste a link' }));
+    // URL row: same grid template, so the input matches the file input's width
+    // and the button lines up under Upload.
+    const linkRow = el('div', { cls: 'field-row' });
+    linkRow.appendChild(el('label', { text: 'Paste a URL' }));
     const link = document.createElement('input');
     link.placeholder = 'https://example.com/image.png';
     link.className = 'vttpick-link';
-    linkWrap.appendChild(link);
-    linkRow.appendChild(linkWrap);
-    const linkBtn = el('button', { text: 'add link' });
+    linkRow.appendChild(link);
+    const linkBtn = el('button', { text: 'Add URL' });
     linkRow.appendChild(linkBtn);
     box.appendChild(linkRow);
 
@@ -136,9 +207,9 @@
     const grid = el('div', { cls: 'vttpick-grid' });
     box.appendChild(grid);
 
-    const foot = el('div', { cls: 'row' });
-    const clear = el('button', { text: 'clear the field' });
-    const close = el('button', { text: 'cancel' });
+    const foot = el('div', { cls: 'foot' });
+    const clear = el('button', { text: 'Clear the field' });
+    const close = el('button', { text: 'Cancel' });
     foot.appendChild(clear);
     foot.appendChild(close);
     box.appendChild(foot);
@@ -150,6 +221,7 @@
     // dismissal behaviour a person expects from any modal.
     back.addEventListener('click', (e) => { if (e.target === back) hide(); });
     close.addEventListener('click', hide);
+    xClose.addEventListener('click', hide);
     clear.addEventListener('click', () => { choose(''); });
     upBtn.addEventListener('click', () => doUpload(file, msg));
     linkBtn.addEventListener('click', () => doLink(link, msg));
@@ -200,11 +272,17 @@
     const { grid } = root;
     grid.textContent = '';
     if (!assets.length) {
-      grid.appendChild(el('p', { cls: 'muted', text: 'no images yet — upload one or paste a link' }));
+      grid.appendChild(el('p', { cls: 'muted', text: 'no images yet — upload one or paste a URL' }));
       return;
     }
     for (const a of assets) {
-      const item = el('div', { cls: 'vttpick-item' + (a.source === 'external' ? ' external' : '') });
+      const isCurrent = state && state.current && a.url === state.current;
+      // The `external` class is kept purely as a hook for the referrer policy
+      // below — it no longer carries any visual distinction. Tiles show only the
+      // image (plus the delete ✕ and the current-image outline).
+      const item = el('div', { cls: 'vttpick-item'
+        + (a.source === 'external' ? ' external' : '')
+        + (isCurrent ? ' current' : '') });
       const img = document.createElement('img');
       img.src = a.url;
       img.alt = '';
@@ -213,14 +291,36 @@
       // stops this application's URLs being handed to that host.
       if (a.source === 'external') img.referrerPolicy = 'no-referrer';
       item.appendChild(img);
-      item.appendChild(el('div', { text: a.kind }));
-      item.appendChild(el('div', {
-        cls: 'src muted',
-        text: a.source === 'external' ? 'external' : 'hosted',
-      }));
       item.addEventListener('click', () => choose(a.url));
+
+      // Every stored asset (hosted OR pasted-link) is a real row and can be
+      // deleted by its owner/GM — the ✕ in the corner.
+      if (a.id) {
+        const del = el('button', { cls: 'vttpick-del', text: '\u00d7' });
+        del.setAttribute('aria-label', 'Delete this image');
+        del.addEventListener('click', (e) => {
+          e.stopPropagation();          // don't also "choose" the image
+          doDelete(a, root.msg);
+        });
+        item.appendChild(del);
+      }
+
       grid.appendChild(item);
     }
+  }
+
+  // Delete a hosted asset: remove the row + object server-side, then drop it from
+  // the grid. A 404 means it's already gone (or not ours) — reflect that too.
+  function doDelete(asset, msg) {
+    if (msg) { msg.textContent = ''; msg.className = 'msg muted'; }
+    api('DELETE', '/api/assets/' + asset.id).then((r) => {
+      if (r.status === 200 || r.status === 404) {
+        assets = assets.filter((x) => x.id !== asset.id);
+        renderGrid();
+      } else if (msg) {
+        msg.textContent = (r.data && r.data.error) || 'Could not delete that image.';
+      }
+    }).catch(() => { if (msg) msg.textContent = 'Could not delete that image.'; });
   }
 
   // The three-step upload, in one place. See routes/assets.js for why the
@@ -304,6 +404,7 @@
       campaignId: opts.campaignId || null,
       kind: KINDS.includes(opts.kind) ? opts.kind : 'portrait',
       onChoose: typeof opts.onChoose === 'function' ? opts.onChoose : null,
+      current: opts.current || null,   // the URL currently in use → gold outline
     };
     // A <dialog> opened with showModal() lives in the browser's top layer, which
     // sits above every normal-flow z-index. A fixed overlay on document.body
@@ -323,8 +424,10 @@
 
   // Attach a "choose…" button beside a text field. The field keeps working on
   // its own; this only adds a way to fill it without typing.
-  function attach(inputId, opts) {
-    const input = document.getElementById(inputId);
+  function attach(inputOrId, opts) {
+    // Accept an element directly (per-card inputs share a class, not an id) or
+    // an id string (the original callers).
+    const input = (inputOrId && inputOrId.nodeType === 1) ? inputOrId : document.getElementById(inputOrId);
     if (!input || input.dataset.vttPicker) return null;
     input.dataset.vttPicker = '1';
 
@@ -335,6 +438,7 @@
     btn.addEventListener('click', () => open({
       campaignId: typeof opts.campaignId === 'function' ? opts.campaignId() : opts.campaignId,
       kind: typeof opts.kind === 'function' ? opts.kind() : opts.kind,
+      current: input.value || null,      // highlight the image already in the field
       onChoose: (url) => {
         input.value = url;
         // Dispatched so anything listening for edits — a live preview, a dirty
