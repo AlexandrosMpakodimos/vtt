@@ -276,6 +276,121 @@
     return strip;
   }
 
+  // ── Custom dropdown (themed <select> replacement) ──────────────────────────
+  // Drives a .vtt-dd block: a .vtt-dd-btn trigger, a .vtt-dd-list listbox, and a
+  // hidden <input> that carries the value (and fires `change` like a real
+  // select). role=listbox/option, keyboard nav, opens up or down by room. Moved
+  // here from the dashboard so the game page's selects can use the same list.
+  var ddSeq = 0;
+  function initDropdown(ddRef, options) {
+    var dd = (typeof ddRef === 'string') ? $(ddRef) : ddRef; if (!dd) return;
+    var btn = dd.querySelector('.vtt-dd-btn');
+    var list = dd.querySelector('.vtt-dd-list');
+    var hidden = dd.querySelector('input[type="hidden"]');
+    if (!btn || !list || !hidden) return;
+    var optBase = (typeof ddRef === 'string' ? ddRef : ('vttdd' + (++ddSeq)));
+    var activeIdx = 0;
+
+    function currentIdx() {
+      for (var i = 0; i < options.length; i++) { if (options[i].value === hidden.value) return i; }
+      return 0;
+    }
+    function render() {
+      while (list.firstChild) list.removeChild(list.firstChild);
+      options.forEach(function (opt, i) {
+        var li = document.createElement('li');
+        li.className = 'vtt-dd-opt';
+        li.setAttribute('role', 'option');
+        li.id = optBase + '-opt-' + i;
+        li.textContent = opt.label;
+        if (opt.value === hidden.value) li.setAttribute('aria-selected', 'true');
+        if (i === activeIdx) li.setAttribute('data-active', 'true');
+        li.addEventListener('click', function () { choose(i); });
+        li.addEventListener('mousemove', function () { setActive(i); });
+        list.appendChild(li);
+      });
+    }
+    function setActive(i) {
+      activeIdx = i;
+      var opts = list.querySelectorAll('.vtt-dd-opt');
+      for (var k = 0; k < opts.length; k++) {
+        if (k === i) opts[k].setAttribute('data-active', 'true'); else opts[k].removeAttribute('data-active');
+      }
+      if (opts[i]) { list.setAttribute('aria-activedescendant', opts[i].id); opts[i].scrollIntoView({ block: 'nearest' }); }
+    }
+    function isOpen() { return dd.getAttribute('data-open') === 'true'; }
+    function positionList() {
+      var r = btn.getBoundingClientRect();
+      list.style.width = r.width + 'px';
+      list.style.left = r.left + 'px';
+      // Prefer opening downward; if there isn't room below, open upward instead.
+      var belowRoom = window.innerHeight - r.bottom;
+      var listH = list.offsetHeight || 0;
+      if (belowRoom < listH + 8 && r.top > belowRoom) {
+        list.style.top = ''; list.style.bottom = (window.innerHeight - r.top + 4) + 'px';
+      } else {
+        list.style.bottom = ''; list.style.top = (r.bottom + 4) + 'px';
+      }
+    }
+    function open() {
+      dd.setAttribute('data-open', 'true');
+      btn.setAttribute('aria-expanded', 'true');
+      list.removeAttribute('hidden');
+      activeIdx = currentIdx();
+      render(); setActive(activeIdx);
+      positionList();
+      document.addEventListener('mousedown', onOutside, true);
+      window.addEventListener('scroll', positionList, true);
+      window.addEventListener('resize', positionList);
+    }
+    function close() {
+      dd.setAttribute('data-open', 'false');
+      btn.setAttribute('aria-expanded', 'false');
+      list.setAttribute('hidden', '');
+      document.removeEventListener('mousedown', onOutside, true);
+      window.removeEventListener('scroll', positionList, true);
+      window.removeEventListener('resize', positionList);
+    }
+    function choose(i) {
+      var opt = options[i]; if (!opt) return;
+      hidden.value = opt.value;
+      dd.setAttribute('data-value', opt.value);
+      btn.textContent = opt.label;
+      hidden.dispatchEvent(new Event('change', { bubbles: true }));
+      close(); btn.focus();
+    }
+    function onOutside(e) { if (!dd.contains(e.target)) close(); }
+
+    btn.addEventListener('click', function () { isOpen() ? close() : open(); });
+    btn.addEventListener('keydown', function (e) {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter' || e.key === ' ') {
+        if (!isOpen()) { e.preventDefault(); open(); return; }
+      }
+    });
+    list.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') { e.preventDefault(); close(); btn.focus(); }
+      else if (e.key === 'ArrowDown') { e.preventDefault(); setActive(Math.min(activeIdx + 1, options.length - 1)); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); setActive(Math.max(activeIdx - 1, 0)); }
+      else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); choose(activeIdx); }
+      else if (e.key === 'Home') { e.preventDefault(); setActive(0); }
+      else if (e.key === 'End') { e.preventDefault(); setActive(options.length - 1); }
+    });
+    btn.addEventListener('keydown', function (e) {
+      if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && isOpen()) { e.preventDefault(); list.focus(); setActive(activeIdx); }
+    });
+
+    var init = options[currentIdx()];
+    if (init) btn.textContent = init.label;
+
+    return {
+      set: function (value) {
+        hidden.value = value; dd.setAttribute('data-value', value);
+        var i = currentIdx(); if (options[i]) btn.textContent = options[i].label;
+      },
+      get: function () { return hidden.value; }
+    };
+  }
+
   window.VTTCommon = {
     resolveTheme: resolveTheme,
     localGet: localGet,
@@ -287,6 +402,7 @@
     fmtDate: fmtDate,
     initTheme: initTheme,
     initTabs: initTabs,
+    initDropdown: initDropdown,
     openDialog: openDialog,
     closeDialog: closeDialog,
     animateResize: animateResize,

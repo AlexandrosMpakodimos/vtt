@@ -166,6 +166,29 @@ window.eval(fs.readFileSync('public/js/scene.js','utf8') + `
   __check('the GM is offered every character, NPCs included',
     gmOpts.includes('Aria') && gmOpts.includes('Goblin (NPC)'), gmOpts.join(' | '));
 
+  // --- numbering a pile placed FROM a character (name field left blank) -------
+  // Selecting a character and leaving the name blank must still produce a
+  // numbered pile ("Goblin", "Goblin 2"…), read from the character's own name,
+  // rather than five identically-named tokens. Regression guard for that fix.
+  {
+    const pk = document.getElementById('tok-actor');
+    const goblinOpt = [...pk.options].find(o => o.dataset && o.dataset.name === 'Goblin');
+    __check('character options carry a raw data-name for numbering', !!goblinOpt,
+      goblinOpt && goblinOpt.dataset.name);
+    pk.value = goblinOpt.value;
+    // place() sets the NAME field; pass '' so the character's name drives numbering.
+    const cc = await place('', 5, 'medium', { x: 0, y: 0 });
+    __check('character multiples use the /tokens/copy endpoint',
+      cc && cc.path.includes('/tokens/copy'), cc && cc.path);
+    const cnames = cc.body.tokens.map(t => t.name);
+    __check('a pile from a character is numbered from its own name',
+      cnames.join(',') === 'Goblin,Goblin 2,Goblin 3,Goblin 4,Goblin 5', cnames.join(','));
+    __check('...and every token stays linked to the character',
+      cc.body.tokens.every(t => t.actor_id === goblinOpt.value),
+      JSON.stringify(cc.body.tokens.map(t => t.actor_id)));
+    pk.value = '';   // restore for any later assertions
+  }
+
   __check('the size select offers "from character"',
     [...document.getElementById('tok-size').options].some(o => o.value === ''),
     [...document.getElementById('tok-size').options].map(o=>o.value).join(','));

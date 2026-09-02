@@ -32,7 +32,6 @@
   var isGm = false;
   var activeSceneObj = null;   // the scene align injects; kept current by scene events
   var actorsBooted = false;    // VTTActors.boot is deferred to first Chars/Library open
-  var pingArmed = false;
   var wasConnected = false;    // so we only "catch up" after a real drop, not first connect
 
   // ── Boot (spec §3) ─────────────────────────────────────────────────────────
@@ -138,42 +137,135 @@
     // the forbidden; the fog popover is GM-only in markup.
     railPopover('railToken', 'tokenPop');
     railPopover('railFog', 'fog-panel');
-
-    // Ping: arm a one-shot mode. The next primary canvas pointerdown pings that
-    // point (via the scene seam), then disarms. Esc disarms. aria-pressed shows
-    // the mode. This reuses scene.js's exact ping path — no new socket event.
-    on('railPing', 'click', function () { setPing(!pingArmed); });
+    enhanceTokenPop();
+    enhanceFogPanel();
 
     // Modal openers.
     on('railAlign', 'click', openAlign);
     on('railScenes', 'click', openScenes);
-    on('btnScenes', 'click', openScenes);
     on('railConsole', 'click', toggleDrawer);
+  }
 
-    // Capture-phase pointerdown on the canvas: consume it for a ping when armed,
-    // before scene.js's own canvas handlers see it.
-    var wrap = $('stage-wrap');
-    if (wrap) {
-      wrap.addEventListener('pointerdown', function (e) {
-        if (!pingArmed) return;
-        if (e.button !== 0) return;           // primary click only
-        setPing(false);
-        if (window.VTTScene && window.VTTScene.pingAt) window.VTTScene.pingAt(e);
-        e.preventDefault();
-        e.stopPropagation();
-      }, true);
+  // Small UX polish for the Place-a-token popover (no placement logic — scene.js
+  // owns that): keep an inheritance note in sync with the character choice, and
+  // reflect the count on the Place button so the action is unambiguous.
+  function enhanceTokenPop() {
+    var actor = $('tok-actor');
+    var note = $('tok-inherit-note');
+    var count = $('tok-count');
+    var place = $('place-token');
+    var hint = $('tokPlaceHint');
+
+    function refresh() {
+      var hasChar = actor && actor.value;
+      if (note) {
+        note.textContent = hasChar
+          ? 'Inherits its picture and size from the character — fill a field below only to override.'
+          : 'A plain token uses just the name and image you give below.';
+      }
+      if (hint) {
+        hint.textContent = hasChar ? 'Placing for the selected character.' : 'Pick a character, or just name one.';
+      }
+      if (place) {
+        var n = count ? parseInt(count.value, 10) : 1;
+        if (!isFinite(n) || n < 1) n = 1;
+        place.textContent = n > 1 ? ('Place ' + n) : 'Place';
+      }
     }
+
+    if (actor) actor.addEventListener('change', refresh);
+    if (count) { count.addEventListener('input', refresh); count.addEventListener('change', refresh); }
+    // Re-sync each time the popover is opened (the character list is populated
+    // asynchronously by scene.js, and the selection may have changed).
+    if (actor) {
+      var railBtn = $('railToken');
+      if (railBtn) railBtn.addEventListener('click', function () { window.setTimeout(refresh, 0); });
+    }
+    refresh();
   }
 
-  function setPing(armed) {
-    pingArmed = armed;
-    var btn = $('railPing');
-    if (btn) btn.setAttribute('aria-pressed', armed ? 'true' : 'false');
-    var wrap = $('stage-wrap');
-    if (wrap) wrap.style.cursor = armed ? 'crosshair' : '';
+  // Fog-of-war popover: drive scene.js's hidden inputs from the icon UI, and
+  // turn fog mode on/off in step with the panel being open. scene.js still owns
+  // all the drawing/selection logic; this is only the control surface.
+  function fireChange(el) {
+    if (!el) return;
+    el.dispatchEvent(new window.Event('change', { bubbles: true }));
+  }
+  function enhanceFogPanel() {
+    var panel = $('fog-panel');
+    if (!panel) return;
+    var modeInput = $('fog-mode');     // hidden checkbox scene.js reads
+    var toolSel = $('fog-tool');       // hidden select: cover | reveal
+    var shapeSel = $('fog-shape');     // hidden select: rect | circle | poly
+
+    // Segmented buttons -> hidden <select> value + change event (scene.js listens).
+    function wireSeg(attr, sel) {
+      var btns = panel.querySelectorAll('[' + attr + ']');
+      Array.prototype.forEach.call(btns, function (b) {
+        b.addEventListener('click', function () {
+          var val = b.getAttribute(attr);
+          if (sel && sel.value !== val) { sel.value = val; fireChange(sel); }
+          syncSeg(attr, sel);
+        });
+      });
+    }
+    // Reflect the hidden <select>'s current value onto the buttons' pressed state
+    // (also called when scene.js changes it, e.g. the T key path).
+    function syncSeg(attr, sel) {
+      var btns = panel.querySelectorAll('[' + attr + ']');
+      Array.prototype.forEach.call(btns, function (b) {
+        b.setAttribute('aria-pressed', sel && b.getAttribute(attr) === sel.value ? 'true' : 'false');
+      });
+    }
+
+    wireSeg('data-fog-tool', toolSel);
+    wireSeg('data-fog-shape', shapeSel);
+    if (toolSel) toolSel.addEventListener('change', function () { syncSeg('data-fog-tool', toolSel); });
+    if (shapeSel) shapeSel.addEventListener('change', function () { syncSeg('data-fog-shape', shapeSel); });
+    syncSeg('data-fog-tool', toolSel);
+    syncSeg('data-fog-shape', shapeSel);
+
+    // Fog mode follows the panel's visibility, AND the panel follows fog mode —
+    // so the rail button and the F key (which scene.js handles by toggling the
+    // hidden checkbox) stay in agreement. Both directions act only on a real
+    // mismatch, so they settle without looping.
+    function openPanel() {
+      if (panel.hasAttribute('hidden')) {
+        // Route through the rail button so the shell's single-open-popover
+        // bookkeeping (aria, closing others) stays correct.
+        var rb = $('railFog');
+        if (rb) rb.click(); else show(panel);
+      }
+    }
+    function closePanel() {
+      if (!panel.hasAttribute('hidden')) {
+        var rb = $('railFog');
+        if (rb) rb.click(); else hide(panel);
+      }
+    }
+    function applyMode() {
+      var open = !panel.hasAttribute('hidden');
+      if (modeInput && modeInput.checked !== open) {
+        modeInput.checked = open;
+        fireChange(modeInput);
+      }
+      if (open) { syncSeg('data-fog-tool', toolSel); syncSeg('data-fog-shape', shapeSel); }
+    }
+    function applyPanel() {
+      // scene.js's F key toggled fog mode -> match the panel to it.
+      if (!modeInput) return;
+      if (modeInput.checked) openPanel(); else closePanel();
+    }
+    try {
+      var mo = new window.MutationObserver(applyMode);
+      mo.observe(panel, { attributes: true, attributeFilter: ['hidden'] });
+    } catch (e) { /* MutationObserver unavailable — fall back to click below */ }
+    if (modeInput) modeInput.addEventListener('change', applyPanel);
+    var railBtn = $('railFog');
+    if (railBtn) railBtn.addEventListener('click', function () { window.setTimeout(applyMode, 0); });
+    applyMode();
   }
 
-  // A rail button that toggles a popover element, with aria-expanded/pressed and
   // focus returning to the button on close. Only one such popover open at a time.
   var openPop = null;   // { btn, pop }
   function railPopover(btnId, popId) {
@@ -209,33 +301,16 @@
 
   function openScenes() {
     var d = $('scenesDialog');
-    if (d) C.openDialog(d, { invoker: $('railScenes') || $('btnScenes') });
+    if (d) C.openDialog(d, { invoker: $('railScenes') });
   }
 
   function openAlign() {
     var d = $('alignDialog');
     if (!d) return;
-    // Align operates on the CURRENT scene, injected here (spec §2). scene.js owns
-    // the live scene module-scoped and the approved seams are only boot()/pingAt,
-    // so the shell resolves the scene from the campaign's active scene id (fetched
-    // fresh) and hands it to align's boot. [TODO] If the GM has OPENED a scene for
-    // prep that is not the active one, this aligns the active scene, not the open
-    // one — reconciling that needs scene state the seam does not expose; recorded
-    // alongside "live-canvas alignment" as future work (spec §9).
-    api('GET', '/api/campaigns/' + campaignId).then(function (r) {
-      var scn = null;
-      if (r.status === 200 && r.data && r.data.campaign) {
-        var sid = r.data.campaign.active_scene_id;
-        if (sid) scn = { id: sid };
-      }
-      activeSceneObj = scn;
-      if (window.VTTAlign && window.VTTAlign.boot) window.VTTAlign.boot(campaignId, scn);
-      C.openDialog(d, { invoker: $('railAlign') });
-    }).catch(function () {
-      // Even if the lookup fails, open the modal so the GM sees the frame; align
-      // shows its own "no scene loaded" state.
-      C.openDialog(d, { invoker: $('railAlign') });
-    });
+    // Align resolves the current scene itself from the campaign (its boot fetches
+    // the campaign + scenes and selects the active one). We just open it.
+    if (window.VTTAlign && window.VTTAlign.boot) window.VTTAlign.boot(campaignId, null);
+    C.openDialog(d, { invoker: $('railAlign') });
   }
 
   // GM encounter popover (spec §2): a plain show/hide with aria-expanded.
@@ -289,9 +364,6 @@
 
       // A rail popover is above the canvas's own rungs.
       if (openPop) { e.preventDefault(); closePop(); return; }
-
-      // Armed ping mode disarms on Esc (before scene.js clears a selection).
-      if (pingArmed) { e.preventDefault(); setPing(false); return; }
 
       // Everything below (context menu, fog polygon draft, marquee, selection)
       // is scene.js's; we neither preventDefault nor stopPropagation, so its own
@@ -370,8 +442,6 @@
   // own beyond what the shell already does).
   window.VTTGame = {
     boot: boot,
-    setPing: function (v) { setPing(!!v); },
-    isPingArmed: function () { return pingArmed; },
     onTab: onTab,
     toggleDrawer: toggleDrawer,
     openScenes: openScenes,

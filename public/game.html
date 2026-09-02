@@ -25,10 +25,12 @@
        covers the page's own <style>; there is no inline SCRIPT or on*= here). */
 
     :root {
-      --pad: clamp(0.6rem, 2vw, 1.1rem);
+      --pad: clamp(1rem, 4vw, 3rem);
       --font-body: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
       --ease: cubic-bezier(0.22, 1, 0.36, 1);
-      --bar-h: 44px;
+      /* The header is a fixed 64px (unified across all three pages); --bar-h is
+         that height, used by the zones below (strip, rail, sidebar) to offset. */
+      --bar-h: 64px;
       --side-w: 360px;
       --rail-w: 52px;
       /* d20 glyph reused as a mask so marks follow theme colour. */
@@ -118,49 +120,45 @@
     /* ── Top bar (spec §2) ──────────────────────────────────────────────────── */
     #topBar {
       position: fixed; inset: 0 0 auto 0; z-index: 40;
-      display: flex; align-items: center; gap: 0.9rem;
-      height: var(--bar-h); padding: 0 var(--pad);
-      background: color-mix(in srgb, var(--surface) 82%, transparent);
-      -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 1rem; padding: 0 var(--pad);
+      /* Unified header height across landing / dashboard / game (64px). */
+      height: 64px; box-sizing: border-box;
+      background: var(--surface);
       border-bottom: 1px solid var(--border); flex-wrap: nowrap;
     }
     #topBar .bar-left, #topBar .bar-right { display: flex; align-items: center; gap: 0.6rem; min-width: 0; }
+    /* bar-right pinned to the right edge, exactly like the landing/dashboard
+       header-actions. #campName is absolutely centred and out of flow, so only
+       these two groups participate in space-between. */
     #topBar .bar-right { margin-left: auto; }
     #barBack { flex: none; }
-    #campName { font-weight: 700; letter-spacing: 0.03em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 22vw; }
+    /* The campaign name sits centred on the bar, independent of the side groups'
+       widths (absolute-centre so it never drifts as the left/right content
+       changes). It yields pointer events so the bar stays clickable behind it. */
+    #campName {
+      position: absolute; left: 50%; transform: translateX(-50%);
+      font-weight: 700; letter-spacing: 0.03em;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      max-width: 40vw; text-align: center; pointer-events: none;
+    }
     #sceneName { color: var(--text-muted); font-size: 0.85rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 18vw; }
     #connState { font-size: 0.76rem; color: var(--text-muted); letter-spacing: 0.02em; min-width: 1px; white-space: nowrap; }
     #whoami { font-size: 0.76rem; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 16vw; }
 
-    /* ── The canvas: fixed, full viewport, beneath everything (spec §2) ─────── */
+    /* ── The canvas: fixed, full viewport, beneath everything (spec §2) ───────
+       This OVERRIDES the harness's small bordered #stage-wrap (height:60vh) so
+       the canvas becomes the page. The grab/panning cursor and every canvas
+       INTERNAL (stage, grid-pad, stage-bg, fog, marquee, ping, zoom-hud,
+       ctx-menu, dice tray, tokens) come from the harness component block at the
+       end of this stylesheet, verbatim, so scene.js/combat.js render exactly as
+       they do on their dev pages. */
     #stage-wrap {
       position: fixed; inset: 0; z-index: 0;
       overflow: hidden; background: var(--surface);
-      cursor: default; touch-action: none;
+      cursor: grab; touch-action: none;
     }
-    #stage { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
-    #grid-pad { position: absolute; inset: 0; }
-    #stage-bg { position: absolute; inset: 0; background-repeat: no-repeat; background-position: 0 0; background-size: cover; }
-    #fog-layer { position: absolute; inset: 0; overflow: visible; pointer-events: none; }
-    #marquee { position: absolute; border: 1px dashed var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); display: none; pointer-events: none; }
-    #zoom-hud {
-      position: fixed; right: 12px; bottom: 12px; z-index: 20;
-      font-size: 0.72rem; color: var(--text-muted); background: color-mix(in srgb, var(--surface) 80%, transparent);
-      border: 1px solid var(--border); border-radius: 2px; padding: 0.15rem 0.45rem; pointer-events: none;
-    }
-    /* The context menu is positioned by scene.js (fixed left/top); style only. */
-    #ctx-menu {
-      position: fixed; z-index: 60; display: none; min-width: 160px;
-      background: var(--surface-raised); border: 1px solid var(--rule); border-radius: 3px;
-      box-shadow: 0 12px 34px rgba(0,0,0,0.5); padding: 0.25rem; font-size: 0.85rem;
-    }
-    #ctx-menu .head { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); padding: 0.3rem 0.5rem; }
-    #ctx-menu .item { padding: 0.35rem 0.6rem; border-radius: 2px; cursor: pointer; }
-    #ctx-menu .item:hover { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--text); }
-    #ctx-menu .sep { height: 1px; background: var(--border); margin: 0.25rem 0.2rem; }
-
-    /* The 3D dice tray: a fixed, click-through canvas over EVERYTHING (spec §1). */
-    #diceTray { position: fixed; inset: 0; z-index: 70; pointer-events: none; }
+    #stage-wrap.panning { cursor: grabbing; }
 
     /* ── Initiative strip zone (spec §2) ────────────────────────────────────── */
     #stripZone {
@@ -213,6 +211,112 @@
       border: 1px solid var(--rule); border-radius: 6px; padding: 0.85rem; box-shadow: 0 16px 40px rgba(0,0,0,0.5);
     }
 
+    /* ── Place-a-token popover redesign ──────────────────────────────────────
+       Clear hierarchy: the character is the primary choice; name/image/size are
+       optional overrides grouped together; how-many + Place is the action row. */
+    #tokenPop.token-pop { width: min(23rem, 90vw); padding: 0; overflow: hidden; }
+    .token-pop .pop-head {
+      padding: 0.85rem 0.95rem 0.7rem; border-bottom: 1px solid var(--border);
+      background: color-mix(in srgb, var(--accent) 6%, transparent);
+    }
+    .token-pop .pop-head h3 { font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--accent); margin: 0; }
+    .token-pop .pop-sub { display: block; margin-top: 0.15rem; font-size: 0.76rem; color: var(--text-muted); }
+    .token-pop > .field,
+    .token-pop .tok-overrides,
+    .token-pop .tok-actions,
+    .token-pop .tok-foot { margin: 0; }
+    .token-pop > .field { padding: 0.7rem 0.95rem 0; }
+    .token-pop .field label { font-size: 0.72rem; }
+    .token-pop .field .help,
+    .token-pop .field .opt { font-size: 0.72rem; color: var(--text-muted); }
+    .token-pop .field .opt { text-transform: none; letter-spacing: 0; font-weight: 400; }
+    .token-pop .tok-primary { padding-top: 0.85rem; }
+    .token-pop .tok-primary select { font-weight: 600; }
+    #tok-inherit-note { display: block; margin-top: 0.3rem; }
+
+    /* Overrides group — a subtly inset panel so it reads as "these replace the
+       character's values". */
+    .token-pop .tok-overrides {
+      margin: 0.8rem 0.95rem 0; padding: 0.7rem 0.75rem 0.75rem;
+      border: 1px solid var(--border); border-radius: 5px;
+      background: color-mix(in srgb, var(--surface) 40%, transparent);
+      display: grid; grid-template-columns: 1fr; gap: 0.6rem;
+    }
+    .token-pop .tok-overrides .field { padding: 0; }
+
+    /* Image field + its "choose…" button on one row. */
+    .token-pop .input-with-btn { display: flex; gap: 0.4rem; align-items: stretch; }
+    .token-pop .input-with-btn input { flex: 1; min-width: 0; }
+
+    /* The image picker injects a bare .vttpick-open button next to the field; it
+       ships unstyled (browser-grey). Style it to match the app's small buttons. */
+    .vttpick-open {
+      font: inherit; font-weight: 600; cursor: pointer; white-space: nowrap;
+      border-radius: 2px; padding: 0 0.7rem; min-height: 40px; flex: none;
+      display: inline-flex; align-items: center; justify-content: center;
+      border: 1px solid var(--rule); background: transparent; color: var(--accent);
+      transition: color 0.15s var(--ease), background-color 0.15s var(--ease);
+    }
+    .vttpick-open:hover { color: var(--on-accent); background: var(--accent); }
+    .vttpick-open:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+    /* Action row: how-many stepper + the primary Place button. */
+    /* Action row: how-many stepper + the primary Place button. The input and the
+       button share one baseline — the input is raised to the button's 44px so
+       their tops and bottoms align (flex-end alone left the 40px input sitting
+       above the taller button). */
+    .token-pop .tok-actions {
+      display: flex; align-items: flex-end; gap: 0.6rem;
+      padding: 0.85rem 0.95rem 0;
+    }
+    .token-pop .tok-count-field { width: 5.5rem; flex: none; margin-bottom: 0; }
+    .token-pop .tok-count-field input { text-align: center; min-height: 44px; }
+    .token-pop .tok-place { flex: 1; min-height: 44px; }
+
+    .token-pop .tok-foot { padding: 0.7rem 0.95rem 0.9rem; margin-top: 0.6rem; font-size: 0.74rem; line-height: 1.45; }
+
+    /* ── Fog-of-war popover redesign ─────────────────────────────────────────
+       Icon-driven: a Cover/Reveal segmented toggle, a shape segmented toggle,
+       and the two whole-scene actions. The old checkbox/selects are hidden
+       inputs that scene.js still reads; the buttons here drive them. */
+    #fog-panel.fog-pop { width: min(19rem, 90vw); padding: 0; overflow: hidden; }
+    .fog-pop .pop-head {
+      padding: 0.85rem 0.95rem 0.7rem; border-bottom: 1px solid var(--border);
+      background: color-mix(in srgb, var(--accent) 6%, transparent);
+    }
+    .fog-pop .pop-head h3 { font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--accent); margin: 0; }
+    .fog-pop .pop-sub { display: block; margin-top: 0.15rem; font-size: 0.74rem; color: var(--text-muted); }
+    .fog-pop .fog-section { padding: 0.8rem 0.95rem 0; }
+    .fog-pop .fog-label {
+      display: block; margin-bottom: 0.4rem;
+      font-size: 0.7rem; font-weight: 600; text-transform: uppercase;
+      letter-spacing: 0.06em; color: var(--text-muted);
+    }
+
+    /* Segmented control: a row of buttons that behave like radio options. */
+    .fog-pop .seg { display: flex; gap: 0.35rem; }
+    .fog-pop .seg-btn {
+      flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 0.4rem;
+      font: inherit; font-size: 0.82rem; font-weight: 600; cursor: pointer;
+      min-height: 40px; padding: 0 0.6rem; border-radius: 4px;
+      border: 1px solid var(--border); background: transparent; color: var(--text-muted);
+      transition: color 0.14s var(--ease), background-color 0.14s var(--ease), border-color 0.14s var(--ease);
+    }
+    .fog-pop .seg-btn svg { width: 18px; height: 18px; flex: none; }
+    .fog-pop .seg-btn.icon-only { flex: 1; padding: 0; }
+    .fog-pop .seg-btn:hover { color: var(--text); border-color: var(--rule); }
+    .fog-pop .seg-btn[aria-pressed="true"] {
+      color: var(--on-accent); background: var(--accent); border-color: var(--accent);
+    }
+    .fog-pop .seg-btn:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+    .fog-pop .fog-actions {
+      display: flex; flex-direction: column; gap: 0.4rem;
+      padding: 0.9rem 0.95rem 0;
+    }
+    .fog-pop .fog-actions .btn { width: 100%; }
+    .fog-pop .fog-foot { padding: 0.75rem 0.95rem 0.9rem; margin: 0.7rem 0 0; font-size: 0.73rem; line-height: 1.5; }
+
     /* ── Right sidebar (spec §2) ────────────────────────────────────────────── */
     #sideBar {
       position: fixed; top: var(--bar-h); right: 0; bottom: 0; z-index: 35;
@@ -260,7 +364,7 @@
     }
     dialog::backdrop { background: rgba(6, 7, 10, 0.7); backdrop-filter: blur(2px); }
     .card-inner { padding: 1.4rem; position: relative; max-height: 88vh; overflow-y: auto; width: min(46rem, 94vw); }
-    #alignDialog .card-inner { width: auto; max-height: none; }
+    #alignDialog .card-inner { width: auto; }
     .dialog-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: 0.4rem; }
     .card-inner h2 { font-size: 1.2rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--accent); overflow-wrap: anywhere; }
     .card-inner h2 + .rule { height: 2px; width: 3rem; background: var(--rule); margin: 0.3rem 0 1rem; }
@@ -269,23 +373,140 @@
       background: transparent; color: var(--text); cursor: pointer; font-size: 1.1rem; line-height: 1;
     }
     .card-close:hover { border-color: var(--rule); color: var(--accent); }
+    /* The align modal's close matches the dashboard game-card modals' circled X
+       (.cp-close there): a round translucent button, positioned in the corner. */
+    #alignDialog .card-close {
+      position: absolute; top: 0.6rem; right: 0.6rem; z-index: 2;
+      width: 2rem; height: 2rem; border-radius: 50%; border: none;
+      display: flex; align-items: center; justify-content: center;
+      background: rgba(0,0,0,0.45); color: #fff; font-size: 1rem; line-height: 1;
+    }
+    #alignDialog .card-close:hover { background: rgba(0,0,0,0.65); color: #fff; border: none; }
+    #alignDialog .card-close:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 
-    /* Align modal is fullscreen (spec §2: inset 2vh 2vw). */
-    #alignDialog { inset: 2vh 2vw; width: auto; height: auto; max-width: none; max-height: none; }
+    /* ── Align-the-grid modal ────────────────────────────────────────────────
+       Fullscreen. The map viewport is the hero on the left; controls, grouped by
+       concern (map / grid size / appearance / actions), sit in a sidebar on the
+       right. Stacks on narrow screens. */
+    #alignDialog.align-modal { inset: 2vh 2vw; width: auto; height: auto; max-width: none; max-height: none; }
     #alignDialog[open] { display: block; }
-    #alignDialog #viewport { position: relative; overflow: hidden; border: 1px solid var(--border);
-      background: var(--surface); height: 64vh; cursor: grab; touch-action: none; }
+    #alignDialog .card-inner {
+      width: auto; max-height: none; height: 96vh; box-sizing: border-box;
+      display: flex; flex-direction: column; padding: 1.1rem 1.3rem;
+    }
+    #alignDialog .align-sub { display: block; margin-top: 0.15rem; font-size: 0.8rem; color: var(--text-muted); font-weight: 400; text-transform: none; letter-spacing: 0; }
+
+    .align-body {
+      flex: 1; min-height: 0; display: grid;
+      grid-template-columns: 1fr 20rem; gap: 1.1rem; margin-top: 0.6rem;
+    }
+    .align-stage { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+    #alignDialog #viewport {
+      position: relative; overflow: hidden; border: 1px solid var(--border); border-radius: 4px;
+      background: var(--surface); flex: 1; min-height: 0; cursor: grab; touch-action: none;
+    }
     #alignDialog #viewport.dragging { cursor: grabbing; }
     #alignDialog #map { position: absolute; inset: 0; background-repeat: no-repeat; background-position: 0 0; transform-origin: 0 0; }
     #alignDialog #overlay { position: absolute; inset: 0; pointer-events: none; }
     #alignDialog #ruler { position: absolute; inset: 0; pointer-events: none; border: 2px solid var(--accent); box-sizing: border-box; opacity: 0.9; display: none; }
-    #alignDialog .hint { background: color-mix(in srgb, var(--accent) 8%, transparent); border-left: 3px solid var(--rule); padding: 0.5rem 0.7rem; font-size: 0.8rem; margin: 0.5rem 0; }
-    #alignDialog .warn, .warn { color: var(--danger); font-size: 0.8rem; font-weight: 700; }
+    .align-tip { margin: 0.55rem 0 0; font-size: 0.76rem; color: var(--text-muted); line-height: 1.5; }
+    .align-tip b { color: var(--text); font-weight: 600; }
+    #alignDialog .warn, .warn { color: var(--danger); font-size: 0.8rem; font-weight: 700; margin: 0.4rem 0 0; }
 
-    /* The framing modal (from actors.html) — a plain fixed overlay, stacks above
-       the sheet dialog (spec §2). Kept as its own layer, as in the harness. */
+    /* Controls sidebar. */
+    /* Padding on all sides so a focused control's 2px gold outline is not
+       clipped by this scroll container (overflow:auto clips the ring otherwise —
+       the left edge was being cut off). */
+    /* Padding on all sides so a focused control's 2px gold outline is not
+       clipped by this scroll container (overflow:auto clips the ring otherwise). */
+    /* The controls column mirrors the stage column: a flex:1 body (matching the
+       viewport's height) with the action buttons pinned at its bottom — so the
+       buttons line up exactly with the viewport's lower edge — then a foot that
+       mirrors the tip/hazard band under the viewport. Padding on the body keeps a
+       focused control's gold outline from being clipped by its scroll overflow. */
+    .align-controls { display: flex; flex-direction: column; min-height: 0; }
+    .align-controls-body { flex: 1; min-height: 0; overflow-y: auto; padding: 3px; display: flex; flex-direction: column; gap: 1.1rem; }
+    .align-group { display: flex; flex-direction: column; gap: 0.55rem; }
+    .align-group-title {
+      font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em;
+      color: var(--accent); margin: 0 0 0.1rem; padding-bottom: 0.4rem; border-bottom: 1px solid var(--border);
+    }
+    .align-controls .field { margin: 0; }
+    .align-controls .field label { font-size: 0.72rem; }
+    .align-grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.5rem; }
+    .align-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; }
+    .align-grid-3 .field input, .align-grid-2 .field input { text-align: center; }
+    /* The native colour input renders as a grey OS swatch by default; strip that
+       chrome and give it the app's field styling so it matches everything else.
+       The inner ::swatch/::-moz-color-swatch fill the button edge-to-edge. */
+    #alignDialog #gridColor {
+      min-height: 40px; width: 100%; padding: 0.25rem; cursor: pointer;
+      border: 1px solid var(--border); border-radius: 2px; background: var(--surface);
+      -webkit-appearance: none; appearance: none;
+    }
+    #alignDialog #gridColor::-webkit-color-swatch-wrapper { padding: 0; }
+    #alignDialog #gridColor::-webkit-color-swatch { border: 1px solid var(--rule); border-radius: 2px; }
+    #alignDialog #gridColor::-moz-color-swatch { border: 1px solid var(--rule); border-radius: 2px; }
+    #alignDialog #gridColor:hover { border-color: var(--rule); }
+    #alignDialog #gridColor:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+    .align-measure { justify-content: center; gap: 0.4rem; }
+    .align-controls .field-help { font-size: 0.72rem; color: var(--text-muted); line-height: 1.45; }
+
+    /* Map-URL field shares its row with the picker's injected "choose…" button
+       (the .input-with-btn / .vttpick-open rules are defined with the token pop). */
+    .align-controls .input-with-btn { display: flex; gap: 0.4rem; align-items: stretch; }
+    .align-controls .input-with-btn input { flex: 1; min-width: 0; }
+
+    .align-actions { display: flex; gap: 0.5rem; margin-top: auto; padding-top: 0.6rem; flex: none; }
+    .align-actions .btn { flex: 1; }
+    .align-actions .align-save { flex: 2; min-height: 44px; }
+    /* Both columns end their flex:1 region at the same line only if the trailing
+       "foot" bands are the same height. Give them a shared min-height so the
+       viewport's bottom edge and the buttons' bottom edge line up exactly,
+       regardless of how much tip/message text each holds. */
+    .align-stage-foot { flex: none; min-height: 3.2rem; }
+    .align-controls-foot { flex: none; min-height: 3.2rem; padding: 0.3rem 3px 0; }
+    .align-savemsg { font-size: 0.76rem; }
+
+    /* ── Custom dropdown (themed select) — carried from the dashboard so the
+       game page's selects can use the same themed list instead of the OS one.
+       The open list is position:fixed (placed in JS) so it escapes modal
+       overflow and floats above everything. ─────────────────────────────────── */
+    .vtt-dd { position: relative; }
+    .vtt-dd-btn {
+      font: inherit; text-align: left; cursor: pointer; width: 100%; min-height: 40px;
+      padding: 0.5rem 2rem 0.5rem 0.6rem; border-radius: 2px;
+      border: 1px solid var(--border); background: var(--surface); color: var(--text);
+      display: flex; align-items: center; white-space: nowrap;
+    }
+    .vtt-dd-btn::after { content: ""; position: absolute; right: 0.7rem; top: 50%; width: 0.5rem; height: 0.5rem;
+      border-right: 2px solid var(--text-muted); border-bottom: 2px solid var(--text-muted);
+      transform: translateY(-70%) rotate(45deg); pointer-events: none; }
+    .vtt-dd-btn:hover { border-color: var(--rule); }
+    .vtt-dd-btn:focus-visible { border-color: var(--accent); outline: 2px solid var(--focus); outline-offset: 1px; }
+    .vtt-dd[data-open="true"] .vtt-dd-btn { border-color: var(--accent); }
+    .vtt-dd-list {
+      position: fixed; z-index: 200; margin: 0; padding: 0.25rem; list-style: none;
+      background: var(--surface-raised); border: 1px solid var(--accent); border-radius: 4px;
+      box-shadow: 0 12px 30px rgba(0,0,0,0.45); max-height: 15rem; overflow-y: auto;
+    }
+    .vtt-dd-list[hidden] { display: none; }
+    .vtt-dd-opt {
+      padding: 0.5rem 0.65rem; border-radius: 2px; cursor: pointer; font-size: 0.88rem; color: var(--text);
+    }
+    .vtt-dd-opt:hover, .vtt-dd-opt[data-active="true"] { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
+
+    @media (max-width: 820px) {
+      #alignDialog .card-inner { height: auto; max-height: 96vh; overflow-y: auto; }
+      .align-body { grid-template-columns: 1fr; }
+      #alignDialog #viewport { height: 48vh; flex: none; }
+    }
+
+    /* The framing modal (from actors.html). actors.js toggles the `.on` class
+       (NOT `.open`) — matching the harness — so this must key off `.on` or the
+       whole M6 image-framing modal never appears. */
     #frameModal { position: fixed; inset: 0; z-index: 80; display: none; align-items: center; justify-content: center; background: rgba(6,7,10,0.7); }
-    #frameModal.open { display: flex; }
+    #frameModal.on { display: flex; }
     #frameModal .frame-box { background: var(--surface-raised); border: 1px solid var(--rule); border-radius: 4px; padding: 1.2rem; width: min(34rem, 94vw); box-shadow: 0 24px 60px rgba(0,0,0,0.5); }
     #frameStage { position: relative; overflow: hidden; border: 1px solid var(--border); background: var(--surface); height: 40vh; margin: 0.6rem 0; }
     #frameArt { position: absolute; inset: 0; background-repeat: no-repeat; background-position: center; transform-origin: center; }
@@ -312,15 +533,17 @@
     #gameGate .gate-msg { color: var(--text-muted); max-width: 34rem; }
 
     /* GM/player visibility. body.is-gm is set by game.js once ownership is known;
-       until then .gm-only content stays hidden (fail-closed for display). */
+       until then .gm-only content stays hidden (fail-closed for display). The
+       harness reveals .gm-only as `display:block`; matching that keeps GM-only
+       sections (rows, fieldsets) laid out correctly rather than collapsing to
+       inline. Rail buttons and the encounter/token controls need their own
+       display value, handled just below and by the component block. */
     .gm-only { display: none; }
-    body.is-gm .gm-only { display: initial; }
+    body.is-gm .gm-only { display: block; }
     body.is-gm .player-only { display: none; }
-    /* Rail/flex GM-only elements need the right display when shown. */
     body.is-gm .rail-btn.gm-only { display: inline-flex; }
-
-    .assets { display: flex; flex-wrap: wrap; gap: 0.4rem; }
-    .pool { }
+    /* Inline GM-only bits inside a flex row keep flowing inline. */
+    body.is-gm .row .gm-only { display: block; }
 
     /* Mobile: sidebar becomes a full-width overlay; rail stays; bar may wrap. */
     @media (max-width: 640px) {
@@ -329,6 +552,242 @@
       #campName { max-width: 40vw; } #sceneName { max-width: 40vw; } #whoami { max-width: 40vw; }
       #stripZone { max-width: 96vw; }
     }
+
+    /* ════════════════════════════════════════════════════════════════════════
+       COMPONENT CSS — carried VERBATIM from the four dev harness pages
+       (scene.html, combat.html, actors.html, align.html). These are the rules
+       scene.js / combat.js / actors.js / sheet.js / itemsheet.js / align.js were
+       written against: how tokens, fog, pings, the initiative strip, chat, dice,
+       character cards, the sheet, the image library and the align surface RENDER
+       and RESPOND. They live inside the canvas/panels (their own dark world), so
+       their hard-coded colours are intentional and left as-is; retheming them to
+       the parchment palette is deferred future work, not part of making the page
+       function. Page-level harness resets (monospace body, fieldset/legend, bare
+       button/input) are deliberately NOT copied — the themed shell owns those —
+       and the handful of rules already reconciled above (#stage-wrap, #frameModal
+       toggle, .gm-only, the align-modal #viewport) are not duplicated here.
+       ════════════════════════════════════════════════════════════════════════ */
+
+    /* ── scene.html: the canvas world ──────────────────────────────────────── */
+    #stage { position: relative; transform-origin: 0 0; will-change: transform; }
+    #grid-pad { position: absolute; z-index: 0; pointer-events: none; }
+    #stage-bg { position: absolute; inset: 0; background-size: cover; background-position: center; opacity: 0.85; }
+
+    /* Pings: radar rings expanding outward from the pinged point. */
+    .ping { position: absolute; width: 0; height: 0; pointer-events: none; z-index: 40; }
+    .ping i { position: absolute; display: block; border-radius: 50%;
+              border: 6px solid currentColor; opacity: 0;
+              width: 160px; height: 160px; margin: -80px 0 0 -80px;
+              animation: ping-ring 1.6s cubic-bezier(0.2, 0.6, 0.3, 1) forwards; }
+    .ping i:nth-child(2) { animation-delay: 0.32s; }
+    @keyframes ping-ring {
+      0%   { transform: scale(0.15); opacity: 0; }
+      12%  { opacity: 0.95; }
+      100% { transform: scale(1); opacity: 0; }
+    }
+
+    #zoom-hud { position: absolute; right: 8px; bottom: 8px; z-index: 20;
+                background: rgba(0,0,0,0.6); color: #fff; font-size: 11px;
+                padding: 3px 7px; border-radius: 3px; pointer-events: none; }
+
+    .token { position: absolute; box-sizing: border-box; border: 2px solid #fff;
+             border-radius: 6px; background: #445 center/cover no-repeat;
+             color: #fff; font-size: 10px; text-align: center; cursor: grab;
+             display: flex; align-items: flex-end; justify-content: center;
+             user-select: none; overflow: hidden; }
+    .token > .art { position: absolute; inset: 0; z-index: 0; background: center/cover no-repeat;
+                    transform-origin: center; pointer-events: none; }
+    .token.mine { border-color: #6f6; }
+    .token.dragging { cursor: grabbing; opacity: 0.8; z-index: 10; }
+    .token.selected { outline: 2px dashed #fc6; outline-offset: 2px; }
+    .token.locked { cursor: not-allowed; }
+    /* A small lock badge in the top-right corner of a locked token, so its state
+       is visible on the board at a glance. Sits above the art/caption; the glyph
+       is a Unicode padlock so no image asset is needed. */
+    /* A minimalist padlock badge, top-right, marking a locked token. Drawn as a
+       thin outlined line icon in the same style as the left toolbar icons
+       (viewBox 24, fill none, ~1.7 stroke). White stroke + a soft dark shadow so
+       the outline stays legible over any token art or map background. */
+    .token.locked::after {
+      content: "";
+      position: absolute; top: 1px; right: 1px; z-index: 2;
+      width: 12px; height: 12px; pointer-events: none;
+      background: no-repeat center / contain
+        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='5' y='11' width='14' height='9' rx='2'/%3E%3Cpath d='M8 11V7a4 4 0 0 1 8 0v4'/%3E%3C/svg%3E");
+      filter: drop-shadow(0 0 1.5px rgba(0,0,0,0.95));
+    }
+    .token.hidden-tok { opacity: 0.4; border-style: dashed; }
+    .token .cap { position: relative; z-index: 1;
+                  background: rgba(0,0,0,0.55); width: 100%; padding: 1px 2px;
+                  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+    #marquee { position: absolute; border: 1px dashed #fc6; background: rgba(255,204,102,0.12);
+               pointer-events: none; display: none; z-index: 20; }
+
+    #fog-layer { position: absolute; left: 0; top: 0; pointer-events: none; z-index: 15; }
+    #fog-layer.editing { pointer-events: auto; }
+    .fog-catch { cursor: crosshair; }
+    #fog-layer.tool-select .fog-catch { cursor: default; }
+    .fog-outline { fill: none; stroke: #6cf; stroke-width: 2; stroke-dasharray: 5 4; }
+    .fog-outline.revealed { stroke: #6f6; }
+    .fog-outline.selected { stroke: #fc6; stroke-width: 3; stroke-dasharray: none; }
+    .fog-preview { fill: rgba(108,204,255,0.20); stroke: #6cf; stroke-width: 2; stroke-dasharray: 4 3; }
+    #fog-panel .row { margin-top: 6px; }
+    #fog-panel.hidden-panel { display: none; }
+
+    /* Right-click menu — styled from the design tokens so it matches the app's
+       popovers/dialogs (surface-raised card, rule border, soft shadow) and adapts
+       to the light theme. Fonts inherit from the body (--font-body). */
+    #ctx-menu {
+      position: fixed; z-index: 100; display: none; min-width: 168px;
+      background: var(--surface-raised); color: var(--text);
+      border: 1px solid var(--rule); border-radius: 4px;
+      box-shadow: 0 16px 40px rgba(0,0,0,0.5);
+      padding: 0.3rem; font-size: 0.85rem;
+      -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);
+    }
+    #ctx-menu .item {
+      padding: 0.4rem 0.6rem; border-radius: 3px; cursor: pointer;
+      white-space: nowrap; color: var(--text); letter-spacing: 0.01em;
+      transition: background-color 0.12s var(--ease), color 0.12s var(--ease);
+    }
+    #ctx-menu .item:hover {
+      background: color-mix(in srgb, var(--accent) 18%, transparent);
+      color: var(--text);
+    }
+    #ctx-menu .sep { height: 1px; background: var(--border); margin: 0.3rem 0.2rem; }
+    #ctx-menu .head {
+      padding: 0.35rem 0.6rem 0.2rem;
+      font-size: 0.7rem; font-weight: 600; text-transform: uppercase;
+      letter-spacing: 0.06em; color: var(--text-muted);
+    }
+    .scene-row { margin: 4px 0; display: flex; gap: 6px; align-items: center; }
+    .scene-row button { margin-top: 0; padding: 2px 8px; font-size: 12px; }
+    .active-scene { color: var(--accent); font-weight: bold; }
+
+    /* ── combat.html: initiative strip, chat, dice ─────────────────────────── */
+    .strip-wrap { position: relative; display: flex; align-items: center; gap: 6px; }
+    .strip { display: flex; gap: 8px; overflow-x: auto; scroll-behavior: smooth;
+             padding: 8px 4px; flex: 1; min-height: 116px; align-items: stretch;
+             cursor: grab; scrollbar-width: thin; }
+    .strip.dragging { cursor: grabbing; scroll-behavior: auto; }
+    .strip::-webkit-scrollbar { height: 8px; }
+    .strip::-webkit-scrollbar-thumb { background: #ccc; border-radius: 4px; }
+    .nav { flex: 0 0 auto; margin: 0; padding: 20px 6px; }
+    .nav:disabled { opacity: .3; cursor: default; }
+
+    .combatant { flex: 0 0 auto; width: 96px; border: 1px solid #ccc; border-radius: 4px;
+                 padding: 6px; background: #fff; text-align: center; cursor: grab;
+                 user-select: none; position: relative; color: #111; }
+    .combatant.drag-src { opacity: .35; }
+    .combatant.drag-over { border-color: #06c; border-style: dashed; background: #f0f6ff; }
+    .combatant .portrait { width: 100%; height: 56px; object-fit: cover; border-radius: 3px;
+                           background: #eee; display: block; }
+    .combatant .noimg { width: 100%; height: 56px; border-radius: 3px; background: #eee;
+                        display: flex; align-items: center; justify-content: center;
+                        font-size: 20px; color: #999; }
+    .combatant .nm { font-size: 11px; margin-top: 4px; overflow: hidden;
+                     text-overflow: ellipsis; white-space: nowrap; }
+    .combatant .hp { font-size: 11px; margin-top: 2px; }
+    .combatant .hp.secret { color: #808; }
+    .combatant .hp.shown { color: #070; }
+    .combatant .hp.none { color: #aaa; }
+    .combatant .pos { position: absolute; top: 2px; left: 4px; font-size: 10px; color: #999; }
+    .combatant.orphan { border-color: #c00; background: #fff0f0; }
+
+    .bar { height: 5px; background: #ddd; border-radius: 3px; overflow: hidden; margin-top: 3px; }
+    .bar > i { display: block; height: 100%; background: #3a3; }
+    .bar > i.low { background: #c33; }
+
+    .tag { font-size: 10px; padding: 0 4px; border: 1px solid #999; border-radius: 3px; }
+    .tag.prop { border-color: #a40; color: #a40; }
+    .tag.hidden { border-color: #808; color: #808; }
+
+    .tok { display: flex; align-items: center; gap: 6px; padding: 3px 0;
+           border-bottom: 1px dotted #eee; font-size: 12px; }
+    .tok img { width: 22px; height: 22px; object-fit: cover; border-radius: 2px; background: #eee; }
+    .tok .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tok button { margin: 0; padding: 1px 6px; font-size: 11px; }
+
+    .msg { padding: 2px 0; border-bottom: 1px dotted color-mix(in srgb, var(--border) 60%, transparent); }
+    .msg .who { font-weight: bold; }
+    .msg.whisper { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+    .msg.whisper .who { color: #b98; }
+    .msg.roll .res { color: var(--accent); }
+    .msg .meta { color: var(--text-muted); font-size: 10px; }
+
+    #diceTray { position: fixed; inset: 0; z-index: 50; pointer-events: none; display: none; }
+    #diceTray.on { display: block; }
+    #diceTray canvas { width: 100%; height: 100%; display: block; }
+    .dice-bar { display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap; }
+    .dice-bar > * { margin-top: 0; }
+    .quick { padding: 4px 8px; }
+    .swatch { display: inline-flex; align-items: center; gap: 4px; margin-right: 10px; font-size: 11px; }
+    .swatch > i { width: 11px; height: 11px; border-radius: 50%; display: inline-block; border: 1px solid #0003; }
+    .palette { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 5px; }
+    .palette button { margin: 0; width: 26px; height: 26px; padding: 0; border-radius: 4px;
+                      border: 2px solid #0002; cursor: pointer; position: relative; }
+    .palette button.taken { cursor: not-allowed; opacity: .35; }
+    .palette button.mine { border-color: #111; box-shadow: 0 0 0 2px #fff inset; }
+    .pool { border: 1px solid var(--border); border-radius: 3px; padding: 5px; min-height: 24px;
+            font-size: 12px; background: var(--surface); }
+    .pool .chip { display: inline-block; border: 1px solid var(--accent); color: var(--accent);
+                  border-radius: 3px; padding: 0 5px; margin: 1px 3px 1px 0; cursor: pointer; }
+    .pool .chip:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+
+    /* ── actors.html: character cards, sheet, image library, framing ───────── */
+    .card { border: 1px solid var(--border); padding: 8px; margin: 6px 0; border-radius: 4px; }
+    .card.sel { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+    .card b { font-size: 14px; }
+    .tag.npc { border-color: #a40; color: #b96; }
+    .tag.mine { border-color: #070; color: #6b6; }
+    .tag.secret { border-color: #808; color: #b8b; }
+    .stats { font-size: 12px; color: var(--text); margin-top: 4px; }
+    .sheet-head { margin-bottom: 6px; }
+    .sheet-group { border: 1px solid var(--border); margin: 8px 0; }
+    .sheet-group legend { font-size: 12px; }
+    .sheet-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+    .sheet-cell { flex: 1; min-width: 92px; }
+    .sheet-cell.wide { flex-basis: 100%; }
+    .sheet-cell.narrow { flex: 0 0 auto; min-width: 0; }
+    .sheet-cell.narrow input[type=text] { width: 52px; text-align: center; }
+    .sheet-cell.narrow input[type=checkbox] { width: auto; margin: 0 0 0 2px; }
+    .sheet-cell.narrow label { white-space: nowrap; font-size: 11px; }
+    .sheet-group .sheet-grid { align-items: flex-end; }
+    .sheet-cell label .tag { margin-left: 4px; opacity: .7; }
+    .field-error { color: var(--danger); font-size: 11px; min-height: 12px; }
+    .sheet-error { color: var(--danger); font-size: 12px; }
+
+    .asset { width: 116px; border: 1px solid var(--border); border-radius: 4px; padding: 5px;
+             font-size: 11px; text-align: center; background: var(--surface); }
+    .asset img { width: 100%; height: 74px; object-fit: cover; border-radius: 3px;
+                 background: #eee; display: block; }
+    .asset .k { color: var(--text-muted); }
+    .asset button { margin-top: 4px; padding: 1px 6px; font-size: 11px; }
+    .asset.external { border-color: #a40; }
+    .asset.external .k { color: #b96; }
+
+    .frame-box { background: var(--surface-raised); padding: 16px; border-radius: 6px; max-width: 420px; }
+    .frame-stage { width: 220px; height: 220px; margin: 8px auto; position: relative;
+                   overflow: hidden; border: 2px solid #445; border-radius: 6px;
+                   background: #445; cursor: grab; touch-action: none; }
+    .frame-stage.dragging { cursor: grabbing; }
+    .frame-stage > .art { position: absolute; inset: 0; transform-origin: center;
+                          background: center/cover no-repeat; pointer-events: none; }
+    .frame-stage::after { content: ''; position: absolute; inset: 0; pointer-events: none;
+      background:
+        linear-gradient(90deg, transparent 33%, #fff6 33%, #fff6 33.5%, transparent 33.5%,
+                        transparent 66%, #fff6 66%, #fff6 66.5%, transparent 66.5%),
+        linear-gradient(transparent 33%, #fff6 33%, #fff6 33.5%, transparent 33.5%,
+                        transparent 66%, #fff6 66%, #fff6 66.5%, transparent 66.5%); }
+    textarea:disabled, input:disabled, select:disabled { background: color-mix(in srgb, var(--surface) 80%, var(--border)); color: var(--text-muted); }
+
+    /* ── align.html: the alignment surface (inside #alignDialog) ────────────── */
+    #overlay { position: absolute; inset: 0; pointer-events: none; }
+    #map { position: absolute; inset: 0; background-repeat: no-repeat; background-position: 0 0; transform-origin: 0 0; }
+    #ruler { position: absolute; inset: 0; pointer-events: none; border: 2px solid #0f0; box-sizing: border-box; opacity: .9; display: none; }
+    .hint { background: color-mix(in srgb, var(--accent) 8%, transparent); border-left: 3px solid var(--rule);
+            padding: 8px 10px; font-size: 12px; margin: 8px 0; }
   </style>
 </head>
 <body class="no-select">
@@ -346,10 +805,9 @@
   <header id="topBar" class="fx">
     <div class="bar-left">
       <a id="barBack" class="wordmark" href="/dashboard.html" title="Back to your games">Dashboard</a>
-      <span id="campName">…</span>
       <span id="sceneName"></span>
-      <button id="btnScenes" class="btn small secondary gm-only" type="button">Scenes</button>
     </div>
+    <span id="campName">…</span>
     <div class="bar-right">
       <span id="connState" role="status" aria-live="polite"></span>
       <span id="whoami">checking…</span>
@@ -404,13 +862,9 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2.5" fill="currentColor" stroke="none"/></svg>
       <span class="rail-label">Place token</span>
     </button>
-    <button id="railPing" class="rail-btn" type="button" aria-pressed="false">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M6.3 6.3a8 8 0 0 0 0 11.4M17.7 6.3a8 8 0 0 1 0 11.4"/></svg>
-      <span class="rail-label">Ping (Esc to disarm)</span>
-    </button>
     <button id="railFog" class="rail-btn gm-only" type="button" aria-pressed="false" aria-haspopup="true" aria-expanded="false">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M4 15a4 4 0 0 1 1.2-7.8A5.5 5.5 0 0 1 16 7a3.8 3.8 0 0 1 4 3.8 3.8 3.8 0 0 1-3.8 4.2z"/></svg>
-      <span class="rail-label">Fog (F)</span>
+      <span class="rail-label">Fog</span>
     </button>
     <button id="railAlign" class="rail-btn gm-only" type="button">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M3 3h18v18H3z"/><path d="M9 3v18M15 3v18M3 9h18M3 15h18"/></svg>
@@ -427,61 +881,128 @@
   </nav>
 
   <!-- Place-token popover (verbatim from scene.html's "Place a token"; ids intact). -->
-  <div id="tokenPop" class="rail-pop" hidden>
-    <h3>Place a token</h3>
-    <div class="row">
-      <div class="field" style="flex:2">
-        <label for="tok-actor">character</label>
-        <select id="tok-actor" title="place a token for a character">
-          <option value="">— no character —</option>
-        </select>
-      </div>
-      <div class="field"><label for="tok-name">name</label><input id="tok-name" placeholder="token name" /></div>
+  <div id="tokenPop" class="rail-pop token-pop" hidden>
+    <div class="pop-head">
+      <h3>Place a token</h3>
+      <span class="pop-sub" id="tokPlaceHint">Pick a character, or just name one.</span>
     </div>
-    <div class="row">
-      <div class="field" style="flex:2"><label for="tok-img">image url</label><input id="tok-img" placeholder="https://image… (optional)" /></div>
-      <div class="field"><label for="tok-count">how many</label><input id="tok-count" type="number" min="1" max="50" value="1" title="how many to place" /></div>
+
+    <!-- Primary choice: the character. Everything else is optional and overrides
+         what the character would otherwise supply. -->
+    <div class="field tok-primary">
+      <label for="tok-actor">Character</label>
+      <select id="tok-actor" title="place a token for a character">
+        <option value="">— none (a plain token) —</option>
+      </select>
+      <span class="help" id="tok-inherit-note">A plain token uses just the name and image you give below.</span>
+    </div>
+
+    <div class="field">
+      <label for="tok-name">Name</label>
+      <input id="tok-name" placeholder="e.g. Goblin — leave blank to use the character's" />
+    </div>
+
+    <!-- Overrides: image + size. Grouped and labelled so it's clear they replace
+         what the character would provide. -->
+    <div class="tok-overrides">
       <div class="field">
-        <label for="tok-size">size</label>
+        <label for="tok-img">Image <span class="opt">— optional</span></label>
+        <div class="input-with-btn">
+          <input id="tok-img" placeholder="https://… or choose a file" />
+        </div>
+      </div>
+      <div class="field tok-size-field">
+        <label for="tok-size">Size</label>
         <select id="tok-size" title="creature size">
-          <option value="">— from character —</option>
-          <option value="medium">Medium (1×1)</option>
-          <option value="tiny">Tiny (½×½)</option>
-          <option value="small">Small (1×1)</option>
-          <option value="large">Large (2×2)</option>
-          <option value="huge">Huge (3×3)</option>
-          <option value="gargantuan">Gargantuan (4×4)</option>
+          <option value="">Auto (from character)</option>
+          <option value="tiny">Tiny · ½×½</option>
+          <option value="small">Small · 1×1</option>
+          <option value="medium">Medium · 1×1</option>
+          <option value="large">Large · 2×2</option>
+          <option value="huge">Huge · 3×3</option>
+          <option value="gargantuan">Gargantuan · 4×4</option>
         </select>
       </div>
-      <button id="place-token" class="btn small primary" type="button">Place</button>
     </div>
-    <p class="muted">Placed at the pointer. Multiples are packed and numbered (<i>Goblin, Goblin 2…</i>). GM: unlimited · player: 1.</p>
+
+    <!-- Action row: how many + the primary Place button. -->
+    <div class="tok-actions">
+      <div class="field tok-count-field">
+        <label for="tok-count">How many</label>
+        <input id="tok-count" type="number" min="1" max="50" value="1" title="how many to place" />
+      </div>
+      <button id="place-token" class="btn primary tok-place" type="button">Place</button>
+    </div>
+
+    <p class="muted tok-foot">
+      Placed where you point. Multiples are packed and numbered
+      (<i>Goblin, Goblin&nbsp;2…</i>). <span class="gm-only">GM: up to 50.</span>
+      <span class="player-only">Players place one at a time.</span>
+    </p>
   </div>
 
   <!-- Fog popover (verbatim from scene.html's #fog-panel; id and controls intact).
        F still toggles fog mode from the keyboard (scene.js owns the shortcut). -->
-  <div id="fog-panel" class="rail-pop gm-only" hidden>
-    <h3>Fog of war</h3>
-    <div class="row">
-      <label for="fog-mode" style="display:inline-flex;align-items:center;gap:0.35rem;margin:0">
-        <input type="checkbox" id="fog-mode" /> fog mode <span class="muted">(F)</span>
-      </label>
-      <select id="fog-tool" title="what a drag does">
-        <option value="select">select / move</option>
-        <option value="cover">cover (draw fog)</option>
-        <option value="reveal">reveal (erase fog)</option>
-      </select>
-      <select id="fog-shape" title="shape to draw">
-        <option value="rect">rectangle</option>
-        <option value="circle">circle</option>
-        <option value="poly">polygon</option>
-      </select>
+  <div id="fog-panel" class="rail-pop fog-pop gm-only" hidden>
+    <div class="pop-head">
+      <h3>Fog of war</h3>
+      <span class="pop-sub">Drag to paint · click a region to select · right-drag to marquee.</span>
     </div>
-    <div class="row">
+
+    <!-- Hidden inputs scene.js reads. The icon UI below drives them; fog mode is
+         turned on whenever this panel is open (no visible checkbox). -->
+    <input type="checkbox" id="fog-mode" hidden />
+    <select id="fog-tool" hidden>
+      <option value="cover">cover</option>
+      <option value="reveal">reveal</option>
+    </select>
+    <select id="fog-shape" hidden>
+      <option value="rect">rectangle</option>
+      <option value="circle">circle</option>
+      <option value="poly">polygon</option>
+    </select>
+
+    <!-- Mode: what a drawn shape does. -->
+    <div class="fog-section">
+      <span class="fog-label">Mode</span>
+      <div class="seg" role="group" aria-label="Fog mode">
+        <button type="button" class="seg-btn" data-fog-tool="cover" aria-pressed="true" title="Cover — paint fog">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M5 16a3.5 3.5 0 0 1 1-6.85A5 5 0 0 1 16 8a3.5 3.5 0 0 1 3.5 3.7A3.4 3.4 0 0 1 16 15.5H6.5"/></svg>
+          <span>Cover</span>
+        </button>
+        <button type="button" class="seg-btn" data-fog-tool="reveal" aria-pressed="false" title="Reveal — erase fog">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12z"/><circle cx="12" cy="12" r="2.6"/></svg>
+          <span>Reveal</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Shape to draw. -->
+    <div class="fog-section">
+      <span class="fog-label">Shape</span>
+      <div class="seg" role="group" aria-label="Fog shape">
+        <button type="button" class="seg-btn icon-only" data-fog-shape="rect" aria-pressed="true" title="Rectangle — drag">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="4" y="6" width="16" height="12" rx="1.5"/></svg>
+        </button>
+        <button type="button" class="seg-btn icon-only" data-fog-shape="circle" aria-pressed="false" title="Circle — drag">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="12" cy="12" r="8"/></svg>
+        </button>
+        <button type="button" class="seg-btn icon-only" data-fog-shape="poly" aria-pressed="false" title="Polygon — click corners, Enter to finish">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true" stroke-linejoin="round"><path d="M12 3l8 6-3 10H7L4 9z"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <div class="fog-actions">
       <button id="fog-cover-all" class="btn small secondary" type="button">Cover whole scene</button>
       <button id="fog-clear-all" class="btn small secondary" type="button">Clear all fog</button>
     </div>
-    <p class="muted">Cover paints fog; Reveal erases it. Drag for a rectangle or circle; for a polygon click each corner then Enter (Esc cancels). Select to pick/move a region · T flips cover/reveal.</p>
+
+    <p class="muted fog-foot">
+      Cover paints fog; Reveal erases it. Drag for a rectangle or circle; for a
+      polygon click each corner then Enter (Esc cancels). Click a region to select
+      it, then drag to move or press Delete. <b>T</b> flips cover/reveal.
+    </p>
   </div>
 
   <!-- ── Right sidebar (spec §2): three tabs — Chat & Dice / Characters /
@@ -725,48 +1246,101 @@
       <p class="muted">Canvas <span id="scene-title"></span></p>
       <div class="muted" id="shortcuts">
         <b>shortcuts:</b> arrows = nudge 1 · shift+arrows = nudge 5 · Esc = clear selection · Ctrl/Cmd+A = select all
-        <span class="gm-only"> · <i>GM only:</i> Ctrl/Cmd+C copy · Ctrl/Cmd+X cut · Ctrl/Cmd+V paste · Ctrl/Cmd+D duplicate · Del delete · F toggle fog</span>
+        <span class="gm-only"> · <i>GM only:</i> Ctrl/Cmd+C copy · Ctrl/Cmd+X cut · Ctrl/Cmd+V paste · Ctrl/Cmd+D duplicate · Del delete</span>
       </div>
     </div>
   </dialog>
 
   <!-- Align modal (fullscreen): align.html's alignment fieldset verbatim. Its
        own campaign/scene loaders die — game.js injects the current scene. -->
-  <dialog id="alignDialog" aria-labelledby="alignHeadTitle">
+  <dialog id="alignDialog" class="align-modal" aria-labelledby="alignHeadTitle">
     <div class="card-inner">
       <div class="dialog-head">
-        <h2 id="alignHeadTitle">Align the grid</h2>
+        <div>
+          <h2 id="alignHeadTitle">Align the grid</h2>
+          <span class="align-sub" id="info">no scene loaded</span>
+        </div>
         <button class="card-close" type="button" data-close aria-label="Close">✕</button>
       </div>
-      <div class="rule"></div>
-      <div class="row">
-        <div class="field" style="flex:5"><label for="mapUrl">map image url</label><input id="mapUrl" placeholder="https://…/battlemap.jpg" /></div>
-        <button id="setMap" class="btn small secondary" type="button">set map</button>
-      </div>
-      <p class="muted" id="info">no scene loaded</p>
-      <div class="hint"><b>Drag the map</b> to move it · <b>scroll</b> to change the cell size · arrow keys nudge by 1px, shift by 10. The overlay shows the grid your tokens will use.</div>
-      <div id="viewport" tabindex="0">
-        <div id="map"></div>
-        <div id="overlay"></div>
-        <div id="ruler"></div>
-      </div>
-      <div class="row">
-        <div class="field"><label for="cellSize">cell size (px)</label><input id="cellSize" type="number" value="70" min="5" max="500" /></div>
-        <div class="field"><label for="offX">offset x</label><input id="offX" type="number" value="0" step="0.5" /></div>
-        <div class="field"><label for="offY">offset y</label><input id="offY" type="number" value="0" step="0.5" /></div>
-        <div class="field"><label for="gridType">overlay</label>
-          <select id="gridType"><option value="square">square</option><option value="hex">hex</option><option value="none">none</option></select>
+
+      <div class="align-body">
+        <!-- The work surface: the hero. Drag to move, scroll to size, arrows to
+             nudge. Everything else frames it. -->
+        <div class="align-stage">
+          <div id="viewport" tabindex="0">
+            <div id="map"></div>
+            <div id="overlay"></div>
+            <div id="ruler"></div>
+          </div>
+          <div class="align-stage-foot">
+            <p class="align-tip">
+              <b>Drag</b> the map to move it · <b>scroll</b> to change the cell size ·
+              <b>arrow keys</b> nudge by 1px (Shift 10). The overlay shows the grid your tokens will use.
+            </p>
+            <p class="warn" id="hazard"></p>
+          </div>
         </div>
-        <div class="field"><label for="gridColor">line colour</label><input id="gridColor" type="color" value="#3a3a3a" /></div>
-        <div class="field"><label for="gridOpacity">opacity</label><input id="gridOpacity" type="number" value="0.5" min="0" max="1" step="0.05" /></div>
+
+        <!-- Controls, grouped by concern. -->
+        <aside class="align-controls">
+          <div class="align-controls-body">
+          <section class="align-group">
+            <h3 class="align-group-title">Map image</h3>
+            <!-- The image picker (its "choose…" button is injected after this
+                 field) offers both file-upload and paste-a-URL, so a separate
+                 URL box here would be redundant. The field is kept but hidden:
+                 the picker writes the chosen image into it and Set map (also
+                 hidden, clicked by the picker) applies it to the scene. -->
+            <input id="mapUrl" hidden />
+            <button id="setMap" type="button" hidden></button>
+            <p class="field-help">Upload a file or paste an image link, then it's applied to the scene.</p>
+          </section>
+
+          <section class="align-group">
+            <h3 class="align-group-title">Grid size &amp; position</h3>
+            <div class="align-grid-3">
+              <div class="field"><label for="cellSize">Cell (px)</label><input id="cellSize" type="number" value="70" min="5" max="500" /></div>
+              <div class="field"><label for="offX">Offset X</label><input id="offX" type="number" value="0" step="0.5" /></div>
+              <div class="field"><label for="offY">Offset Y</label><input id="offY" type="number" value="0" step="0.5" /></div>
+            </div>
+            <button id="measure" class="btn small secondary align-measure" type="button">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true" style="width:16px;height:16px"><path d="M3 17L17 3l4 4L7 21z"/><path d="M7 11l2 2M11 7l2 2M9 15l2 2"/></svg>
+              Measure two points
+            </button>
+            <span class="field-help">Can't eyeball it? Click two grid intersections and say how many cells apart — the size is derived exactly.</span>
+          </section>
+
+          <section class="align-group">
+            <h3 class="align-group-title">Appearance</h3>
+            <div class="field">
+              <label for="gridTypeBtn">Overlay</label>
+              <div class="vtt-dd" id="gridTypeDD" data-value="square">
+                <input type="hidden" id="gridType" value="square" />
+                <button type="button" id="gridTypeBtn" class="vtt-dd-btn" aria-haspopup="listbox" aria-expanded="false">Square</button>
+                <ul class="vtt-dd-list" role="listbox" aria-label="Overlay" tabindex="-1" hidden></ul>
+              </div>
+            </div>
+            <div class="align-grid-2">
+              <div class="field"><label for="gridColor">Line colour</label><input id="gridColor" type="color" value="#3a3a3a" /></div>
+              <div class="field"><label for="gridOpacity">Opacity</label><input id="gridOpacity" type="number" value="0.5" min="0" max="1" step="0.05" /></div>
+            </div>
+          </section>
+
+          <!-- Pushed to the bottom of the flex body so the buttons' lower edge
+               lines up exactly with the viewport's lower edge in the other column. -->
+          <div class="align-actions">
+            <button id="reset" class="btn small secondary" type="button">Reset</button>
+            <button id="save" class="btn primary align-save" type="button">Save alignment</button>
+          </div>
+          </div>
+
+          <!-- The save/measure message sits below, mirroring the tip under the
+               viewport (both columns end their flex:1 region at the same line). -->
+          <div class="align-controls-foot">
+            <span class="muted align-savemsg" id="saveMsg"></span>
+          </div>
+        </aside>
       </div>
-      <div class="row">
-        <button id="measure" class="btn small secondary" type="button">measure two lines instead</button>
-        <button id="reset" class="btn small secondary" type="button">reset</button>
-        <button id="save" class="btn small primary" type="button">save alignment</button>
-        <span class="muted" id="saveMsg"></span>
-      </div>
-      <p class="warn" id="hazard"></p>
     </div>
   </dialog>
 

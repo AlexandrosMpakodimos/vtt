@@ -95,6 +95,9 @@ const fogSelection = new Set();    // selected fog ids
 let fogClipboard = [];             // SNAPSHOTS ({type, points}), never ids
 let fogMode = false;
 let fogDraw = null;                // in-progress drag: {tool, x0, y0, x1, y1}
+let fogClickCandidate = null;      // region under a fog-draw press; if the press
+                                   // turns out to be a click (no drag), it is
+                                   // selected instead of drawing a zero-size shape
 let polyPoints = [];               // in-progress polygon vertices, grid units
 // Moving a region by mouse needs the SVG nodes to SURVIVE the gesture, so the
 // drag path deliberately does not re-render: it transforms the existing nodes
@@ -514,6 +517,7 @@ function renderActorPicker(list) {
     const o = document.createElement('option');
     o.value = a.id;
     o.textContent = a.name + (a.is_npc ? ' (NPC)' : '');
+    o.dataset.name = a.name;   // raw name, for numbering multiples ("Frog 2"...)
     sel.appendChild(o);
   }
   if ([...sel.options].some((o) => o.value === previous)) sel.value = previous;
@@ -575,6 +579,17 @@ document.getElementById('place-token').addEventListener('click', async () => {
   const inheritSize = actorId && sizeKey === '';
   const footprint = SIZE_UNITS[sizeKey] || 1;
 
+  // The base used to number multiples. A typed name wins; otherwise, when a
+  // character is chosen, fall back to that character's OWN name (read from the
+  // picker option) so a pile placed from one character still comes out
+  // "Frog", "Frog 2", "Frog 3"… rather than five identical "Frog"s. Single
+  // placement and inheritance are unaffected — this only feeds the numbering.
+  let numberBase = name;
+  if (!numberBase && actorId) {
+    const optEl = document.querySelector('#tok-actor option[value="' + (window.CSS && CSS.escape ? CSS.escape(actorId) : actorId) + '"]');
+    if (optEl && optEl.dataset && optEl.dataset.name) numberBase = optEl.dataset.name;
+  }
+
   // Bound the count client-side; the server independently bounds the batch too.
   let count = parseInt(document.getElementById('tok-count').value, 10);
   if (!Number.isFinite(count) || count < 1) count = 1;
@@ -603,16 +618,16 @@ document.getElementById('place-token').addEventListener('click', async () => {
   }
   if (!isGm()) return show('only the GM can place multiple tokens at once');
 
-  // Bulk placement inherits per spec, on the same absence rule. Numbering still
-  // applies to an explicitly typed name; a character's own name is left to the
-  // server, so five goblins placed from one character all arrive called
-  // "Goblin" rather than being numbered — the numbering lives here, and here it
-  // has no name to number.
+  // Bulk placement inherits per spec, on the same absence rule. Numbering now
+  // uses numberBase — a typed name, or the character's own name when none was
+  // typed — so a pile placed from one character is individually referable
+  // ("Frog", "Frog 2"…). Sending an explicit name also means the server keeps
+  // it rather than re-filling the character's bare name on every token.
   const offsets = packOffsets(count, footprint);
   const specs = offsets.map((o, i) => {
     const spec = { hidden: false, x: origin.x + o.dx, y: origin.y + o.dy };
     if (actorId) spec.actor_id = actorId;
-    if (name) spec.name = instanceName(name, i);
+    if (numberBase) spec.name = instanceName(numberBase, i);
     if (img_url) spec.img_url = img_url;
     if (!inheritSize) { spec.width = footprint; spec.height = footprint; }
     return spec;
@@ -946,20 +961,15 @@ stage.addEventListener('pointerdown', (e) => {
     //   pointermove  sets it (true)
     //   contextmenu  reads and clears it
     //
-    // Clearing in only one of the two was wrong in both directions — on press
-    // alone the flag was stale by the time the drag's own menu event arrived;
-    // on the menu alone it survived to swallow the NEXT legitimate click. The
-    // probe that fires a drag and then a plain click in sequence is what
-    // distinguishes them, and neither single-sided version passes it.
     // Right-drag: marquee. Everything below is the old left-button path, and it
     // is reached with the button swapped rather than duplicated.
-    if (fogMode && fogToolEl.value !== 'select') return;   // draw tools keep the left button
+    // Fog mode always keeps the left button (it draws AND moves regions — see the
+    // dispatch below), so a right press here always means marquee.
   } else if (e.button === 0) {
     // Left on a token is handled by the token's own listener. Left on empty
     // space is a pan, which the wrapper owns — so there is nothing to do here.
     if (!fogMode) return;
-    // In fog mode the left button still draws and still moves regions: the fog
-    // tools are a mode, and a mode owns its button.
+    // In fog mode the left button both draws and moves regions.
   } else {
     return;
   }
@@ -967,46 +977,38 @@ stage.addEventListener('pointerdown', (e) => {
   // token drag/marquee paths are untouched rather than conditionally patched.
   if (fogMode) {
     hideCtxMenu();
-    // TOOL FIRST. A draw tool always draws, even when the drag starts on top of
-    // an existing region — that is what makes it possible to open a window
-    // inside fog, or lay fog over an already-revealed area. Only the select tool
-    // hit-tests, so drawing can never be swallowed by whatever is underneath.
-    if (fogToolEl.value !== 'select') { beginFogDraw(e); return; }
-
-    // Hit-testing is done in JS against the geometry, not by SVG document order,
-    // so overlaps resolve by the rule we chose: most recently created wins.
-    //
-    // Alt/Option forces a marquee. Without it, a scene that has been fully
-    // covered has NO empty space left to start a marquee from — every point is
-    // inside some region — and box-selection would become unreachable exactly
-    // when a GM has the most regions to manage.
     const g = stageGrid(e);
-    const picked = e.altKey ? null : fogPick(g.x, g.y);
-    if (picked) {
-      if (e.shiftKey) toggleFogSelected(picked.id);
-      else if (!fogSelection.has(picked.id)) setFogSelection([picked.id]);
-      // Clicking an already-selected region keeps the whole selection, so a
-      // multi-region drag works the same way a multi-token drag does.
-      beginFogMove(e);
+
+    // There is no separate "select" tool any more. The shape tool always DRAWS —
+    // including on top of existing fog, which is how you open a window inside
+    // fog or lay fog over a revealed area. Selection of a region is folded in by
+    // gesture, like tokens: a DRAG draws; a CLICK (press+release without moving)
+    // on a region selects it instead (resolved in commitFogDraw). Right-drag
+    // marquees; Alt-drag on a selected region MOVES it.
+    if (e.button === 0) {
+      const pk = fogPick(g.x, g.y);
+      // Press on a region that is ALREADY SELECTED -> move it (plain drag), the
+      // same way a selected token drags. This is what makes "click to select,
+      // then drag to move" work without a separate select tool.
+      if (pk && fogSelection.has(pk.id) && !e.altKey) { beginFogMove(e); return; }
+      // Shift-click on any region toggles it in/out of the selection (no draw).
+      if (pk && e.shiftKey) { toggleFogSelected(pk.id); renderFog(); return; }
+      // Otherwise DRAW — including on top of an unselected region, which is how
+      // you open a window inside fog or lay fog over a revealed area. If the
+      // press turns out to be a click (no drag) on a region, commitFogDraw
+      // selects that region instead of creating a zero-size shape.
+      fogClickCandidate = (fogShapeEl.value !== 'poly') ? pk : null;
+      beginFogDraw(e);
       return;
     }
-    // [FIXED 2026-08-10] Empty space with the select tool: MARQUEE ON THE RIGHT
-    // BUTTON ONLY. A left press here means "pan", exactly as it does outside
-    // fog mode — the marquee moved buttons everywhere, not everywhere except
-    // fog.
-    //
-    // It slipped through because the button check above lets a left press into
-    // this block deliberately: fog DRAWING and region MOVING are left-button
-    // gestures and have to reach the code below. Only this last branch — the
-    // fallthrough for empty space — is a marquee, and it is the one that had to
-    // be excluded rather than the whole block.
+
+    // Right button -> marquee. Capture, for the same reason fog drawing does: a
+    // marquee dragged past the edge of the map otherwise stops receiving
+    // movement and never sees its own release, leaving the rectangle stuck.
     if (e.button !== 2) return;
     const p0 = stagePoint(e);
     const sx0 = p0.x, sy0 = p0.y;
     marquee = { sx: sx0, sy: sy0, pointerId: e.pointerId };
-    // Capture, for the same reason fog drawing does: a marquee dragged past the
-    // edge of the map otherwise stops receiving movement and never sees its own
-    // release, leaving the rectangle stuck to the pointer.
     try { stage.setPointerCapture(e.pointerId); } catch { /* capture unavailable */ }
     marqueeEl.style.left = sx0 + 'px'; marqueeEl.style.top = sy0 + 'px';
     marqueeEl.style.width = '0px'; marqueeEl.style.height = '0px';
@@ -1320,8 +1322,10 @@ function openCtxMenu(px, py) {
 
   const head = document.createElement('div');
   head.className = 'head';
-  head.textContent = sel.length ? `${sel.length} selected` : 'map';
-  ctxMenu.appendChild(head);
+  // No 'map' label when nothing is selected — the menu just shows the actions
+  // that actually apply (ping for everyone; paste for a GM with a clipboard).
+  head.textContent = sel.length ? `${sel.length} selected` : '';
+  if (sel.length) ctxMenu.appendChild(head);
 
   const item = (label, handler) => {
     const d = document.createElement('div');
@@ -1350,28 +1354,41 @@ function openCtxMenu(px, py) {
     // difference is visible in the menu rather than being a surprise.
     item('ping and focus everyone', () => sendPing(at.x, at.y, true));
   }
-  if (sel.length) sep();
 
-  if (gm) {
+  if (gm && sel.length) {
+    // Actions on the current selection — only shown when something is selected,
+    // so the menu never lists size/hide/lock/copy/delete that would silently do
+    // nothing on an empty selection.
+    sep();
     const sizeHead = document.createElement('div');
     sizeHead.className = 'head'; sizeHead.textContent = 'resize (5e)';
     ctxMenu.appendChild(sizeHead);
     for (const size of SIZE_PRESETS) item(`  ${size}`, () => resizeSelection(size));
     sep();
-    item('hide', () => setFlagSelection('hidden', true));
-    item('show', () => setFlagSelection('hidden', false));
-    item('lock', () => setFlagSelection('locked', true));
-    item('unlock', () => setFlagSelection('locked', false));
+    // Hide/show and lock/unlock are single toggles, not both at once: read the
+    // current state of the selection and offer the action that changes it. If
+    // any selected token is already hidden/locked, offer to reveal/unlock the
+    // whole selection; otherwise offer to hide/lock it.
+    const rows = sel.map((id) => tokens.get(id)).filter(Boolean).map((e) => e.row);
+    const anyHidden = rows.some((r) => r && r.hidden);
+    const anyLocked = rows.some((r) => r && r.locked);
+    if (anyHidden) item('reveal', () => setFlagSelection('hidden', false));
+    else item('hide', () => setFlagSelection('hidden', true));
+    if (anyLocked) item('unlock', () => setFlagSelection('locked', false));
+    else item('lock', () => setFlagSelection('locked', true));
     sep();
     item('copy', copySelection);
     item('cut', cutSelection);
     item('duplicate', duplicateSelection);
-    item('paste', pasteClipboard);
     item('delete', deleteSelection);
-  } else {
-    const note = document.createElement('div');
-    note.className = 'head'; note.textContent = '(GM-only actions)';
-    ctxMenu.appendChild(note);
+  }
+
+  // Paste is the one GM action that works with nothing selected — it drops the
+  // clipboard at the point that was right-clicked. Only offered when there is
+  // something to paste, so it never appears as a dead item.
+  if (gm && clipboard.length) {
+    if (!sel.length) sep();
+    item('paste', pasteClipboard);
   }
 
   ctxMenu.style.display = 'block';
@@ -1606,7 +1623,8 @@ function renderFog() {
   fogLayer.appendChild(painted);
 
   fogLayer.classList.toggle('editing', editing);
-  fogLayer.classList.toggle('tool-select', editing && fogToolEl.value === 'select');
+  // No select-only cursor state any more: in fog mode the layer both draws
+  // (crosshair, from .fog-catch) and hit-tests for region selection.
   if (editing) {
     // One transparent surface receives every pointer event. Which region a click
     // landed on is decided in JS by fogPick(), so overlapping regions resolve by
@@ -1833,12 +1851,23 @@ function updateFogDraw(e) {
 async function commitFogDraw() {
   const preview = previewRow();
   const revealed = drawingRevealed();
+  const candidate = fogClickCandidate;
+  fogClickCandidate = null;
   // Release before anything can fail. An awaited request that throws would
   // otherwise leave the pointer captured for the life of the page, which is a
   // worse version of the bug this capture exists to fix.
   if (fogDraw) { try { stage.releasePointerCapture(fogDraw.pointerId); } catch { /* not captured */ } }
   fogDraw = null;
-  if (!preview) { renderFog(); return; }
+  if (!preview) {
+    // The press never became a drag. If it landed on an existing region, treat
+    // it as a CLICK that selects that region (this is how you pick a region to
+    // move/delete without a separate select tool). Otherwise it selected empty
+    // space, which clears the selection.
+    if (candidate) setFogSelection([candidate.id]);
+    else setFogSelection([]);
+    renderFog();
+    return;
+  }
   await createFog(preview.type, preview.points, revealed);
   renderFog();
 }
@@ -1904,7 +1933,7 @@ function setFogMode(on) {
   fogModeEl.checked = next;          // keeps the checkbox honest when F is used
   // Leaving fog mode drops any in-progress drawing and any fog selection, so the
   // two modes never hand state to each other.
-  fogDraw = null; polyPoints = [];
+  fogDraw = null; polyPoints = []; fogClickCandidate = null;
   if (!next) fogSelection.clear();
   setSelection([]);
   hideCtxMenu();
@@ -1916,7 +1945,7 @@ fogModeEl.addEventListener('change', () => setFogMode(fogModeEl.checked));
 
 fogToolEl.addEventListener('change', () => {
   // Switching tool abandons any half-drawn shape rather than carrying it over.
-  fogDraw = null; polyPoints = [];
+  fogDraw = null; polyPoints = []; fogClickCandidate = null;
   renderFog();
 });
 
@@ -2008,17 +2037,10 @@ document.addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
   if (!scene) return;
 
-  // F toggles fog mode — GM ONLY. Handled BEFORE the fog branch below so it
-  // works symmetrically in both directions; inside fogKeydown() it would only
-  // ever be reachable while fog mode was already on, and there would be no way
-  // back in from the keyboard. Bare F rather than Ctrl/Cmd+F, which is the
-  // browser's find; it sits alongside T the same way.
-  if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key.toLowerCase() === 'f') {
-    if (!isGm()) return;             // a player gets nothing at all from F
-    e.preventDefault();
-    setFogMode(!fogMode);
-    return;
-  }
+  // (The bare-F fog-mode toggle was removed: the fog panel now opens fog mode
+  // when it opens and closes it when it closes, so a keyboard toggle would only
+  // desync the panel from the mode. The in-fog-mode editing keys below —
+  // Delete, arrows, Enter/Esc for the polygon, Ctrl+C/V/X/D, T — are unchanged.)
 
   // Fog mode gets first refusal and consumes everything, so no fog keystroke can
   // fall through and move a token instead. With fog mode off this line is a

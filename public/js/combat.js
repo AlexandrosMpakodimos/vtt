@@ -1,3 +1,13 @@
+/* VTT-IIFE-WRAP: this file shares top-level const names (out, log, api,
+   show, whoami, campaign, scene, GRID_PX, ...) with the other game-page
+   scripts. On its own dev harness that was fine (one script per page); on
+   game.html all four load into one global scope and the second declaration
+   of any shared const throws "already declared", killing the whole file.
+   Wrapping in an IIFE makes those declarations function-scoped so they no
+   longer collide. window.VTTXxx (used by game.js) is set inside the body as
+   before; the internal names the jsdom suite reaches are re-published on
+   window at the end. Same pattern sheet.js / itemsheet.js already use. */
+;(function () {
 // Dev harness for M5 — combat, chat, dice.
 //
 // Same constraints as actors.js and for the same reasons: the CSP is
@@ -1095,3 +1105,10 @@ const preset = new URLSearchParams(window.location.search).get('campaign');
 // The game shell's entry point: the encounter/chat/dice loader, parameterised.
 function boot(campaignId) { return loadCampaign(campaignId); }
 window.VTTCombat = { boot };
+
+
+/* --- expose internals the jsdom test suite reads via window.* --- */
+  try { window.loadCampaign = loadCampaign; } catch (e) {}
+  try { window.loadCombat = loadCombat; } catch (e) {}
+  try { window.loadScene = loadScene; } catch (e) {}
+})();

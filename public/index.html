@@ -116,7 +116,11 @@
     .site-header {
       position: fixed; inset: 0 0 auto 0; z-index: 50;
       display: flex; align-items: center; justify-content: space-between;
-      gap: 1rem; padding: 0.85rem var(--pad);
+      gap: 1rem; padding: 0 var(--pad);
+      /* Unified header height across landing / dashboard / game (64px). A fixed
+         height + centred contents means all three bars match regardless of what
+         sits in them (plain buttons here, an avatar on the dashboard). */
+      height: 64px; box-sizing: border-box;
       /* Solid bar so the chrome always has consistent contrast, regardless of
          the hero art scrolling underneath. */
       background: var(--surface);

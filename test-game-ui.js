@@ -82,6 +82,11 @@ function installFakeIo(window) {
       connected: false,
       on(ev, fn) { (handlers[ev] = handlers[ev] || []).push(fn); return sock; },
       emit(ev, payload, ack) { sock._emits.push({ ev, payload }); if (typeof ack === 'function') ack({ ok: true }); return sock; },
+      // combat.js/scene.js tear down a prior socket before reconnecting; the fake
+      // needs these no-ops so those cleanup paths don't throw.
+      disconnect() { sock.connected = false; return sock; },
+      close() { sock.connected = false; return sock; },
+      off(ev, fn) { if (handlers[ev]) handlers[ev] = handlers[ev].filter((h) => h !== fn); return sock; },
       _emits: [],
       _fire(ev, a) { (handlers[ev] || []).forEach((fn) => fn(a)); },
     };
@@ -166,10 +171,10 @@ function idsIn(file) {
 }
 const DEAD = ['campaignId', 'loadCampaign', 'campaign-id'];
 const SHELL = [
-  'topBar', 'barBack', 'campName', 'sceneName', 'btnScenes', 'connState', 'sidebarToggle',
+  'topBar', 'barBack', 'campName', 'sceneName', 'connState', 'sidebarToggle',
   'stripZone', 'btnEncounter', 'encounterPop',
   'sideBar', 'sideTabs', 'tabChat', 'tabChars', 'tabLibrary', 'panelChat', 'panelChars', 'panelLibrary',
-  'railZone', 'railToken', 'railPing', 'railFog', 'railAlign', 'railScenes', 'railConsole', 'tokenPop',
+  'railZone', 'railToken', 'railFog', 'railAlign', 'railScenes', 'railConsole', 'tokenPop',
   'sheetDialog', 'itemDialog', 'scenesDialog', 'alignDialog', 'drawer', 'gameGate',
 ];
 
@@ -242,29 +247,15 @@ const SHELL = [
     t('GM: actors.boot not called again on Library open (latched)', gm.bootSpies.actors === 1, 'actors=' + gm.bootSpies.actors);
   }
 
-  // ── 3. GM rail: all items present; ping arms/fires/disarms ─────────────────
+  // ── 3. GM rail: all items present ──────────────────────────────────────────
   {
-    const d = gm.document; const w = gm.window;
-    ['railToken', 'railPing', 'railFog', 'railAlign', 'railScenes', 'railConsole'].forEach((id) => {
+    const d = gm.document;
+    // The ping button was removed from the rail (ping is available from the
+    // canvas right-click menu instead), so it is not in this list.
+    ['railToken', 'railFog', 'railAlign', 'railScenes', 'railConsole'].forEach((id) => {
       t('GM: rail item present: ' + id, !!d.getElementById(id));
     });
-
-    // Ping arms on click, sets aria-pressed.
-    d.getElementById('railPing').dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
-    t('GM: railPing arms (VTTGame.isPingArmed)', w.VTTGame.isPingArmed() === true);
-    t('GM: railPing aria-pressed true when armed', d.getElementById('railPing').getAttribute('aria-pressed') === 'true');
-
-    // A primary canvas pointerdown calls VTTScene.pingAt and disarms.
-    const before = gm.bootSpies.pingAt;
-    d.getElementById('stage-wrap').dispatchEvent(new w.PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: 100, clientY: 100 }));
-    t('GM: canvas pointerdown while armed calls VTTScene.pingAt', gm.bootSpies.pingAt === before + 1, 'pingAt=' + gm.bootSpies.pingAt);
-    t('GM: ping disarms after the shot', w.VTTGame.isPingArmed() === false);
-    t('GM: railPing aria-pressed false after firing', d.getElementById('railPing').getAttribute('aria-pressed') === 'false');
-
-    // Esc disarms an armed ping (no dialog/popover above it).
-    w.VTTGame.setPing(true);
-    d.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
-    t('GM: Esc disarms an armed ping', w.VTTGame.isPingArmed() === false);
+    t('GM: railPing is NOT in the rail', !d.getElementById('railPing'));
   }
 
   // ── 4. Rail popovers + Escape ordering ─────────────────────────────────────
@@ -295,16 +286,20 @@ const SHELL = [
     w.VTTCommon.closeDialog(d.getElementById('scenesDialog'));
     t('GM: closing Scenes returns focus to the rail invoker', d.activeElement === invoker);
 
-    // Esc clears selection only when nothing above it: with a dialog open, the
-    // shell must NOT consume Esc for the canvas (the dialog owns its own Esc).
-    // We assert the shell leaves an armed ping intact while a dialog is open.
+    // With a dialog open, the shell must NOT consume Esc for the canvas or its
+    // own popovers — the dialog owns its own Esc. Probe: open a rail popover,
+    // then open a dialog on top; an Esc must leave the popover alone (the shell
+    // defers because a dialog is open) rather than closing it.
+    d.getElementById('railToken').dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
+    const popOpenBefore = !d.getElementById('tokenPop').hasAttribute('hidden');
     w.VTTGame.openScenes();
     await wait(10);
-    w.VTTGame.setPing(true);
     d.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
-    t('GM: with a dialog open, Esc does not disarm ping (dialog owns Esc)', w.VTTGame.isPingArmed() === true);
-    w.VTTGame.setPing(false);
+    t('GM: with a dialog open, Esc leaves rail popovers alone (dialog owns Esc)',
+      popOpenBefore && !d.getElementById('tokenPop').hasAttribute('hidden'));
     w.VTTCommon.closeDialog(d.getElementById('scenesDialog'));
+    // clean up the popover
+    d.getElementById('railToken').dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
   }
 
   // ── 6. Sidebar collapse toggles aria-expanded ──────────────────────────────
@@ -341,7 +336,10 @@ const SHELL = [
     const d = gm.document; const w = gm.window;
     const sockets = w.__sockets;
     t('an observer socket was created by the shell', sockets.length >= 1);
-    const sock = sockets[sockets.length - 1];   // game.js opens io() last
+    // game.js exposes its connection-state observer socket directly; use that
+    // rather than guessing "the last io() call" (combat.js also opens a socket,
+    // so ordering is not a reliable way to find the shell's observer).
+    const sock = (w.VTTGame && w.VTTGame._connSocket) || sockets[sockets.length - 1];
     // First connect: banner blank, no catch-up.
     sock._fire('connect');
     await wait(10);
@@ -373,7 +371,6 @@ const SHELL = [
       t('PLAYER: ' + id + ' carries gm-only', !!el && el.classList.contains('gm-only'));
     });
     t('PLAYER: railToken present (not gm-only)', (function () { const e = pl.document.getElementById('railToken'); return e && !e.classList.contains('gm-only'); })());
-    t('PLAYER: railPing present (not gm-only)', (function () { const e = pl.document.getElementById('railPing'); return e && !e.classList.contains('gm-only'); })());
     t('PLAYER: #tokenPop present', !!pl.document.getElementById('tokenPop'));
     t('PLAYER: drawer carries gm-only and is hidden', (function () { const e = pl.document.getElementById('drawer'); return e && e.classList.contains('gm-only') && e.hasAttribute('hidden'); })());
 

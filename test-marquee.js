@@ -282,8 +282,9 @@ window.eval(fs.readFileSync('public/js/scene.js','utf8') + `
   fire(bg,'pointerdown',400,400); fire(stg,'pointerup',400,400);
   __check('the menu opens on empty space, for ping',
     ctxEl2.style.display === 'block', ctxEl2.style.display);
-  __check('...labelled as the map rather than a selection',
-    ctxEl2.textContent.indexOf('map') === 0, ctxEl2.textContent.slice(0,40));
+  __check('...with no map label, leading straight with the actions',
+    ctxEl2.textContent.indexOf('map') === -1 && ctxEl2.textContent.indexOf('ping here') === 0,
+    ctxEl2.textContent.slice(0, 40));
   __check('...offering ping', ctxEl2.textContent.indexOf('ping here') >= 0, ctxEl2.textContent.slice(0,80));
 
   // isGm() compares the current user against the campaign owner, so being the

@@ -120,11 +120,14 @@ window.eval(fs.readFileSync('public/js/scene.js','utf8') + `
   // Selection is decided in JS from the geometry, so a click is just a point on
   // the stage — no DOM node needs to be located or held. Re-seed with explicit
   // timestamps: the order-independence check above left F1 as the newer row.
+  // NEW MODEL: there is no "select tool". With any shape tool active, a CLICK
+  // (press+release without moving) selects the region under it; a DRAG draws;
+  // dragging a region that is already selected MOVES it; shift-click multi-selects.
   fog.clear();
   addFog('F1','rect',[{x:0,y:0},{x:20,y:16}],false,1000);
   addFog('F2','rect',[{x:2,y:2},{x:4,y:4}],true,2000);
   renderFog(); setFogSelection([]);
-  toolEl.value='select';
+  shapeEl.value='rect';
   fire(bg,'pointerdown',30,30); fire(stg,'pointerup',30,30);
   __check('clicking a region selects it', fogSelection.has('F1'), [...fogSelection].join(','));
   __check('selecting fog left tokens alone', selection.size===0);
@@ -163,16 +166,19 @@ window.eval(fs.readFileSync('public/js/scene.js','utf8') + `
   fire(bg,'pointerdown',100,100); fire(stg,'pointermove',200,200); fire(stg,'pointerup',200,200);
   __check('fog can be drawn on top of existing fog',
     lastCall() && lastCall().method==='POST' && lastCall().body.revealed===false, JSON.stringify(lastCall()));
-  __check('a draw tool never selects what it starts on top of', fogSelection.size===0);
+  __check('a drag over an unselected region draws rather than selecting it', fogSelection.size===0);
 
-  // --- drag a region with the mouse ---
+  // --- drag a SELECTED region with the mouse to move it ---
+  // First click to select it, THEN drag it — the token model. A drag on an
+  // unselected region would draw instead.
   fog.clear(); addFog('M1','rect',[{x:0,y:0},{x:4,y:4}],false); renderFog();
-  toolEl.value='select';
-  fire(bg,'pointerdown',30,30);
-  __check('pointerdown on a region selects it before dragging', fogSelection.has('M1'));
+  toolEl.value='cover'; shapeEl.value='rect'; setFogSelection([]);
+  fire(bg,'pointerdown',30,30); fire(stg,'pointerup',30,30);
+  __check('clicking a region selects it (ready to move)', fogSelection.has('M1'));
   __calls.length=0;
+  fire(bg,'pointerdown',30,30);
   fire(stg,'pointermove',130,130);
-  __check('drag transforms the live nodes instead of re-rendering',
+  __check('dragging the selected region transforms the live nodes',
     (fogNodes.get('M1')||[]).some(el=>el.getAttribute('transform')), JSON.stringify((fogNodes.get('M1')||[]).map(e=>e.getAttribute('transform'))));
   __check('nothing is written mid-drag', __calls.length===0, JSON.stringify(__calls));
   fire(stg,'pointerup',130,130);
@@ -188,8 +194,8 @@ window.eval(fs.readFileSync('public/js/scene.js','utf8') + `
   fog.clear(); addFog('F1','rect',[{x:0,y:0},{x:20,y:16}],false); addFog('F2','rect',[{x:2,y:2},{x:4,y:4}],true);
   renderFog(); setFogSelection([]);
 
-  // marquee selects fog by bounding box (select tool)
-  toolEl.value='select';
+  // marquee selects fog by bounding box (right-drag, any tool)
+  shapeEl.value='rect';
   setFogSelection([]);
   // [CHANGED 2026-08-10] Right button, because the marquee moved buttons in fog
   // mode too — left-drag pans everywhere, without an exception for fog. Alt
@@ -245,7 +251,9 @@ window.eval(fs.readFileSync('public/js/scene.js','utf8') + `
   fire(bg,'pointerdown',500,500); fire(stg,'pointerup',500,500);
   __check('zero-size drag sends nothing', __calls.length===0, JSON.stringify(__calls));
 
-  // polygon: click vertices, Enter closes
+  // polygon: click vertices, Enter closes. Clear first so vertices land on empty
+  // space (a press on a selected region would move it, not add a vertex).
+  fog.clear(); setFogSelection([]); renderFog();
   shapeEl.value='poly';
   __calls.length=0;
   fire(bg,'pointerdown',0,0); fire(bg,'pointerdown',200,0); fire(bg,'pointerdown',0,200);
@@ -264,7 +272,7 @@ window.eval(fs.readFileSync('public/js/scene.js','utf8') + `
   key('Escape');
   key('Enter');
   __check('Escape cancels an in-progress polygon', __calls.length===0);
-  toolEl.value='select'; shapeEl.value='rect';
+  toolEl.value='cover'; shapeEl.value='rect';
 
   // ---------- keyboard, fog mode on ----------
   fog.clear(); addFog('F1','rect',[{x:0,y:0},{x:4,y:4}],false); addFog('F2','rect',[{x:8,y:8},{x:10,y:10}],true);
@@ -323,30 +331,24 @@ window.eval(fs.readFileSync('public/js/scene.js','utf8') + `
   __check('leaving fog mode clears the fog selection', fogSelection.size===0);
   __check('leaving fog mode makes the layer inert again', !layer.classList.contains('editing'));
 
-  // ---------- the F shortcut (GM only) ----------
+  // ---------- the F shortcut was REMOVED ----------
+  // Fog mode is now entered by opening the fog panel (which the shell wires to
+  // the checkbox), not by a keyboard toggle — a bare-F toggle would only desync
+  // the panel from the mode. F must therefore be inert for everyone.
   me={id:'GM'}; setMode(false);
   key('f');
-  __check('F enters fog mode', fogMode===true);
-  __check('F keeps the checkbox in sync', modeEl.checked===true);
-  __check('F entering fog mode makes the layer interactive', layer.classList.contains('editing'));
+  __check('F no longer enters fog mode', fogMode===false);
+  __check('F leaves the checkbox untouched', modeEl.checked===false);
+  // Entering via the checkbox (the path the panel drives) still works.
+  setMode(true);
+  __check('the checkbox still enters fog mode', fogMode===true);
+  __check('entering fog mode makes the layer interactive', layer.classList.contains('editing'));
+  // And F while already in fog mode does not toggle it back off.
   key('f');
-  __check('F leaves fog mode again (symmetric)', fogMode===false);
-  __check('F unchecks the checkbox on the way out', modeEl.checked===false);
-
-  // F must run the same cleanup the checkbox does.
-  fog.clear(); addFog('K1','rect',[{x:0,y:0},{x:4,y:4}],false); 
-  key('f'); setFogSelection(['K1']);
-  __check('fog can be selected after entering with F', fogSelection.size===1);
-  key('f');
-  __check('leaving via F clears the fog selection', fogSelection.size===0);
-
-  // F must not fire while typing — the same guard every other shortcut has.
+  __check('F does not leave fog mode either', fogMode===true);
   setMode(false);
-  const box=document.getElementById('tok-name');
-  box.dispatchEvent(new window.KeyboardEvent('keydown',{key:'f',bubbles:true,cancelable:true}));
-  __check('F typed into an input does not toggle fog mode', fogMode===false);
 
-  // Modified F is left alone, so Ctrl/Cmd+F stays the browser's find.
+  // Modified F is likewise inert (and never was the browser-find concern here).
   key('f',{ctrlKey:true});
   __check('Ctrl+F does not toggle fog mode', fogMode===false);
   key('f',{metaKey:true});

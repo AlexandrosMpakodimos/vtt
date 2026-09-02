@@ -1,3 +1,13 @@
+/* VTT-IIFE-WRAP: this file shares top-level const names (out, log, api,
+   show, whoami, campaign, scene, GRID_PX, ...) with the other game-page
+   scripts. On its own dev harness that was fine (one script per page); on
+   game.html all four load into one global scope and the second declaration
+   of any shared const throws "already declared", killing the whole file.
+   Wrapping in an IIFE makes those declarations function-scoped so they no
+   longer collide. window.VTTXxx (used by game.js) is set inside the body as
+   before; the internal names the jsdom suite reaches are re-published on
+   window at the end. Same pattern sheet.js / itemsheet.js already use. */
+;(function () {
 // Grid alignment tool (M6).
 //
 // Same constraints as every other client file here: the CSP is
@@ -48,6 +58,7 @@ let natural = { w: 0, h: 0 };
 
 // The live, unsaved alignment.
 const state = { size: 70, ox: 0, oy: 0, type: 'square', color: '#3a3a3a', opacity: 0.5 };
+let gridTypeDD = null;   // themed overlay dropdown API (set once inputs are wired)
 
 function show(label, r) {
   out.textContent = `${label}  →  ${r.status}\n` + JSON.stringify(r.data, null, 2);
@@ -148,7 +159,11 @@ async function selectScene(sceneId) {
   state.color = grid.color || '#3a3a3a';
   state.opacity = grid.opacity === undefined ? 0.5 : Number(grid.opacity);
 
-  document.getElementById('gridType').value = state.type;
+  // Reflect the loaded overlay type on the custom dropdown (updates its button
+  // label, not just the hidden value). Falls back to the raw value before the
+  // dropdown is wired.
+  if (gridTypeDD) gridTypeDD.set(state.type);
+  else document.getElementById('gridType').value = state.type;
   document.getElementById('gridColor').value = state.color;
   document.getElementById('gridOpacity').value = String(state.opacity);
   document.getElementById('mapUrl').value = scene.img_url || '';
@@ -156,12 +171,8 @@ async function selectScene(sceneId) {
   const tokenCount = (r.data.tokens || []).length;
   document.getElementById('info').textContent =
     `${scene.name} — ${scene.width}×${scene.height}px, ${tokenCount} token(s)`;
-  // The hazard is stated BEFORE the GM changes anything, not after they save.
-  document.getElementById('hazard').textContent = tokenCount
-    ? `${tokenCount} token(s) are on this scene. Changing the cell size moves them `
-      + 'relative to the artwork — their grid coordinates do not change, so they keep '
-      + 'their squares, not their positions over the picture.'
-    : '';
+  // (The pre-emptive "changing the cell size moves tokens" warning was removed.)
+  document.getElementById('hazard').textContent = '';
 
   await measureNatural();
   render();
@@ -237,6 +248,17 @@ for (const [id, key] of [['cellSize', 'size'], ['offX', 'ox'], ['offY', 'oy']]) 
     if (Number.isFinite(v)) { state[key] = v; render(); }
   });
 }
+// The overlay selector is the themed custom dropdown (VTTCommon.initDropdown),
+// not a native <select>. Its hidden #gridType input carries the value and fires
+// `change`, so the listener below is unchanged; gridTypeDD.set() is used by
+// render() to reflect a loaded scene's overlay type on the button.
+const gridTypeDD_init = (window.VTTCommon && window.VTTCommon.initDropdown)
+  ? window.VTTCommon.initDropdown('gridTypeDD', [
+      { value: 'square', label: 'Square' },
+      { value: 'none', label: 'None' },
+    ])
+  : null;
+gridTypeDD = gridTypeDD_init;
 document.getElementById('gridType').addEventListener('change', (e) => {
   state.type = e.target.value; render();
 });
@@ -331,11 +353,11 @@ document.getElementById('save').addEventListener('click', async () => {
   show('PATCH grid', r);
   if (r.status !== 200) { msg.textContent = (r.data && r.data.error) || 'save failed'; return; }
   scene = r.data.scene;
-  // The server reports whether the grid actually changed and how many tokens sit
-  // on the scene. Reported, not compensated — see the route's header.
-  msg.textContent = r.data.grid_changed
-    ? `saved — ${r.data.affected_tokens} token(s) now sit differently over the artwork`
-    : 'saved';
+  // Saving is done — close the modal. (Previously this left a "N tokens now sit
+  // differently" message in place; the GM asked for the modal to close on save.)
+  const dlg = document.getElementById('alignDialog');
+  if (dlg && typeof dlg.close === 'function' && dlg.open) dlg.close();
+  else { msg.textContent = 'saved'; }
 });
 
 document.getElementById('reset').addEventListener('click', () => {
@@ -383,8 +405,40 @@ render();
 // injected by game.js, instead of its own campaign/scene pickers. The shell only
 // opens this for the GM, so is_gm is assumed here (the server still enforces it
 // on save). Loading the scene reuses selectScene unchanged.
-function boot(campaignId, scene) {
-  campaign = { id: campaignId, is_gm: true };
-  if (scene && scene.id) return selectScene(scene.id);
+async function boot(campaignId, scene) {
+  // The game shell opens align on the campaign's current scene. Rather than
+  // depend on the caller threading a scene object, resolve it here the same way
+  // the harness did: confirm the campaign (for is_gm + active_scene_id) and load
+  // the scenes list, then select the injected scene if given, else the active
+  // scene, else the first. This is why align works whenever a scene exists.
+  const r = await api('GET', `/api/campaigns/${campaignId}`);
+  if (r.status !== 200 || !r.data || !r.data.campaign) {
+    document.getElementById('info').textContent = 'could not load this campaign';
+    return;
+  }
+  campaign = r.data.campaign;
+  if (!campaign.is_gm) {
+    document.getElementById('info').textContent =
+      'you are not the GM of this campaign — alignment is GM-only';
+    return;
+  }
+
+  const s = await api('GET', `/api/campaigns/${campaign.id}/scenes`);
+  scenes = s.status === 200 ? (s.data.scenes || []) : [];
+
+  // Pick the scene to align: the one handed in, else the campaign's active
+  // scene, else the first scene that exists.
+  let pick = null;
+  if (scene && scene.id) pick = scene.id;
+  else if (campaign.active_scene_id) pick = campaign.active_scene_id;
+  else if (scenes.length) pick = scenes[0].id;
+
+  if (pick) return selectScene(pick);
+  document.getElementById('info').textContent = 'no scenes yet — create one first';
 }
 window.VTTAlign = { boot };
+
+
+/* --- expose internals the jsdom test suite reads via window.* --- */
+  try { window.loadCampaign = loadCampaign; } catch (e) {}
+})();
