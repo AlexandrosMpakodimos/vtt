@@ -153,11 +153,21 @@ async function loadScenes() {
   renderSceneList(lastSceneList);
   if (!joinedRoom) joinRoom();
 
-  // A player never chooses a scene: they land on whatever the GM has active,
-  // and the server only sent them that one anyway.
-  if (!isGm()) {
-    if (activeSceneId) openScene(activeSceneId);
-    else closeScene('the GM has not opened a scene yet');
+  updateCanvasEmpty();
+
+  // Everyone lands on the active scene automatically when the game opens.
+  // Players never choose a scene — the server only sent them the active one.
+  // The GM previously got just the list and a blank canvas; now the GM also
+  // opens straight onto the active scene (they can still open others from the
+  // Scenes modal). If nothing is active, the canvas shows an empty state.
+  if (!scene) {
+    if (activeSceneId) {
+      openScene(activeSceneId);
+    } else {
+      closeScene(isGm()
+        ? (lastSceneList.length ? 'no scene is active yet — open one from Scenes' : '')
+        : 'the GM has not opened a scene yet');
+    }
   }
 }
 
@@ -172,45 +182,106 @@ function renderSceneList(scenes) {
   const box = document.getElementById('scene-list');
   box.textContent = '';
   if (!isGm()) {
-    box.appendChild(document.createTextNode(
-      activeSceneId ? 'the GM controls which scene is open' : 'waiting for the GM to open a scene'));
+    const note = document.createElement('p');
+    note.className = 'scenes-empty';
+    note.textContent = activeSceneId
+      ? 'The GM controls which scene is open.'
+      : 'Waiting for the GM to open a scene…';
+    box.appendChild(note);
     return;
   }
   if (!scenes.length) {
-    box.appendChild(document.createTextNode('no scenes yet — create one'));
+    const note = document.createElement('p');
+    note.className = 'scenes-empty';
+    note.textContent = 'No scenes yet — create one above.';
+    box.appendChild(note);
     return;
   }
   for (const sc of scenes) {
-    const row = document.createElement('div');
-    row.className = 'scene-row';
-
-    const label = document.createElement('span');
     const isActive = sc.id === activeSceneId;
-    label.textContent = `${sc.name} (${sc.width}x${sc.height})${isActive ? '  ← ACTIVE' : ''}`;
-    if (isActive) label.className = 'active-scene';
-    row.appendChild(label);
-    row.appendChild(document.createTextNode(' '));
+    const isOpen = scene && sc.id === scene.id;
+
+    // A scene TILE: the map fills it as a background, the name sits on a scrim at
+    // the bottom, badges mark active/open state, and a compact action bar runs
+    // along the very bottom. The map is the anchor — a GM scans by picture.
+    const tile = document.createElement('div');
+    tile.className = 'scene-tile' + (isActive ? ' is-active' : '');
+
+    // The map (or a placeholder). img_url is normalised http(s) by the server,
+    // so it is safe to embed in a CSS url().
+    const art = document.createElement('div');
+    art.className = 'scene-art';
+    if (sc.img_url) {
+      art.style.backgroundImage = 'url("' + sc.img_url + '")';
+    } else {
+      art.classList.add('no-map');
+      art.textContent = 'No map yet';
+    }
+    tile.appendChild(art);
+
+    // State badge (top-left), always visible while scanning.
+    if (isActive || (isOpen && !isActive)) {
+      const badge = document.createElement('span');
+      badge.className = 'scene-badge ' + (isActive ? 'active' : 'open');
+      badge.textContent = isActive ? 'Active' : 'Open';
+      badge.title = isActive
+        ? 'Every player is on this scene'
+        : 'You have this scene loaded (players are not here)';
+      tile.appendChild(badge);
+    }
+
+    // Name on a bottom scrim, readable over any map.
+    const name = document.createElement('div');
+    name.className = 'scene-tile-name';
+    name.textContent = sc.name;
+    name.title = sc.name;
+    tile.appendChild(name);
+
+    // Action bar along the bottom edge. Weighted: Open (quiet) · Activate
+    // (primary, moves everyone) · Delete (danger). On their own bar so they're
+    // reachable on touch and never triggered by an accidental tile click.
+    const actions = document.createElement('div');
+    actions.className = 'scene-tile-actions';
 
     const openBtn = document.createElement('button');
-    openBtn.textContent = 'open';
-    openBtn.title = 'load this scene for you only — players are not moved';
+    openBtn.type = 'button';
+    openBtn.className = 'btn small secondary';
+    openBtn.textContent = 'Open';
+    openBtn.title = 'Load this scene for you only — players are not moved';
     openBtn.addEventListener('click', () => openScene(sc.id));
-    row.appendChild(openBtn);
-
-    const delBtn = document.createElement('button');
-    delBtn.textContent = 'delete';
-    delBtn.title = 'permanently delete this scene, its tokens and its fog';
-    delBtn.addEventListener('click', () => deleteScene(sc));
-    row.appendChild(delBtn);
+    actions.appendChild(openBtn);
 
     const actBtn = document.createElement('button');
-    actBtn.textContent = isActive ? 'active' : 'activate';
+    actBtn.type = 'button';
+    actBtn.className = 'btn small primary';
+    actBtn.textContent = isActive ? 'Active' : 'Activate';
     actBtn.disabled = isActive;
-    actBtn.title = 'make this the active scene — every player is moved here';
+    actBtn.title = 'Make this the active scene — every player is moved here';
     actBtn.addEventListener('click', () => activateScene(sc.id));
-    row.appendChild(actBtn);
+    actions.appendChild(actBtn);
 
-    box.appendChild(row);
+    const delBtn = document.createElement('button');
+    delBtn.type = 'button';
+    delBtn.className = 'btn small danger scene-del';
+    delBtn.setAttribute('aria-label', 'Delete scene');
+    delBtn.title = 'Permanently delete this scene, its tokens and its fog';
+    // Minimalist line-icon trash can (same stroke style as the toolbar icons);
+    // currentColor so it follows the button's danger colour and flips on hover.
+    const delSvg = svgEl('svg', {
+      viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor',
+      'stroke-width': '1.7', 'stroke-linecap': 'round', 'stroke-linejoin': 'round',
+      'aria-hidden': 'true',
+    });
+    delSvg.appendChild(svgEl('path', { d: 'M4 7h16' }));                         // lid line
+    delSvg.appendChild(svgEl('path', { d: 'M10 4h4a1 1 0 0 1 1 1v2H9V5a1 1 0 0 1 1-1z' })); // handle
+    delSvg.appendChild(svgEl('path', { d: 'M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13' })); // can body
+    delSvg.appendChild(svgEl('path', { d: 'M10 11v6M14 11v6' }));                // ribs
+    delBtn.appendChild(delSvg);
+    delBtn.addEventListener('click', () => deleteScene(sc));
+    actions.appendChild(delBtn);
+
+    tile.appendChild(actions);
+    box.appendChild(tile);
   }
 }
 
@@ -237,16 +308,26 @@ async function deleteScene(sc) {
     const t = peek.data.tokens.length, f = (peek.data.fog || []).length;
     blast = `${t} token${t === 1 ? '' : 's'} and ${f} fog region${f === 1 ? '' : 's'}`;
   }
-  const active = sc.id === activeSceneId ? '\n\nThis is the ACTIVE scene — every player will be dropped out of it.' : '';
-  if (!window.confirm(`Delete "${sc.name}"?\n\nThis permanently removes the scene and ${blast}. It cannot be undone.${active}`)) return;
+  const active = sc.id === activeSceneId
+    ? ' This is the active scene — every player will be dropped out of it.' : '';
+  const body = `This permanently removes the scene and ${blast}. It cannot be undone.${active}`;
 
-  const r = await api('DELETE', `/api/campaigns/${campaignId}/scenes/${sc.id}`);
-  show(`delete scene -> ${r.status}`, r.data);
-  if (r.status !== 200) return;
-  log(`deleted "${sc.name}" (${r.data.deleted.tokens} tokens, ${r.data.deleted.fog} fog regions)`);
-  if (scene && scene.id === sc.id) closeScene('scene deleted');
-  if (r.data.was_active) activeSceneId = null;
-  await loadScenes();
+  // Use the shared themed confirm dialog (same as the dashboard's "Delete this
+  // game?"), not the browser's window.confirm. The delete runs on confirm.
+  const runDelete = async () => {
+    const r = await api('DELETE', `/api/campaigns/${campaignId}/scenes/${sc.id}`);
+    show(`delete scene -> ${r.status}`, r.data);
+    if (r.status !== 200) return;
+    log(`deleted "${sc.name}" (${r.data.deleted.tokens} tokens, ${r.data.deleted.fog} fog regions)`);
+    if (scene && scene.id === sc.id) closeScene('scene deleted');
+    if (r.data.was_active) activeSceneId = null;
+    await loadScenes();
+  };
+  if (window.VTTGame && typeof window.VTTGame.confirm === 'function') {
+    window.VTTGame.confirm(`Delete "${sc.name}"?`, body, true, runDelete);
+  } else if (window.confirm(`Delete "${sc.name}"?\n\n${body}`)) {
+    await runDelete();
+  }
 }
 
 // Tear the canvas down — used when a player's scene stops being the active one.
@@ -257,7 +338,18 @@ function closeScene(reason) {
   fog.clear(); fogSelection.clear();
   fogLayer.textContent = '';
   document.getElementById('scene-title').textContent = reason ? `— ${reason}` : '';
+  updateCanvasEmpty();
   log(reason || 'scene closed');
+}
+
+// The empty-canvas prompt ("No scenes yet — create one") shows only for a GM
+// who has NO scenes at all and no scene open. Any scene existing or open hides
+// it. Players never see it (it's gm-only in markup and guarded here too).
+function updateCanvasEmpty() {
+  const el = document.getElementById('canvasEmpty');
+  if (!el) return;
+  const show = isGm() && !scene && lastSceneList.length === 0;
+  if (show) el.removeAttribute('hidden'); else el.setAttribute('hidden', '');
 }
 
 document.getElementById('create-scene').addEventListener('click', async () => {
@@ -305,6 +397,8 @@ async function openScene(sceneId) {
   renderFog();
 
   if (!joinedRoom) joinRoom();
+  updateCanvasEmpty();
+  centerView();   // frame the map in the middle of the canvas on load
 }
 
 // --- rendering ---
@@ -459,6 +553,128 @@ function removeToken(id) {
   const entry = tokens.get(id);
   if (entry) { entry.el.remove(); tokens.delete(id); }
   selection.delete(id);
+}
+
+// Highlight one token on the canvas as the active turn (or clear, with null).
+// combat.js calls this so the creature whose turn it is is obvious on the board,
+// not only in the strip. Purely visual — no state, no server call.
+function highlightToken(tokenId) {
+  for (const [id, entry] of tokens) {
+    entry.el.classList.toggle('is-turn', !!tokenId && id === tokenId);
+  }
+}
+
+// ── Token-picking mode (Stage D) ────────────────────────────────────────────
+// Dim the canvas (everything but the tokens) and let the GM click tokens to
+// choose them, then confirm or cancel. combat.js uses this to add combatants:
+// "start an encounter with these" and "add these". Options:
+//   { exclude: Set<id>, hint: string, confirmLabel: string }
+// exclude = tokens already in the fight — shown dimmed and NOT selectable.
+// Resolves via onDone(idsArray) on confirm, or onDone(null) on cancel.
+let pickState = null;   // { chosen:Set, exclude:Set, onDone } while active
+
+function pickTokens(options, onDone) {
+  if (!isGm()) { onDone && onDone(null); return; }
+  if (pickState) endPick(null);   // never stack two pickers
+  const exclude = options && options.exclude ? options.exclude : new Set();
+  pickState = { chosen: new Set(), exclude, onDone: onDone || null };
+
+  // Dim overlay: a scrim INSIDE #stage (same stacking context as the tokens,
+  // which is a transformed element), above the map but below the tokens, so the
+  // selectable tokens sit at full brightness over the dimmed map.
+  const stage = document.getElementById('stage');
+  let dim = document.getElementById('pick-dim');
+  if (!dim) {
+    dim = document.createElement('div');
+    dim.id = 'pick-dim';
+    stage.appendChild(dim);
+  }
+  dim.hidden = false;
+  const wrap = document.getElementById('stage-wrap');
+  wrap.classList.add('picking');   // raises tokens above the scrim + shows rings
+
+  // Mark excluded tokens as non-selectable/dimmed.
+  for (const [id, entry] of tokens) {
+    entry.el.classList.toggle('pick-excluded', exclude.has(id));
+    entry.el.classList.remove('pick-on');
+  }
+
+  // Confirm / cancel bar.
+  let bar = document.getElementById('pick-bar');
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = 'pick-bar';
+    document.body.appendChild(bar);
+  }
+  const hint = (options && options.hint) || 'Click tokens to add them to the encounter.';
+  const confirmLabel = (options && options.confirmLabel) || 'Add selected';
+  bar.textContent = '';
+  const msg = document.createElement('span');
+  msg.className = 'pick-hint';
+  msg.textContent = hint;
+  const count = document.createElement('span');
+  count.className = 'pick-count';
+  count.id = 'pick-count';
+  count.textContent = '0 selected';
+  const cancel = document.createElement('button');
+  cancel.type = 'button'; cancel.className = 'btn small secondary';
+  cancel.textContent = 'Cancel';
+  cancel.addEventListener('click', () => endPick(null));
+  const done = document.createElement('button');
+  done.type = 'button'; done.className = 'btn small primary';
+  done.textContent = confirmLabel;
+  done.addEventListener('click', () => {
+    const ids = [...pickState.chosen];
+    endPick(ids);
+  });
+  bar.appendChild(msg); bar.appendChild(count); bar.appendChild(cancel); bar.appendChild(done);
+  bar.hidden = false;
+
+  // Capture-phase pointerdown on the stage: while picking, a click on a token
+  // TOGGLES it (and never starts a drag); a click on empty space does nothing.
+  wrap.addEventListener('pointerdown', pickPointer, true);
+  // Esc cancels.
+  document.addEventListener('keydown', pickKey, true);
+}
+
+function pickPointer(e) {
+  if (!pickState) return;
+  // Find the token element under the pointer, if any.
+  let node = e.target;
+  let tokenEl = null;
+  while (node && node !== document) {
+    if (node.classList && node.classList.contains('token')) { tokenEl = node; break; }
+    node = node.parentNode;
+  }
+  if (!tokenEl) return;                 // empty space: let pan happen? no — swallow to avoid surprises
+  e.preventDefault(); e.stopPropagation();
+  // Which id is this element?
+  let id = null;
+  for (const [tid, entry] of tokens) { if (entry.el === tokenEl) { id = tid; break; } }
+  if (!id || pickState.exclude.has(id)) return;   // excluded tokens aren't selectable
+  if (pickState.chosen.has(id)) { pickState.chosen.delete(id); tokenEl.classList.remove('pick-on'); }
+  else { pickState.chosen.add(id); tokenEl.classList.add('pick-on'); }
+  const c = document.getElementById('pick-count');
+  if (c) c.textContent = `${pickState.chosen.size} selected`;
+}
+
+function pickKey(e) {
+  if (!pickState) return;
+  if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); endPick(null); }
+}
+
+function endPick(result) {
+  if (!pickState) return;
+  const onDone = pickState.onDone;
+  const wrap = document.getElementById('stage-wrap');
+  wrap.classList.remove('picking');
+  wrap.removeEventListener('pointerdown', pickPointer, true);
+  document.removeEventListener('keydown', pickKey, true);
+  const dim = document.getElementById('pick-dim'); if (dim) dim.hidden = true;
+  const bar = document.getElementById('pick-bar'); if (bar) bar.hidden = true;
+  for (const [, entry] of tokens) { entry.el.classList.remove('pick-on', 'pick-excluded'); }
+  pickState = null;
+  if (onDone) onDone(result);
 }
 
 // --- selection ---
@@ -865,6 +1081,24 @@ function applyView() {
   clampView();
   stage.style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.z})`;
   if (zoomHud) zoomHud.textContent = `${Math.round(view.z * 100)}%`;
+}
+
+// Centre the map in the viewport at the current zoom. clampView already centres a
+// map SMALLER than the viewport, but a larger one is otherwise clamped to its
+// top-left corner on load; this sets the pan so the middle of the map sits in the
+// middle of the canvas, then applyView() clamps it (which is a no-op when already
+// centred). Called when a scene is opened so entering a game frames the map.
+function centerView() {
+  if (!scene) return;
+  const vw = wrap.clientWidth;
+  const vh = wrap.clientHeight;
+  const sw = (scene.width + PAD_PX * 2) * view.z;
+  const sh = (scene.height + PAD_PX * 2) * view.z;
+  const originX = PAD_PX * view.z;
+  const originY = PAD_PX * view.z;
+  view.x = (vw - sw) / 2 + originX;
+  view.y = (vh - sh) / 2 + originY;
+  applyView();
 }
 
 function setZoom(next, anchor) {
@@ -2296,7 +2530,7 @@ function pingAt(e) {
 
 // The game shell drives this file through boot(id) and pingAt(e); every other
 // render path, socket handler and shortcut is unchanged and still runs at load.
-window.VTTScene = { boot, pingAt };
+window.VTTScene = { boot, pingAt, highlightToken, pickTokens };
 
 // M6: let the token image field be filled from the campaign's image library
 // rather than by pasting a URL. Guarded, because the field must keep working on

@@ -143,7 +143,7 @@
     // Modal openers.
     on('railAlign', 'click', openAlign);
     on('railScenes', 'click', openScenes);
-    on('railConsole', 'click', toggleDrawer);
+    on('railEncounter', 'click', openEncounter);
   }
 
   // Small UX polish for the Place-a-token popover (no placement logic — scene.js
@@ -294,9 +294,40 @@
   // ── Modals (spec §2): native <dialog> via VTTCommon.openDialog ─────────────
   function initModals() {
     // The Sheet and Item dialogs are opened by actors.js/sheet.js when a row is
-    // clicked; game.js only needs to own the GM-only Scenes and Align modals and
-    // the encounter popover. (openDialog wires close/backdrop/Esc once each.)
-    on('btnEncounter', 'click', toggleEncounter);
+    // clicked; game.js owns the GM-only Scenes, Align and Encounter modals.
+    // (openDialog wires close/backdrop/Esc once each.)
+    on('btnEncounter', 'click', openEncounter);
+    on('canvasEmptyCreate', 'click', function () {
+      openScenes();
+      // Focus the new-scene field so the GM can type a name straight away.
+      window.setTimeout(function () { var f = $('new-scene-name'); if (f) f.focus(); }, 60);
+    });
+    initConfirm();
+  }
+
+  // Reusable confirm dialog — the same #confirmDialog component the dashboard
+  // uses. VTTGame.confirm(title, body, danger, cb) shows it; cb runs only if the
+  // person confirms. Wired once here; scene.js (delete a scene) calls it.
+  var confirmCb = null;
+  function initConfirm() {
+    on('cfCancel', 'click', function () {
+      C.closeDialog($('confirmDialog')); confirmCb = null;
+    });
+    on('cfOk', 'click', function () {
+      var cb = confirmCb; confirmCb = null;
+      C.closeDialog($('confirmDialog'));
+      if (typeof cb === 'function') cb();
+    });
+  }
+  function confirmThen(title, body, danger, cb) {
+    var d = $('confirmDialog');
+    if (!d) { if (window.confirm(title + '\n\n' + (body || '')) && cb) cb(); return; }
+    setText('cfTitle', title);
+    setText('cfBody', body || '');
+    var ok = $('cfOk');
+    if (ok) { ok.classList.remove('danger', 'primary'); ok.classList.add(danger ? 'danger' : 'primary'); ok.textContent = 'OK'; }
+    confirmCb = cb;
+    C.openDialog(d, { invoker: document.activeElement, focus: $('cfCancel') });
   }
 
   function openScenes() {
@@ -313,14 +344,10 @@
     C.openDialog(d, { invoker: $('railAlign') });
   }
 
-  // GM encounter popover (spec §2): a plain show/hide with aria-expanded.
-  function toggleEncounter() {
-    var pop = $('encounterPop');
-    var btn = $('btnEncounter');
-    if (!pop) return;
-    var openNow = pop.hasAttribute('hidden');
-    if (openNow) { show(pop); if (btn) btn.setAttribute('aria-expanded', 'true'); }
-    else { hide(pop); if (btn) btn.setAttribute('aria-expanded', 'false'); }
+  // The Encounter button toggles the encounter on the active scene: start it
+  // (strip appears) or end it (strip hides). combat.js does the work.
+  function openEncounter() {
+    if (window.VTTCombat && window.VTTCombat.toggleEncounter) window.VTTCombat.toggleEncounter();
   }
 
   // ── Debug drawer (spec §2): GM-only toggle; hidden by default ──────────────
@@ -372,7 +399,7 @@
   }
 
   function anyDialogOpen() {
-    var ids = ['sheetDialog', 'itemDialog', 'scenesDialog', 'alignDialog'];
+    var ids = ['sheetDialog', 'itemDialog', 'scenesDialog', 'alignDialog', 'confirmDialog'];
     for (var i = 0; i < ids.length; i++) { if (isDialogOpen($(ids[i]))) return true; }
     // The framing modal is a plain overlay, not a <dialog>; actors.js owns its
     // own Esc, so treat it as "handled above" too.
@@ -446,5 +473,7 @@
     toggleDrawer: toggleDrawer,
     openScenes: openScenes,
     openAlign: openAlign,
+    openEncounter: openEncounter,
+    confirm: confirmThen,
   };
 }());

@@ -169,12 +169,15 @@ function idsIn(file) {
   while ((m = re.exec(html))) out.push(m[1]);
   return out;
 }
-const DEAD = ['campaignId', 'loadCampaign', 'campaign-id'];
+// Harness ids intentionally absent from game.html: the dead campaign-loader ids,
+// plus `shortcuts` (the canvas-shortcuts legend was removed from the Scenes
+// modal — it belongs to the canvas, not scene management).
+const DEAD = ['campaignId', 'loadCampaign', 'campaign-id', 'shortcuts'];
 const SHELL = [
   'topBar', 'barBack', 'campName', 'sceneName', 'connState', 'sidebarToggle',
-  'stripZone', 'btnEncounter', 'encounterPop',
+  'stripZone', 'btnEncounter',
   'sideBar', 'sideTabs', 'tabChat', 'tabChars', 'tabLibrary', 'panelChat', 'panelChars', 'panelLibrary',
-  'railZone', 'railToken', 'railFog', 'railAlign', 'railScenes', 'railConsole', 'tokenPop',
+  'railZone', 'railToken', 'railFog', 'railAlign', 'railScenes', 'railEncounter', 'tokenPop',
   'sheetDialog', 'itemDialog', 'scenesDialog', 'alignDialog', 'drawer', 'gameGate',
 ];
 
@@ -252,7 +255,7 @@ const SHELL = [
     const d = gm.document;
     // The ping button was removed from the rail (ping is available from the
     // canvas right-click menu instead), so it is not in this list.
-    ['railToken', 'railFog', 'railAlign', 'railScenes', 'railConsole'].forEach((id) => {
+    ['railToken', 'railFog', 'railAlign', 'railScenes', 'railEncounter'].forEach((id) => {
       t('GM: rail item present: ' + id, !!d.getElementById(id));
     });
     t('GM: railPing is NOT in the rail', !d.getElementById('railPing'));
@@ -366,7 +369,7 @@ const SHELL = [
     // Player sees exactly the two-icon rail; GM-only rail items are hidden via
     // CSS (.gm-only { display:none } until body.is-gm). Assert the class is
     // present on the restricted ones and #tokenPop exists.
-    ['railFog', 'railAlign', 'railScenes', 'railConsole'].forEach((id) => {
+    ['railFog', 'railAlign', 'railScenes', 'railEncounter'].forEach((id) => {
       const el = pl.document.getElementById(id);
       t('PLAYER: ' + id + ' carries gm-only', !!el && el.classList.contains('gm-only'));
     });

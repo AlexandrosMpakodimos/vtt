@@ -99,7 +99,8 @@ function button(label, handler) {
   return b;
 }
 function str(id) {
-  const v = document.getElementById(id).value.trim();
+  const el = document.getElementById(id);
+  const v = el ? el.value.trim() : '';
   return v === '' ? undefined : v;
 }
 
@@ -159,49 +160,95 @@ function hpLine(c, token) {
 
 function renderStrip() {
   stripEl.textContent = '';
-  if (!combat) {
-    stripEl.appendChild(el('p', { cls: 'muted', text: 'no encounter running' }));
+  const zone = document.getElementById('stripZone');
+  const railBtn = document.getElementById('railEncounter');
+  const running = !!(combat && combat.active);
+  // The rail Encounter button reflects the toggle state: pressed while an
+  // encounter is running.
+  if (railBtn) railBtn.setAttribute('aria-pressed', running ? 'true' : 'false');
+  // The strip is only shown while an encounter is actively RUNNING — no
+  // permanent bar at the top for an idle scene or an ended encounter.
+  if (!running) {
+    if (zone) zone.setAttribute('hidden', '');
     document.getElementById('rosterInfo').textContent = '—';
+    if (window.VTTScene && window.VTTScene.highlightToken) window.VTTScene.highlightToken(null);
     return;
   }
+  if (zone) zone.removeAttribute('hidden');
+
+  // Round + active-turn pointer. turn_index indexes the roster in render order
+  // (sort_order). Clamp defensively for display.
+  const roundEl = document.getElementById('roundNum');
+  if (roundEl) roundEl.textContent = String(combat.round || 1);
+  const activeIdx = combatants.length
+    ? Math.max(0, Math.min(combat.turn_index || 0, combatants.length - 1))
+    : 0;
+  // Also highlight the active combatant's TOKEN on the canvas (scene.js owns the
+  // token elements; we hand it the id).
+  const activeTokenId = combatants.length ? combatants[activeIdx].token_id : null;
+  if (window.VTTScene && window.VTTScene.highlightToken) window.VTTScene.highlightToken(activeTokenId);
 
   let orphans = 0;
   combatants.forEach((c, i) => {
     const token = tokenFor(c.token_id);
     if (!token) orphans += 1;
 
-    const card = el('div', { cls: 'combatant' + (token ? '' : ' orphan') });
+    const card = el('div', { cls: 'combatant' + (token ? '' : ' orphan') + (i === activeIdx ? ' is-turn' : '') });
     card.draggable = isGm;
     card.dataset.id = c.id;
 
+    // Position badge (initiative order).
     card.appendChild(el('span', { cls: 'pos', text: String(i + 1) }));
 
+    // Portrait (or a placeholder glyph).
     const img = token && token.img_url;
     if (img) {
       const im = document.createElement('img');
       im.className = 'portrait';
       im.src = img;            // attribute, not markup — no parsing context
       im.alt = '';
-      // [FIXED 2026-08-10] An <img> is natively draggable, so grabbing the
-      // portrait started a drag of the PICTURE rather than of the card: the
-      // ghost following the cursor was a floating portrait, while grabbing the
-      // card anywhere else dragged the whole card as expected. Same gesture,
-      // two different pieces of feedback, depending on which pixel was under
-      // the pointer.
-      //
-      // Turning off the image's own draggability makes the card the drag
-      // source wherever it is grabbed. setDragImage below then makes the
-      // resulting ghost explicit rather than left to the browser's default.
-      im.draggable = false;
+      im.draggable = false;    // the CARD is the drag source, not the image
       card.appendChild(im);
     } else {
       card.appendChild(el('div', { cls: 'noimg', text: token ? '⚔' : '⚠' }));
     }
 
+    // Name.
     card.appendChild(el('div', { cls: 'nm', text: token ? (token.name || '(unnamed)') : 'NO TOKEN' }));
 
+    // HP: the GM gets an INLINE editable current-HP with the max beside it
+    // (no separate modal); players get a read-only line. Editing PATCHes
+    // hp_override for this combatant.
     const hp = hpLine(c, token);
-    card.appendChild(el('div', { cls: `hp ${hp.cls}`, text: hp.text }));
+    if (isGm) {
+      const hpRow = el('div', { cls: `hp-edit ${hp.cls}` });
+      const input = document.createElement('input');
+      input.type = 'number';
+      input.className = 'hp-cur';
+      input.value = (c.hp_override === null || c.hp_override === undefined) ? '' : String(c.hp_override);
+      input.placeholder = '—';
+      input.title = 'Current HP (this fight) — type to change';
+      input.setAttribute('aria-label', 'Current HP');
+      // Don't start a card drag from inside the input, and don't let clicks
+      // bubble to the card's select handler.
+      input.draggable = false;
+      input.addEventListener('pointerdown', (e) => e.stopPropagation());
+      input.addEventListener('click', (e) => e.stopPropagation());
+      input.addEventListener('mousedown', (e) => e.stopPropagation());
+      const commit = () => saveCombatantHp(c.id, input.value);
+      input.addEventListener('change', commit);
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+      });
+      hpRow.appendChild(input);
+      // Max (from the shared actor), shown as "/ max" when known.
+      const actor = token && token.actor_id ? actorsById.get(token.actor_id) : null;
+      const max = actor && typeof actor.hp_max === 'number' && actor.hp_max > 0 ? actor.hp_max : null;
+      hpRow.appendChild(el('span', { cls: 'hp-max', text: max ? `/ ${max}` : '' }));
+      card.appendChild(hpRow);
+    } else {
+      card.appendChild(el('div', { cls: `hp ${hp.cls}`, text: hp.text }));
+    }
     if (hp.frac !== null) {
       const bar = el('div', { cls: 'bar' });
       const fill = el('i');
@@ -212,7 +259,6 @@ function renderStrip() {
     }
 
     if (isGm) {
-      card.addEventListener('click', () => selectCombatant(c.id));
       wireDrag(card);
     }
     stripEl.appendChild(card);
@@ -224,6 +270,95 @@ function renderStrip() {
   infoEl.textContent = info;
   infoEl.className = orphans ? 'warn' : 'muted';
   updateNav();
+  syncHpVisibleToggle();
+}
+
+// ---- add combatants via the dim-canvas picker (Stage D) -------------------
+// Open scene.js's token-picking mode (dims the canvas, click tokens to choose),
+// then add each chosen token to the running combat. Used both when an encounter
+// starts and when adding more later. `firstTime` tweaks the wording.
+function pickAndAddCombatants(firstTime) {
+  if (!combat || !combat.active) return;
+  if (!(window.VTTScene && window.VTTScene.pickTokens)) return;
+  const inFight = new Set(combatants.map((c) => c.token_id));
+  window.VTTScene.pickTokens(
+    {
+      exclude: inFight,
+      hint: firstTime
+        ? 'Click the tokens taking part, then confirm.'
+        : 'Click tokens to add them to the encounter.',
+      confirmLabel: firstTime ? 'Start with these' : 'Add selected',
+    },
+    async (ids) => {
+      if (!ids || !ids.length) return;   // cancelled or nothing chosen
+      for (const tokenId of ids) {
+        const r = await api('POST', `${combatPath()}/combatants`, { token_id: tokenId });
+        show('POST combatant (picker)', r);
+      }
+      await loadCombat();
+    },
+  );
+}
+
+// ---- turn navigation (Stage C) --------------------------------------------
+// Next/Back walk turn_index through the roster; wrapping past the last combatant
+// advances the round, and stepping back before the first rewinds it. round never
+// drops below 1. The pointer + round live on the combat row, so the PATCH's
+// broadcast shows every player the same "round N, X's turn".
+async function stepTurn(dir) {
+  if (!combat || !combat.active) return;
+  const n = combatants.length;
+  if (!n) return;
+  let round = combat.round || 1;
+  let idx = Math.max(0, Math.min(combat.turn_index || 0, n - 1));
+  idx += dir;
+  if (idx >= n) { idx = 0; round += 1; }               // past the end -> next round
+  else if (idx < 0) {                                  // before the start -> prev round
+    if (round > 1) { idx = n - 1; round -= 1; }
+    else { idx = 0; }                                  // already on round 1, turn 1
+  }
+  if (round === (combat.round || 1) && idx === (combat.turn_index || 0)) return;
+  const r = await api('PATCH', combatPath(), { round, turn_index: idx });
+  show('PATCH combat (turn)', r);
+  await loadCombat();
+}
+
+// ---- inline HP editing + global HP visibility (Stage B) --------------------
+
+// Save a combatant's current HP (hp_override) from an inline card input. Empty
+// clears it (falls back to the sheet). Optimistic-ish: we PATCH then reload so
+// the bar and roster reflect the server's truth.
+async function saveCombatantHp(id, rawValue) {
+  const c = combatants.find((x) => x.id === id);
+  if (!c) return;
+  const v = String(rawValue).trim();
+  const next = v === '' ? null : Number(v);
+  if (v !== '' && !Number.isFinite(next)) return;   // ignore garbage
+  // No-op if unchanged.
+  const cur = (c.hp_override === undefined) ? null : c.hp_override;
+  if (cur === next) return;
+  const r = await api('PATCH', `${combatPath()}/combatants/${id}`, { hp_override: next });
+  show('PATCH combatant hp', r);
+  await loadCombat();
+}
+
+// One toggle governs hp_visible for EVERY combatant — the GM decides, per fight,
+// whether players see HP numbers, rather than per-card. Applied to all rows.
+async function setHpVisibleAll(visible) {
+  if (!combat) return;
+  for (const c of combatants) {
+    if (c.hp_visible === visible) continue;
+    await api('PATCH', `${combatPath()}/combatants/${c.id}`, { hp_visible: visible });
+  }
+  await loadCombat();
+}
+
+// Reflect the current roster's HP-visibility on the toggle (checked only if
+// every combatant is visible).
+function syncHpVisibleToggle() {
+  const t = document.getElementById('hpVisibleAll');
+  if (!t) return;
+  t.checked = combatants.length > 0 && combatants.every((c) => c.hp_visible === true);
 }
 
 // ---- drag to reorder ------------------------------------------------------
@@ -232,10 +367,14 @@ function renderStrip() {
 // design (a half-written order leaves gaps the next drag compounds).
 
 let dragId = null;
+let droppedInStrip = false;   // set true when a card is dropped onto/within the
+                              // strip (a reorder); if it stays false at dragend
+                              // the card was dragged AWAY -> remove that combatant
 
 function wireDrag(card) {
   card.addEventListener('dragstart', (e) => {
     dragId = card.dataset.id;
+    droppedInStrip = false;   // reset; a drop on the strip sets this true
     card.classList.add('drag-src');
     e.dataTransfer.effectAllowed = 'move';
     // Firefox refuses to start a drag without payload.
@@ -253,10 +392,16 @@ function wireDrag(card) {
       e.dataTransfer.setDragImage(card, e.clientX - r.left, e.clientY - r.top);
     }
   });
-  card.addEventListener('dragend', () => {
+  card.addEventListener('dragend', async () => {
+    const id = card.dataset.id;
+    const wasInStrip = droppedInStrip;
     dragId = null;
+    droppedInStrip = false;
     card.classList.remove('drag-src');
     [...stripEl.children].forEach((n) => n.classList.remove('drag-over'));
+    // Dropped AWAY from the strip (not onto another card, not over the strip) —
+    // remove the combatant from the encounter. This is the drag-off gesture.
+    if (!wasInStrip) removeCombatant(id);
   });
   card.addEventListener('dragover', (e) => {
     if (!dragId || dragId === card.dataset.id) return;
@@ -267,6 +412,7 @@ function wireDrag(card) {
   card.addEventListener('drop', async (e) => {
     e.preventDefault();
     card.classList.remove('drag-over');
+    droppedInStrip = true;   // dropped onto a card -> a reorder, not a removal
     if (!dragId || dragId === card.dataset.id) return;
 
     const ids = combatants.map((c) => c.id);
@@ -279,6 +425,17 @@ function wireDrag(card) {
     show('POST reorder', r);
     if (r.status === 200) { combatants = r.data.combatants; renderStrip(); }
   });
+}
+
+// Remove a combatant from the encounter (the drag-off-the-strip gesture, and the
+// selected-panel delete). No confirm — the drag-off gesture is deliberate, and
+// a removed combatant is trivially re-added from the Add picker.
+async function removeCombatant(id) {
+  const c = combatants.find((x) => x.id === id);
+  if (!c) return;
+  const r = await api('DELETE', `${combatPath()}/combatants/${id}`);
+  show('DELETE combatant (drag-off)', r);
+  if (r.status === 200) await loadCombat();
 }
 
 // ---- carousel -------------------------------------------------------------
@@ -332,60 +489,9 @@ function updateNav() {
 
 // ---- the selected combatant (GM only) -------------------------------------
 
-function selectCombatant(id) {
-  const c = combatants.find((x) => x.id === id);
-  const box = document.getElementById('selected');
-  box.textContent = '';
-  if (!c) return;
-  const token = tokenFor(c.token_id);
-
-  box.appendChild(el('hr'));
-  box.appendChild(el('b', { text: token ? (token.name || '(unnamed)') : 'NO TOKEN' }));
-
-  const row = el('div', { cls: 'row' });
-
-  const hpWrap = el('div');
-  hpWrap.appendChild(el('label', { text: 'hp_override (this fight only)' }));
-  const hpIn = document.createElement('input');
-  hpIn.type = 'number';
-  hpIn.value = c.hp_override === null || c.hp_override === undefined ? '' : String(c.hp_override);
-  hpWrap.appendChild(hpIn);
-  row.appendChild(hpWrap);
-
-  const visWrap = el('div');
-  visWrap.appendChild(el('label', { text: 'hp_visible (players may see it)' }));
-  const visIn = document.createElement('input');
-  visIn.type = 'checkbox';
-  visIn.style.width = 'auto';
-  visIn.checked = c.hp_visible === true;
-  visWrap.appendChild(visIn);
-  row.appendChild(visWrap);
-
-  row.appendChild(button('save', async () => {
-    const body = {};
-    body.hp_override = hpIn.value === '' ? null : Number(hpIn.value);
-    body.hp_visible = visIn.checked;
-    const r = await api('PATCH', `${combatPath()}/combatants/${c.id}`, body);
-    show('PATCH combatant', r);
-    await loadCombat();
-  }));
-
-  row.appendChild(button('remove from fight', async () => {
-    // The ROW only — the token stays on the board. The durable alternative is
-    // tagging the token a prop, which follows it into every future encounter.
-    const r = await api('DELETE', `${combatPath()}/combatants/${c.id}`);
-    show('DELETE combatant', r);
-    await loadCombat();
-  }));
-
-  box.appendChild(row);
-  box.appendChild(el('p', {
-    cls: 'muted',
-    text: 'hp_visible governs THIS number only. The linked character\'s own hit points stay '
-        + 'behind the NPC projection — five goblin tokens share one actor row, so a '
-        + 'per-combatant switch could not disclose a per-actor value coherently.',
-  }));
-}
+// (The old per-combatant selectCombatant panel was removed: HP is edited inline
+// on each card, HP-visibility is one toggle for the whole roster, and a
+// combatant is removed by dragging its card off the strip.)
 
 // ---------------------------------------------------------------------------
 // rendering — tokens and chat
@@ -779,6 +885,33 @@ async function startCombat() {
   await loadCombat();
 }
 
+// Entry point for the Encounter button (game.js): a TOGGLE. If an encounter is
+// actively running on this scene, end it (the strip hides). Otherwise start one
+// (or reactivate an ended one), and the strip appears. No name prompt.
+async function toggleEncounter() {
+  if (!isGm) return;
+  if (!sceneId) { show('no active scene for an encounter'); return; }
+  await loadCombat();               // settle current state on this scene
+  if (combat && combat.active) {    // running -> end it
+    const r = await api('PATCH', combatPath(), { active: false });
+    show('PATCH combat (toggle end)', r);
+    await loadCombat();
+    return;
+  }
+  if (combat && !combat.active) {   // ended one exists -> reactivate
+    const r = await api('PATCH', combatPath(), { active: true });
+    show('PATCH combat (toggle reactivate)', r);
+    await loadCombat();
+    return;
+  }
+  // None on this scene yet — create one, then open the picker so the GM chooses
+  // who is in the fight by clicking tokens on the (now dimmed) canvas.
+  const r = await api('POST', `/api/campaigns/${campaign.id}/combat`, { scene_id: sceneId });
+  show('POST combat (toggle begin)', r);
+  await loadCombat();
+  pickAndAddCombatants(true);
+}
+
 async function endCombat() {
   if (!combat) return;
   const r = await api('PATCH', combatPath(), { active: false });
@@ -936,6 +1069,23 @@ document.getElementById('clearLog').addEventListener('click', () => {
 });
 document.getElementById('scrollLeft').addEventListener('click', () => page(-1));
 document.getElementById('scrollRight').addEventListener('click', () => page(1));
+{
+  const hv = document.getElementById('hpVisibleAll');
+  if (hv) hv.addEventListener('change', () => setHpVisibleAll(hv.checked));
+  const tn = document.getElementById('turnNext');
+  if (tn) tn.addEventListener('click', () => stepTurn(1));
+  const tb = document.getElementById('turnBack');
+  if (tb) tb.addEventListener('click', () => stepTurn(-1));
+  const sa = document.getElementById('stripAdd');
+  if (sa) sa.addEventListener('click', () => pickAndAddCombatants(false));
+  // The strip itself accepts drops (over its padding / between cards) so a
+  // release inside the strip counts as "kept", and only a release OUTSIDE the
+  // strip is treated as a drag-off removal.
+  if (stripEl) {
+    stripEl.addEventListener('dragover', (e) => { if (dragId) e.preventDefault(); });
+    stripEl.addEventListener('drop', (e) => { if (dragId) { e.preventDefault(); droppedInStrip = true; } });
+  }
+}
 document.getElementById('chatText').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') sendChat();
 });
@@ -1104,7 +1254,7 @@ const preset = new URLSearchParams(window.location.search).get('campaign');
 
 // The game shell's entry point: the encounter/chat/dice loader, parameterised.
 function boot(campaignId) { return loadCampaign(campaignId); }
-window.VTTCombat = { boot };
+window.VTTCombat = { boot, toggleEncounter };
 
 
 /* --- expose internals the jsdom test suite reads via window.* --- */

@@ -89,7 +89,11 @@
     .btn.small { min-height: 34px; padding: 0.35rem 0.75rem; font-size: 0.82rem; }
     .btn.icon { padding: 0.5rem; min-height: 40px; min-width: 40px; }
     .btn.icon svg { width: 20px; height: 20px; display: block; }
-    .btn:disabled { opacity: 0.55; cursor: default; box-shadow: none; transform: none; }
+    .btn:disabled, .btn:disabled:hover { opacity: 0.55; cursor: default; box-shadow: none; transform: none; }
+    .btn.primary:disabled:hover, .btn.secondary:disabled:hover, .btn.danger:disabled:hover {
+      box-shadow: none; transform: none; background: var(--accent); color: var(--on-accent); border-color: var(--accent);
+    }
+    .btn.secondary:disabled:hover { background: transparent; color: var(--accent); border-color: var(--rule); }
     @media (prefers-reduced-motion: reduce) { .btn.primary:hover { transform: none; } }
 
     /* ── Fields (verbatim recipe from the dashboard) ────────────────────────── */
@@ -160,24 +164,306 @@
     }
     #stage-wrap.panning { cursor: grabbing; }
 
-    /* ── Initiative strip zone (spec §2) ────────────────────────────────────── */
+    /* ── Token-picking mode (Stage D) ────────────────────────────────────────
+       While picking, a scrim (inside #stage, in the tokens' stacking context)
+       dims the MAP; the tokens sit above it at full brightness with selectable
+       rings. Excluded tokens (already in the fight) are made semi-transparent so
+       the dark scrim shows through — dimming just them, not the selectable ones. */
+    #pick-dim {
+      position: absolute; inset: 0; z-index: 5; pointer-events: none;
+      background: rgba(6, 8, 12, 0.66);
+    }
+    #stage-wrap.picking { cursor: default; }
+    #stage-wrap.picking .token { z-index: 8; cursor: pointer; }
+    #stage-wrap.picking .token::after {
+      content: ""; position: absolute; inset: -3px; border-radius: 8px;
+      border: 2px dashed color-mix(in srgb, var(--accent) 70%, transparent); pointer-events: none;
+    }
+    #stage-wrap.picking .token.pick-on { outline: 3px solid var(--accent); outline-offset: 2px; }
+    #stage-wrap.picking .token.pick-on::after { border-style: solid; border-color: var(--accent); }
+    #stage-wrap.picking .token.pick-on .cap { background: var(--accent); color: var(--on-accent); }
+    #stage-wrap.picking .token.pick-excluded { opacity: 0.3; cursor: not-allowed; }
+    #stage-wrap.picking .token.pick-excluded::after { display: none; }
+
+    #pick-bar {
+      position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%); z-index: 95;
+      display: flex; align-items: center; gap: 0.8rem;
+      padding: 0.6rem 0.9rem; border: 1px solid var(--rule); border-radius: 8px;
+      background: var(--surface-raised); box-shadow: 0 16px 40px rgba(0,0,0,0.5);
+      -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+    }
+    #pick-bar .pick-hint { font-size: 0.85rem; color: var(--text); }
+    #pick-bar .pick-count { font-size: 0.78rem; color: var(--text-muted); }
+    #pick-bar .btn.small { min-height: 34px; }
+
+    /* Empty-canvas prompt: centred horizontally in the WHOLE viewport (below the
+       top bar), not the canvas-minus-sidebar strip — otherwise a wide sidebar on
+       a narrow window crushes it into a left-hand strip and it reads as
+       off-centre. It's a transient prompt shown only when there are no scenes, so
+       overlapping the sidebar's edge is fine.
+       NOTE: this element is also .gm-only, and `body.is-gm .gm-only{display:block}`
+       would otherwise override the flex below and break the centring — so the
+       flex display is asserted with matching specificity via body.is-gm. */
+    .canvas-empty {
+      position: fixed; z-index: 5;
+      top: var(--bar-h); bottom: 0; left: 0; right: 0;
+      padding: 1rem;
+      pointer-events: none;   /* the card re-enables events for itself */
+    }
+    body.is-gm #canvasEmpty:not([hidden]) { display: flex; align-items: center; justify-content: center; }
+    .canvas-empty-card {
+      pointer-events: auto; text-align: center; max-width: 22rem;
+      display: flex; flex-direction: column; align-items: center; gap: 0.6rem;
+      padding: 2rem 1.8rem; border: 1px solid var(--border); border-radius: 8px;
+      background: color-mix(in srgb, var(--surface) 92%, transparent);
+      -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+      box-shadow: 0 16px 40px rgba(0,0,0,0.4);
+    }
+    .canvas-empty-icon { color: var(--text-muted); }
+    .canvas-empty-icon svg { width: 44px; height: 44px; display: block; }
+    .canvas-empty-title { font-weight: 700; font-size: 1.1rem; color: var(--text); }
+    .canvas-empty-sub { margin: 0; font-size: 0.85rem; color: var(--text-muted); line-height: 1.5; }
+    .canvas-empty-card .btn.primary { margin-top: 0.4rem; }
+
+    /* ── Initiative strip ─────────────────────────────────────────────────────
+       A content-sized turn control, not a second dashboard. The transparent
+       outer zone centres it in the usable map area while the panel itself only
+       grows as wide as its controls or combatants require.
+       The left/right insets are CONSTANT — deliberately not tied to the live
+       sidebar state — so opening or closing the chat sidebar never re-centres
+       the panel and shifts it sideways. It stays put. */
     #stripZone {
-      position: fixed; top: calc(var(--bar-h) + 8px); left: 50%; transform: translateX(-50%);
-      z-index: 30; max-width: 70vw; width: max-content;
-      display: flex; flex-direction: column; align-items: center; gap: 6px;
+      position: fixed; left: calc(var(--rail-w) + 20px); right: calc(var(--side-w) + 12px);
+      top: calc(var(--bar-h) + 10px); bottom: auto;
+      z-index: 30; display: flex; justify-content: center; width: auto; max-width: none;
+      pointer-events: none;
     }
-    .strip-wrap { display: flex; align-items: center; gap: 4px; max-width: 70vw;
-      background: color-mix(in srgb, var(--surface) 85%, transparent); border: 1px solid var(--border);
-      border-radius: 4px; padding: 4px; -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
-    #strip { display: flex; gap: 6px; overflow-x: auto; scroll-behavior: smooth; padding: 2px; }
-    #strip:empty::after { content: "no encounter running"; color: var(--text-muted); font-size: 0.78rem; padding: 0.3rem 0.6rem; }
-    .strip .nav, #stripZone .nav { flex: none; }
-    #rosterInfo { font-size: 0.76rem; color: var(--text-muted); }
-    #encounterPop {
-      position: absolute; top: calc(100% + 6px); left: 50%; transform: translateX(-50%);
-      z-index: 31; width: min(30rem, 92vw); background: var(--surface-raised);
-      border: 1px solid var(--rule); border-radius: 4px; padding: 0.9rem; box-shadow: 0 16px 40px rgba(0,0,0,0.5);
+
+    .strip-panel {
+      position: relative; display: flex; flex-direction: column;
+      width: max-content; max-width: 100%; min-width: min(27rem, 100%);
+      background: color-mix(in srgb, var(--surface) 95%, transparent);
+      border: 1px solid var(--border); border-radius: 6px;
+      box-shadow: 0 12px 30px rgba(0,0,0,0.38);
+      -webkit-backdrop-filter: blur(9px); backdrop-filter: blur(9px);
+      overflow: hidden; pointer-events: auto;
+      animation: initiative-strip-in 0.18s var(--ease) both;
     }
+    @keyframes initiative-strip-in {
+      from { opacity: 0; transform: translateY(-6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* One compact control row. Typography, status and actions share a baseline;
+       fixed-height buttons explicitly centre their labels. */
+    .strip-top {
+      display: flex; align-items: center; gap: 0.65rem; min-width: 0;
+      padding: 0.42rem 0.5rem; border-bottom: 1px solid var(--border);
+      background: color-mix(in srgb, var(--accent) 4%, transparent);
+    }
+    .strip-heading { display: inline-flex; align-items: baseline; flex: none; }
+    .round-label {
+      display: inline-flex; align-items: baseline; gap: 0.25rem;
+      font-size: 0.7rem; font-weight: 650; text-transform: uppercase;
+      letter-spacing: 0.05em; color: var(--text-muted); white-space: nowrap;
+    }
+    .round-label b { color: var(--accent); font-size: 0.9rem; line-height: 1; }
+
+    .strip-tools { display: flex; flex: 1 1 auto; align-items: center; justify-content: flex-end; gap: 0.4rem; min-width: 0; }
+    .strip-round { display: inline-flex; align-items: center; gap: 0.3rem; padding-left: 0.4rem; border-left: 1px solid var(--border); }
+    body.is-gm .strip-round.gm-only { display: inline-flex; }
+    .strip-navbtn,
+    .strip-tools .btn.small {
+      display: inline-flex; align-items: center; justify-content: center;
+      height: 30px; min-height: 30px; min-width: 0; margin: 0; padding: 0 0.62rem;
+      border: 1px solid var(--rule); border-radius: 3px;
+      font: inherit; font-size: 0.72rem; font-weight: 650; line-height: 1;
+      letter-spacing: 0.01em; text-align: center; white-space: nowrap; cursor: pointer;
+      background: transparent; color: var(--text-muted);
+      transition: background-color 0.14s var(--ease), color 0.14s var(--ease), border-color 0.14s var(--ease), box-shadow 0.14s var(--ease);
+    }
+    .strip-navbtn:hover,
+    .strip-tools .btn.small:hover { color: var(--text); border-color: var(--accent); }
+    .strip-navbtn.next { color: var(--on-accent); background: var(--accent); border-color: var(--accent); }
+    .strip-navbtn.next:hover { box-shadow: 0 0 12px color-mix(in srgb, var(--accent) 38%, transparent); }
+    .strip-navbtn:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+    #rosterInfo {
+      order: -1; margin: 0 0.1rem 0 0; max-width: 9rem;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      font-size: 0.7rem; color: var(--text-muted);
+    }
+    .strip-toolrow { display: inline-flex; align-items: center; gap: 0.42rem; padding-left: 0.4rem; border-left: 1px solid var(--border); }
+    body.is-gm .strip-toolrow.gm-only { display: inline-flex; }
+
+    /* Gold toggle switch, reduced to one short label. */
+    .switch { display: inline-flex; align-items: center; gap: 0.34rem; cursor: pointer; user-select: none; }
+    .switch input { position: absolute; opacity: 0; width: 0; height: 0; }
+    .switch .switch-track {
+      position: relative; width: 30px; height: 17px; flex: none; border-radius: 999px;
+      background: color-mix(in srgb, var(--border) 80%, transparent);
+      border: 1px solid var(--border);
+      transition: background-color 0.16s var(--ease), border-color 0.16s var(--ease);
+    }
+    .switch .switch-thumb {
+      position: absolute; top: 1px; left: 1px; width: 13px; height: 13px; border-radius: 50%;
+      background: var(--text-muted);
+      transition: transform 0.16s var(--ease), background-color 0.16s var(--ease);
+    }
+    .switch input:checked + .switch-track {
+      background: var(--accent); border-color: var(--accent);
+    }
+    .switch input:checked + .switch-track .switch-thumb { transform: translateX(13px); background: var(--on-accent); }
+    .switch input:focus-visible + .switch-track { outline: 2px solid var(--focus); outline-offset: 2px; }
+    .switch .switch-text { font-size: 0.7rem; color: var(--text-muted); white-space: nowrap; }
+    .switch input:checked ~ .switch-text { color: var(--accent); }
+
+    /* Horizontal mini-cards cut the roster row almost in half while keeping
+       portrait, name and HP readable. */
+    .combatant {
+      flex: 0 0 7.6rem; width: 7.6rem; min-height: 3.5rem; box-sizing: border-box; position: relative;
+      display: grid; grid-template-columns: 2.55rem minmax(0, 1fr); grid-template-rows: auto auto 4px;
+      column-gap: 0.42rem; row-gap: 0.1rem; align-items: center;
+      border: 1px solid var(--border); border-radius: 4px; padding: 0.28rem;
+      background: var(--surface-raised); color: var(--text); text-align: left;
+      cursor: grab; user-select: none;
+    }
+    .combatant:hover { border-color: var(--rule); }
+    .combatant.drag-src { opacity: 0.4; }
+    .combatant.drag-over { border-color: var(--accent); }
+    .combatant.orphan { border-color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent); }
+    .combatant.is-turn {
+      border-color: var(--accent);
+      background: color-mix(in srgb, var(--accent) 7%, var(--surface-raised));
+      box-shadow: 3px 0 0 var(--accent) inset;
+    }
+    .combatant.is-turn .nm { color: var(--accent); }
+    .combatant.is-turn .pos { background: var(--on-accent); color: var(--accent); }
+    .combatant .pos {
+      position: absolute; top: 0.18rem; left: 0.18rem; z-index: 2; font-size: 9px; font-weight: 750;
+      color: var(--on-accent); background: var(--accent); border-radius: 2px; padding: 0 0.22rem; line-height: 1.45;
+    }
+    .combatant .portrait, .combatant .noimg {
+      grid-column: 1; grid-row: 1 / span 3;
+      width: 2.55rem; height: 2.85rem; object-fit: cover; border-radius: 3px; display: block; background: var(--surface);
+    }
+    .combatant .noimg { display: flex; align-items: center; justify-content: center; font-size: 17px; color: var(--text-muted); }
+    .combatant .nm {
+      grid-column: 2; grid-row: 1; min-width: 0; margin: 0;
+      font-size: 0.72rem; font-weight: 650; line-height: 1.2;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+
+    /* Inline HP editor (GM). A compact current-HP input + the max beside it. */
+    .combatant .hp-edit {
+      grid-column: 2; grid-row: 2; display: flex; align-items: center; justify-content: flex-start; gap: 2px; margin: 0;
+    }
+    .combatant .hp-cur {
+      width: 2.15rem; text-align: center; font: inherit; font-size: 0.68rem; padding: 1px 2px; min-height: 22px;
+      border: 1px solid var(--border); border-radius: 3px; background: var(--surface); color: var(--text);
+      -moz-appearance: textfield;
+    }
+    .combatant .hp-cur::-webkit-outer-spin-button, .combatant .hp-cur::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+    .combatant .hp-cur:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; border-color: var(--accent); }
+    .combatant .hp-max { font-size: 0.65rem; color: var(--text-muted); white-space: nowrap; }
+    .combatant .hp-edit.secret .hp-cur { border-color: var(--rule); color: var(--accent); }
+
+    /* Player read-only HP line. */
+    .combatant .hp { grid-column: 2; grid-row: 2; font-size: 0.65rem; margin: 0; }
+    .combatant .hp.secret { color: var(--accent); }
+    .combatant .hp.shown { color: #6b6; }
+    .combatant .hp.none { color: var(--text-muted); }
+    .combatant .bar {
+      grid-column: 2; grid-row: 3; height: 4px;
+      background: color-mix(in srgb, var(--border) 60%, transparent); border-radius: 3px; overflow: hidden; margin: 0;
+    }
+    .combatant .bar > i { display: block; height: 100%; background: #3a3; }
+    .combatant .bar > i.low { background: var(--danger); }
+
+    /* The order row sizes to its content up to a sensible ceiling. Secondary
+       scroll controls overlay the edges and stay out of sight when idle. */
+    #stripZone .strip-wrap {
+      position: relative; display: block; width: 100%; max-width: none; min-width: 0;
+      padding: 0.38rem 0.48rem 0.42rem;
+    }
+    #stripZone #strip {
+      display: flex; align-items: stretch; gap: 0.35rem;
+      width: max-content; max-width: min(34rem, calc(100vw - var(--side-w) - var(--rail-w) - 3rem));
+      min-width: 100%; min-height: 0; overflow-x: auto; overflow-y: hidden;
+      overscroll-behavior-inline: contain; touch-action: pan-x;
+      scroll-behavior: auto; scroll-snap-type: none;
+      padding: 0; scrollbar-width: none;
+    }
+    #stripZone #strip::-webkit-scrollbar { display: none; }
+    #stripZone #strip:empty::after {
+      content: "Add tokens to begin"; align-self: center;
+      color: var(--text-muted); font-size: 0.72rem; padding: 0.8rem 0.5rem;
+    }
+    #stripZone .nav {
+      position: absolute; z-index: 3; top: 50%; transform: translateY(-50%);
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 26px; min-width: 26px; height: 34px; min-height: 34px; margin: 0; padding: 0;
+      border-color: var(--border); border-radius: 3px;
+      color: var(--text-muted); background: color-mix(in srgb, var(--surface-raised) 92%, transparent);
+      box-shadow: 0 4px 12px rgba(0,0,0,0.2); opacity: 0; pointer-events: none;
+      transition: opacity 0.14s ease, color 0.14s ease, border-color 0.14s ease;
+    }
+    #scrollLeft { left: 0.22rem; }
+    #scrollRight { right: 0.22rem; }
+    #stripZone .strip-panel:hover .nav,
+    #stripZone .strip-panel:focus-within .nav,
+    #stripZone .nav:focus-visible { opacity: 1; pointer-events: auto; }
+    #stripZone .nav:hover { color: var(--accent); border-color: var(--accent); }
+    #stripZone .nav:disabled { opacity: 0 !important; pointer-events: none; }
+
+    @media (max-width: 900px) {
+      #stripZone { right: 12px; }
+      #stripZone #strip { max-width: calc(100vw - var(--rail-w) - 3rem); }
+    }
+    @media (max-width: 640px) {
+      #stripZone { left: 8px; right: 8px; top: calc(var(--bar-h) + 8px); bottom: auto; }
+      .strip-panel { min-width: 0; width: 100%; }
+      .strip-top { flex-wrap: wrap; gap: 0.4rem 0.55rem; }
+      .strip-tools { width: 100%; justify-content: space-between; }
+      #rosterInfo { margin-right: auto; }
+      #stripZone #strip { max-width: calc(100vw - 1rem); }
+    }
+    @media (hover: none) {
+      #stripZone .nav:not(:disabled) { opacity: 0.82; pointer-events: auto; }
+    }
+    @media (prefers-reduced-motion: reduce) { .strip-panel { animation: none; } }
+    /* ── Encounter modal ─────────────────────────────────────────────────────
+       A status line, a setup section (scene + name + Start), and manage actions
+       (End / Delete). Matches the app's dialog aesthetic. */
+    #encounterDialog.encounter-modal .card-inner { width: min(34rem, 94vw); }
+    .encounter-modal .enc-sub { display: block; margin-top: 0.15rem; font-size: 0.8rem; color: var(--text-muted); font-weight: 400; text-transform: none; letter-spacing: 0; }
+
+    .enc-status {
+      display: flex; align-items: center; gap: 0.55rem; margin: 1rem 0 0.2rem;
+      padding: 0.6rem 0.75rem; border: 1px solid var(--border); border-radius: 5px;
+      background: color-mix(in srgb, var(--surface) 50%, transparent);
+    }
+    .enc-status .enc-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--text-muted); }
+    /* When an encounter is running, combat.js fills #combatInfo; a body class
+       could tint the dot, but even without it the status text is authoritative. */
+    #combatInfo { font-size: 0.85rem; }
+
+    .enc-setup { margin-top: 1.1rem; }
+    .enc-group-title {
+      font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em;
+      color: var(--accent); margin: 0 0 0.6rem; padding-bottom: 0.4rem; border-bottom: 1px solid var(--border);
+    }
+    .enc-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 0.7rem; }
+    @media (max-width: 520px) { .enc-fields { grid-template-columns: 1fr; } }
+    .enc-fields .field { margin: 0; }
+    .enc-fields .field label .opt { text-transform: none; letter-spacing: 0; font-weight: 400; color: var(--text-muted); }
+    .enc-start { width: 100%; margin-top: 0.8rem; min-height: 44px; }
+    .enc-start svg { margin-right: 0.1rem; }
+
+    .enc-manage { display: flex; gap: 0.5rem; margin-top: 1.1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+    .enc-manage .btn { flex: 1; }
+    .enc-manage .btn.danger { flex: none; }
+    .enc-foot { margin: 0.9rem 0 0; font-size: 0.74rem; line-height: 1.55; }
 
     /* ── Left rail (spec §2) ────────────────────────────────────────────────── */
     #railZone {
@@ -368,21 +654,38 @@
     .dialog-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: 0.4rem; }
     .card-inner h2 { font-size: 1.2rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--accent); overflow-wrap: anywhere; }
     .card-inner h2 + .rule { height: 2px; width: 3rem; background: var(--rule); margin: 0.3rem 0 1rem; }
+    /* The divider is a <span>; make it a block so its width/height apply (matches
+       the dashboard's confirm/warning modals). */
+    .rule { display: block; }
+    .dialog-narrow { width: min(29rem, 94vw); }
+    /* .card-inner defaults to the wide (46rem) width; a narrow dialog must
+       shrink its inner too, or the inner overflows the dialog and pushes the
+       buttons off-screen. overflow-x:hidden kills any residual sideways scroll. */
+    .dialog-narrow .card-inner { width: min(29rem, 94vw); overflow-x: hidden; }
+
+    /* The confirm/warning dialog matches the dashboard's "Delete this game?"
+       modal EXACTLY — same padding, title size, divider spacing and button size.
+       Scoped to #confirmDialog so the rest of the game page is unaffected. */
+    #confirmDialog .card-inner { padding: 2rem; }
+    #confirmDialog .card-inner h2 { font-size: 1.3rem; margin: 0 0 0.3rem; }
+    #confirmDialog .card-inner h2 + .rule { margin: 0 0 1.2rem; }
+    #confirmDialog .btn.small { min-height: 36px; padding: 0.4rem 0.85rem; font-size: 0.85rem; }
+    .field-inline { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
     .card-close {
       flex: none; width: 40px; height: 40px; border-radius: 2px; border: 1px solid var(--border);
       background: transparent; color: var(--text); cursor: pointer; font-size: 1.1rem; line-height: 1;
     }
     .card-close:hover { border-color: var(--rule); color: var(--accent); }
-    /* The align modal's close matches the dashboard game-card modals' circled X
+    /* The align + scenes modals use the dashboard game-card modals' circled X
        (.cp-close there): a round translucent button, positioned in the corner. */
-    #alignDialog .card-close {
+    #alignDialog .card-close, #scenesDialog .card-close {
       position: absolute; top: 0.6rem; right: 0.6rem; z-index: 2;
       width: 2rem; height: 2rem; border-radius: 50%; border: none;
       display: flex; align-items: center; justify-content: center;
       background: rgba(0,0,0,0.45); color: #fff; font-size: 1rem; line-height: 1;
     }
-    #alignDialog .card-close:hover { background: rgba(0,0,0,0.65); color: #fff; border: none; }
-    #alignDialog .card-close:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+    #alignDialog .card-close:hover, #scenesDialog .card-close:hover { background: rgba(0,0,0,0.65); color: #fff; border: none; }
+    #alignDialog .card-close:focus-visible, #scenesDialog .card-close:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 
     /* ── Align-the-grid modal ────────────────────────────────────────────────
        Fullscreen. The map viewport is the hero on the left; controls, grouped by
@@ -496,6 +799,85 @@
     }
     .vtt-dd-opt:hover, .vtt-dd-opt[data-active="true"] { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
 
+    /* ── Scenes modal redesign ───────────────────────────────────────────────
+       Create → status/refresh → a list of scene cards where the three actions
+       are weighted by consequence (Open quiet · Activate primary · Delete
+       danger), with an unmistakable badge for the active (shared) scene. */
+    #scenesDialog.scenes-modal .card-inner { width: min(40rem, 94vw); }
+    .scenes-modal .scenes-sub { display: block; margin-top: 0.15rem; font-size: 0.8rem; color: var(--text-muted); font-weight: 400; text-transform: none; letter-spacing: 0; }
+    .scenes-modal .scenes-sub b { color: var(--text); }
+
+    /* A quiet/ghost button variant (used for Refresh). */
+    .btn.ghost { border-color: transparent; color: var(--text-muted); background: transparent; }
+    .btn.ghost:hover { color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+    .btn.icon-btn { padding: 0 0.5rem; min-width: 34px; }
+
+    .scenes-create {
+      display: flex; gap: 0.6rem; align-items: flex-end; margin-top: 1rem;
+      padding-bottom: 1rem; border-bottom: 1px solid var(--border);
+    }
+    .scenes-create .field { flex: 1; margin: 0; }
+    .scenes-create .btn { flex: none; min-height: 40px; }
+
+    .scenes-statusbar { display: flex; align-items: center; justify-content: flex-end; gap: 1rem; margin: 0.9rem 0 0.5rem; }
+    #scene-title { color: var(--accent); font-weight: 600; }
+
+    .scene-list { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.7rem; max-height: 52vh; overflow-y: auto; padding: 2px; }
+    @media (max-width: 560px) { .scene-list { grid-template-columns: 1fr; } }
+    .scenes-empty { grid-column: 1 / -1; color: var(--text-muted); font-size: 0.88rem; padding: 1.6rem 0.4rem; text-align: center; }
+
+    /* ── Scene tile (gallery) ────────────────────────────────────────────────
+       The map fills the tile; the name sits on a bottom scrim; a corner badge
+       marks active/open; a compact action bar runs along the bottom. The active
+       (shared) scene gets a bold accent ring so it's unmistakable at a glance. */
+    .scene-tile {
+      position: relative; border: 1px solid var(--border); border-radius: 6px;
+      overflow: hidden; background: var(--surface-raised); aspect-ratio: 16 / 10;
+      display: flex; flex-direction: column;
+    }
+    .scene-tile.is-active { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent) inset; }
+
+    /* The map image (or placeholder) fills the whole tile behind everything. */
+    .scene-art { position: absolute; inset: 0; background: center / cover no-repeat; }
+    .scene-art.no-map {
+      display: flex; align-items: center; justify-content: center;
+      font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em;
+      color: var(--text-muted); background: var(--surface);
+    }
+    /* Scrim behind the name so it's legible over any artwork. */
+    .scene-tile::after {
+      content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 58%;
+      background: linear-gradient(to top, rgba(0,0,0,0.82) 0%, rgba(0,0,0,0.45) 45%, transparent 100%);
+      pointer-events: none;
+    }
+
+    .scene-badge {
+      position: absolute; top: 0.5rem; left: 0.5rem; z-index: 2;
+      font-size: 0.64rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
+      padding: 0.15rem 0.45rem; border-radius: 3px;
+    }
+    .scene-badge.active { color: var(--on-accent); background: var(--accent); }
+    .scene-badge.open { color: #fff; background: rgba(0,0,0,0.6); border: 1px solid var(--rule); }
+
+    .scene-tile-name {
+      position: relative; z-index: 2; margin-top: auto;
+      padding: 0.5rem 0.6rem 0.3rem; color: #fff; font-weight: 700; font-size: 0.92rem;
+      text-shadow: 0 1px 3px rgba(0,0,0,0.9);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .scene-tile-actions {
+      position: relative; z-index: 2; display: flex; align-items: center; gap: 0.3rem;
+      padding: 0 0.5rem 0.55rem;
+    }
+    .scene-tile-actions .btn.small { min-height: 30px; padding: 0.25rem 0.55rem; font-size: 0.78rem; }
+    /* Open + Activate share the space; Delete is a compact icon pushed to the end. */
+    .scene-tile-actions .btn.secondary, .scene-tile-actions .btn.primary { flex: 1; }
+    .scene-tile-actions .scene-del { flex: none; padding: 0.25rem 0.45rem; }
+    .scene-tile-actions .scene-del svg { width: 16px; height: 16px; display: block; }
+    /* On a tile the quiet buttons need a readable surface over the artwork. */
+    .scene-tile-actions .btn.secondary { background: rgba(0,0,0,0.45); border-color: rgba(255,255,255,0.25); color: #fff; }
+    .scene-tile-actions .btn.secondary:hover { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+
     @media (max-width: 820px) {
       #alignDialog .card-inner { height: auto; max-height: 96vh; overflow-y: auto; }
       .align-body { grid-template-columns: 1fr; }
@@ -550,7 +932,7 @@
       #sideBar { width: 100vw; }
       #topBar { flex-wrap: wrap; height: auto; padding: 0.4rem var(--pad); }
       #campName { max-width: 40vw; } #sceneName { max-width: 40vw; } #whoami { max-width: 40vw; }
-      #stripZone { max-width: 96vw; }
+      #stripZone { max-width: none; }
     }
 
     /* ════════════════════════════════════════════════════════════════════════
@@ -600,6 +982,11 @@
     .token.mine { border-color: #6f6; }
     .token.dragging { cursor: grabbing; opacity: 0.8; z-index: 10; }
     .token.selected { outline: 2px dashed #fc6; outline-offset: 2px; }
+    /* The token whose turn it is in the running encounter: a glowing accent ring
+       and a pulse so it's obvious on the board. */
+    .token.is-turn { outline: 3px solid var(--accent); outline-offset: 2px; box-shadow: 0 0 16px 3px color-mix(in srgb, var(--accent) 65%, transparent); z-index: 6; animation: token-turn-pulse 1.6s ease-in-out infinite; }
+    @keyframes token-turn-pulse { 0%,100% { box-shadow: 0 0 12px 2px color-mix(in srgb, var(--accent) 55%, transparent); } 50% { box-shadow: 0 0 20px 5px color-mix(in srgb, var(--accent) 80%, transparent); } }
+    @media (prefers-reduced-motion: reduce) { .token.is-turn { animation: none; } }
     .token.locked { cursor: not-allowed; }
     /* A small lock badge in the top-right corner of a locked token, so its state
        is visible on the board at a glance. Sits above the art/caption; the glyph
@@ -661,9 +1048,6 @@
       font-size: 0.7rem; font-weight: 600; text-transform: uppercase;
       letter-spacing: 0.06em; color: var(--text-muted);
     }
-    .scene-row { margin: 4px 0; display: flex; gap: 6px; align-items: center; }
-    .scene-row button { margin-top: 0; padding: 2px 8px; font-size: 12px; }
-    .active-scene { color: var(--accent); font-weight: bold; }
 
     /* ── combat.html: initiative strip, chat, dice ─────────────────────────── */
     .strip-wrap { position: relative; display: flex; align-items: center; gap: 6px; }
@@ -676,24 +1060,7 @@
     .nav { flex: 0 0 auto; margin: 0; padding: 20px 6px; }
     .nav:disabled { opacity: .3; cursor: default; }
 
-    .combatant { flex: 0 0 auto; width: 96px; border: 1px solid #ccc; border-radius: 4px;
-                 padding: 6px; background: #fff; text-align: center; cursor: grab;
-                 user-select: none; position: relative; color: #111; }
-    .combatant.drag-src { opacity: .35; }
-    .combatant.drag-over { border-color: #06c; border-style: dashed; background: #f0f6ff; }
-    .combatant .portrait { width: 100%; height: 56px; object-fit: cover; border-radius: 3px;
-                           background: #eee; display: block; }
-    .combatant .noimg { width: 100%; height: 56px; border-radius: 3px; background: #eee;
-                        display: flex; align-items: center; justify-content: center;
-                        font-size: 20px; color: #999; }
-    .combatant .nm { font-size: 11px; margin-top: 4px; overflow: hidden;
-                     text-overflow: ellipsis; white-space: nowrap; }
-    .combatant .hp { font-size: 11px; margin-top: 2px; }
-    .combatant .hp.secret { color: #808; }
-    .combatant .hp.shown { color: #070; }
-    .combatant .hp.none { color: #aaa; }
-    .combatant .pos { position: absolute; top: 2px; left: 4px; font-size: 10px; color: #999; }
-    .combatant.orphan { border-color: #c00; background: #fff0f0; }
+    .strip .nav, #stripZone .nav { flex: none; }
 
     .bar { height: 5px; background: #ddd; border-radius: 3px; overflow: hidden; margin-top: 3px; }
     .bar > i { display: block; height: 100%; background: #3a3; }
@@ -797,6 +1164,21 @@
        the height:60vh rule is dropped and the wrap is fixed inset:0 (spec §5). -->
   <div id="stage-wrap" class="fx">
     <div id="stage"><div id="grid-pad"></div><div id="stage-bg"></div><svg id="fog-layer" xmlns="http://www.w3.org/2000/svg"></svg><div id="marquee"></div></div>
+    <!-- Shown (GM only) when the campaign has no scenes yet: a prompt to make the
+         first one, centred on the empty canvas. Toggled by scene.js. -->
+    <div id="canvasEmpty" class="canvas-empty gm-only" hidden>
+      <div class="canvas-empty-card">
+        <div class="canvas-empty-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M3 15l4-4 3 3 4-5 5 6"/><circle cx="8.5" cy="9" r="1.2"/></svg>
+        </div>
+        <div class="canvas-empty-title">No scenes yet</div>
+        <p class="canvas-empty-sub">Create your first scene to start building the table.</p>
+        <button id="canvasEmptyCreate" class="btn primary" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true" style="width:18px;height:18px"><path d="M12 5v14M5 12h14"/></svg>
+          Create a scene
+        </button>
+      </div>
+    </div>
     <div id="zoom-hud">100%</div>
   </div>
   <div id="ctx-menu"></div>
@@ -818,40 +1200,45 @@
     </div>
   </header>
 
-  <!-- ── Initiative strip (spec §2). The strip/scroll block is copied verbatim
-       from combat.html; the GM encounter controls live in #encounterPop. ───── -->
-  <div id="stripZone" class="fx">
-    <div class="strip-wrap">
-      <button class="btn icon small gm-only" id="btnEncounter" type="button" aria-label="Encounter controls" title="Encounter controls" aria-expanded="false">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
-      </button>
-      <button class="btn icon small nav" id="scrollLeft" type="button" title="scroll left" aria-label="scroll left">‹</button>
-      <div class="strip" id="strip"></div>
-      <button class="btn icon small nav" id="scrollRight" type="button" title="scroll right" aria-label="scroll right">›</button>
-    </div>
-    <p id="rosterInfo" role="status">—</p>
-    <div id="selected" class="gm-only"></div>
+  <!-- ── Initiative dock. It remains on the table instead of taking over the
+       map, while every legacy id stays intact for combat.js. -->
+  <div id="stripZone" class="fx gm-tool" hidden>
+    <div class="strip-panel" role="region" aria-label="Encounter turn order">
+      <div class="strip-top">
+        <div class="strip-heading">
+          <span class="round-label" role="status" aria-live="polite" aria-atomic="true">Round <b id="roundNum">1</b></span>
+        </div>
+        <div class="strip-tools">
+          <p id="rosterInfo" role="status" aria-live="polite">—</p>
+          <div class="strip-round gm-only" aria-label="Turn controls">
+            <button id="turnBack" class="strip-navbtn" type="button" title="Previous turn">Previous</button>
+            <button id="turnNext" class="strip-navbtn next" type="button" title="Advance to next turn">Next turn</button>
+          </div>
+          <div class="strip-toolrow gm-only">
+            <button id="stripAdd" class="btn small secondary" type="button" title="Add tokens to this encounter">Add</button>
+            <label class="switch" title="Show HP numbers to players">
+              <input type="checkbox" id="hpVisibleAll" />
+              <span class="switch-track"><span class="switch-thumb"></span></span>
+              <span class="switch-text">HP</span>
+            </label>
+          </div>
+        </div>
+      </div>
 
-    <!-- GM encounter popover: sceneSel (combat's — the surviving instance),
-         combatName, start/end/delete, combatInfo (spec §2 / §4). -->
-    <div id="encounterPop" class="gm-only" hidden>
-      <div class="row">
-        <div class="field" style="flex:2">
-          <label for="sceneSel">scene</label>
-          <select id="sceneSel"></select>
-        </div>
-        <div class="field" style="flex:2">
-          <label for="combatName">encounter name</label>
-          <input id="combatName" placeholder="Ambush at the bridge" />
-        </div>
+      <div class="strip-wrap" aria-label="Combatants in initiative order">
+        <button class="btn icon small nav" id="scrollLeft" type="button" title="Earlier combatants" aria-label="Scroll to earlier combatants">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="width:16px;height:16px"><path d="M15 6l-6 6 6 6"/></svg>
+        </button>
+        <div class="strip" id="strip" tabindex="0" aria-label="Initiative order"></div>
+        <button class="btn icon small nav" id="scrollRight" type="button" title="Later combatants" aria-label="Scroll to later combatants">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="width:16px;height:16px"><path d="M9 6l6 6-6 6"/></svg>
+        </button>
       </div>
-      <div class="row">
-        <button id="startCombat" class="btn small primary" type="button">start encounter</button>
-        <button id="endCombat" class="btn small secondary" type="button">end</button>
-        <button id="deleteCombat" class="btn small danger" type="button">delete</button>
-      </div>
-      <p class="muted" id="combatInfo">no encounter loaded</p>
+
     </div>
+    <!-- kept hidden for combat.js bindings that still reference them -->
+    <div id="selected" hidden></div>
+    <button id="btnEncounter" type="button" hidden aria-label="Manage encounter"></button>
   </div>
 
   <!-- ── Left rail (spec §2). Players see token + ping; GM also fog/align/
@@ -874,9 +1261,9 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M4 6h12v10H4z"/><path d="M8 4h12v10"/></svg>
       <span class="rail-label">Scenes</span>
     </button>
-    <button id="railConsole" class="rail-btn gm-only" type="button" aria-pressed="false">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M4 5h16v14H4z"/><path d="M8 9l3 3-3 3M13 15h4"/></svg>
-      <span class="rail-label">Debug console</span>
+    <button id="railEncounter" class="rail-btn gm-only" type="button" aria-controls="stripZone" title="Start or manage encounter">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 17.5L3 6V3h3l11.5 11.5"/><path d="M13 19l6-6"/><path d="M16 16l4 4"/><path d="M19 21l2-2"/><path d="M9.5 17.5L21 6V3h-3L6.5 14.5"/><path d="M11 19l-6-6"/><path d="M8 16l-4 4"/><path d="M5 21l-2-2"/></svg>
+      <span class="rail-label">Encounter</span>
     </button>
   </nav>
 
@@ -1227,26 +1614,57 @@
   <!-- Scenes modal (GM-only): the relocated scene-management block from
        scene.html. #load-scenes (the button) survives here as the GM's refresh;
        the #campaign-id input path is gone (boot supplies the id). -->
-  <dialog id="scenesDialog" class="dialog-wide" aria-labelledby="scenesHeadTitle">
+  <dialog id="scenesDialog" class="dialog-wide scenes-modal" aria-labelledby="scenesHeadTitle">
     <div class="card-inner">
       <div class="dialog-head">
-        <h2 id="scenesHeadTitle">Scenes</h2>
+        <div>
+          <h2 id="scenesHeadTitle">Scenes</h2>
+          <span class="scenes-sub"><b>Open</b> loads a scene for you only · <b>Activate</b> moves every player into it.</span>
+        </div>
         <button class="card-close" type="button" data-close aria-label="Close">✕</button>
       </div>
-      <div class="rule"></div>
-      <div class="row">
-        <button id="load-scenes" class="btn small secondary" type="button">Refresh scenes</button>
-        <span class="muted"><b>open</b> loads a scene for you only · <b>activate</b> moves every player into it.</span>
+
+      <!-- Create a new scene. -->
+      <div class="scenes-create">
+        <div class="field"><label for="new-scene-name">New scene</label><input id="new-scene-name" maxlength="100" placeholder="e.g. The Tavern" /></div>
+        <button id="create-scene" class="btn primary" type="button">Create</button>
       </div>
-      <div class="row">
-        <div class="field" style="flex:3"><label for="new-scene-name">new scene name</label><input id="new-scene-name" placeholder="scene name" /></div>
-        <button id="create-scene" class="btn small primary" type="button">Create scene</button>
+
+      <!-- Refresh (scene-title is kept but hidden — scene.js writes the current
+           open scene's name into it; it's no longer shown as a status line). -->
+      <div class="scenes-statusbar">
+        <span id="scene-title" hidden></span>
+        <button id="load-scenes" class="btn small ghost" type="button" title="Refresh the list">↻ Refresh</button>
       </div>
-      <div id="scene-list"></div>
-      <p class="muted">Canvas <span id="scene-title"></span></p>
-      <div class="muted" id="shortcuts">
-        <b>shortcuts:</b> arrows = nudge 1 · shift+arrows = nudge 5 · Esc = clear selection · Ctrl/Cmd+A = select all
-        <span class="gm-only"> · <i>GM only:</i> Ctrl/Cmd+C copy · Ctrl/Cmd+X cut · Ctrl/Cmd+V paste · Ctrl/Cmd+D duplicate · Del delete</span>
+
+      <div id="scene-list" class="scene-list"></div>
+    </div>
+  </dialog>
+
+  <!-- Encounter controls that combat.js binds. The setup modal was removed
+       (the Encounter button starts the encounter directly and the initiative
+       strip is the UI); these are kept hidden so combat.js's bindings resolve.
+       #sceneSel/#combatName feed the create path; end/delete are driven from the
+       strip; #combatInfo is a status sink. -->
+  <div id="encounterControls" hidden>
+    <select id="sceneSel"></select>
+    <input id="combatName" />
+    <button id="startCombat" type="button"></button>
+    <button id="endCombat" type="button"></button>
+    <button id="deleteCombat" type="button"></button>
+    <span id="combatInfo"></span>
+  </div>
+
+  <!-- Reusable confirm dialog — same component the dashboard uses for
+       "Delete this game?"; driven by VTTGame.confirm(). -->
+  <dialog id="confirmDialog" class="dialog-narrow" aria-labelledby="cfTitle">
+    <div class="card-inner">
+      <h2 id="cfTitle">Are you sure?</h2>
+      <span class="rule"></span>
+      <p id="cfBody" style="margin:0 0 1.2rem; overflow-wrap:anywhere;"></p>
+      <div class="field-inline" style="justify-content:flex-end;">
+        <button id="cfCancel" class="btn secondary small" type="button">Cancel</button>
+        <button id="cfOk" class="btn primary small" type="button">OK</button>
       </div>
     </div>
   </dialog>
