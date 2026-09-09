@@ -159,9 +159,11 @@
   <fieldset>
     <legend>Place a token</legend>
     <div class="row">
-      <select id="tok-actor" title="place a token for a character">
-        <option value="">— no character —</option>
-      </select>
+      <div class="vtt-dd" id="tokActorDD" data-value="">
+        <input type="hidden" id="tok-actor" value="" />
+        <button type="button" id="tok-actorBtn" class="vtt-dd-btn" aria-haspopup="listbox" aria-expanded="false" title="place a token for a character">— no character —</button>
+        <ul class="vtt-dd-list" role="listbox" aria-label="Character" tabindex="-1" hidden></ul>
+      </div>
       <input id="tok-name" placeholder="token name" />
       <input id="tok-img" placeholder="https://image… (optional)" style="min-width:220px" />
       <label for="tok-count" style="display:inline;margin:0">×</label>

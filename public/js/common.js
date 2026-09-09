@@ -166,8 +166,15 @@
     if (target && typeof target.focus === 'function') target.focus();
   }
 
-  function closeDialog(dialog) {
+  function closeDialog(dialog, opts) {
     if (!dialog) return;
+    // A dialog may register a close guard (e.g. an editor with unsaved changes).
+    // The guard runs unless we're told to force (opts.force). It returns true to
+    // allow the close, or false to veto it (it can show its own confirm and call
+    // closeDialog(dialog, {force:true}) itself once the user agrees).
+    if (!(opts && opts.force) && typeof dialog._vttCloseGuard === 'function') {
+      if (dialog._vttCloseGuard() === false) return;
+    }
     if (typeof dialog.close === 'function' && dialog.open) dialog.close();
     else dialog.removeAttribute('open');
     var invoker = dialog._vttInvoker;
@@ -387,7 +394,23 @@
         hidden.value = value; dd.setAttribute('data-value', value);
         var i = currentIdx(); if (options[i]) btn.textContent = options[i].label;
       },
-      get: function () { return hidden.value; }
+      get: function () { return hidden.value; },
+      // Replace the option set (the dropdown was built for static options, but
+      // some lists — e.g. the token-placement character picker — load and change
+      // at runtime). Preserves the current value if it still exists, else falls
+      // back to the first option, and refreshes the button label. Re-renders the
+      // list only when open, since render() also runs on open().
+      setOptions: function (newOptions) {
+        options = newOptions || [];
+        var keep = hidden.value;
+        var has = options.some(function (o) { return o.value === keep; });
+        if (!has) { hidden.value = options.length ? options[0].value : ''; }
+        dd.setAttribute('data-value', hidden.value);
+        var i = currentIdx();
+        btn.textContent = options[i] ? options[i].label : '';
+        activeIdx = i;
+        if (isOpen()) { render(); setActive(activeIdx); }
+      }
     };
   }
 

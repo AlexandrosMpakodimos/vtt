@@ -67,6 +67,9 @@ let clipboard = [];
 // Last known pointer position over the stage, in grid units. Paste drops tokens
 // here; duplicate ignores it and offsets from the original instead.
 let cursorGrid = { x: 0, y: 0 };
+// M6: the crop chosen for a token's OWN override image, applied at placement.
+// Reset whenever the image field changes (framing describes a specific picture).
+let tokenFrame = { ox: 0, oy: 0, scale: 1, set: false };
 // The same position UNROUNDED, in fractional grid units.
 //
 // cursorGrid is deliberately snapped — a pasted token belongs in a square, and
@@ -425,10 +428,54 @@ function applyGridAlignment() {
   const grid = (scene && scene.grid) || {};
   const cell = Number(grid.size) || 0;
 
-  if (!scene || !scene.img_url || !cell) {
-    // No alignment set: fall back to the pre-M6 behaviour exactly.
+  // Reset any inline element sizing/positioning left by a previous render (the
+  // uncalibrated large-map path and the calibrated path both grow and offset the
+  // #stage-bg element), so it returns to its CSS inset:0 = scene-box baseline
+  // before this render decides how to size it. Without this, switching scenes
+  // would carry over the old element width/height/offset.
+  stageBg.style.width = '';
+  stageBg.style.height = '';
+  stageBg.style.left = '';
+  stageBg.style.top = '';
+  stageBg.style.right = '';
+  stageBg.style.bottom = '';
+
+  if (!scene || !scene.img_url) {
     stageBg.style.backgroundSize = 'cover';
     stageBg.style.backgroundPosition = 'center';
+    return;
+  }
+
+  if (!cell) {
+    // No grid calibration set. The old behaviour was `cover`, which scales the
+    // image to FILL the scene box and crops whatever doesn't fit that box's
+    // aspect ratio — so a map wider or taller than the scene's width:height lost
+    // its edges. Instead, size the background to the image's own natural
+    // dimensions so the WHOLE image shows, uncropped, whatever its aspect ratio.
+    //
+    // This is safe to do without touching the stored scene.width/height (which
+    // would need a migration and would move the fog mask): token coordinates are
+    // grid-cell anchored (rendered at x*GRID_PX), not measured within the scene
+    // box, so they don't shift when the image's drawn extent changes. An image
+    // larger than the scene box simply extends into the grid pad (already 24
+    // squares) rather than being clipped.
+    const probe = new Image();
+    probe.onload = () => {
+      if (!scene || scene.img_url !== probe.src) return;   // scene switched mid-load
+      // Grow the #stage-bg ELEMENT to the image's natural size (overriding its
+      // inset:0 = scene-box sizing), then fill it 1:1. A background can't overflow
+      // its element, so if the element stayed at the scene-box size a larger image
+      // would still be clipped at the box's right/bottom edges — sizing the element
+      // to the image is what actually shows the whole thing.
+      stageBg.style.width = probe.naturalWidth + 'px';
+      stageBg.style.height = probe.naturalHeight + 'px';
+      stageBg.style.right = 'auto';
+      stageBg.style.bottom = 'auto';
+      stageBg.style.backgroundSize = `${probe.naturalWidth}px ${probe.naturalHeight}px`;
+      stageBg.style.backgroundPosition = '0 0';
+      stageBg.style.backgroundRepeat = 'no-repeat';
+    };
+    probe.src = scene.img_url;
     return;
   }
 
@@ -440,9 +487,21 @@ function applyGridAlignment() {
   probe.onload = () => {
     // Guard against a slow load resolving after the GM switched scenes.
     if (!scene || scene.img_url !== probe.src) return;
-    stageBg.style.backgroundSize =
-      `${probe.naturalWidth * scale}px ${probe.naturalHeight * scale}px`;
-    stageBg.style.backgroundPosition = `${-ox * scale}px ${-oy * scale}px`;
+    const w = probe.naturalWidth * scale;
+    const h = probe.naturalHeight * scale;
+    // Grow the #stage-bg ELEMENT to the scaled image size (overriding inset:0 =
+    // scene-box sizing). A background can't overflow its element, so without this
+    // an aligned map taller or wider than the scene box is clipped at the box's
+    // edge — the "cut off below the dragon" on a tall map. The offset shifts the
+    // element rather than the background, keeping the printed grid aligned.
+    stageBg.style.width = w + 'px';
+    stageBg.style.height = h + 'px';
+    stageBg.style.left = (-ox * scale) + 'px';
+    stageBg.style.top = (-oy * scale) + 'px';
+    stageBg.style.right = 'auto';
+    stageBg.style.bottom = 'auto';
+    stageBg.style.backgroundSize = `${w}px ${h}px`;
+    stageBg.style.backgroundPosition = '0 0';
     stageBg.style.backgroundRepeat = 'no-repeat';
   };
   probe.src = scene.img_url;
@@ -459,7 +518,7 @@ function applyGridAlignment() {
 // lattice as the stage origin. A pad of, say, 470px would draw a grid half a
 // square out of step with the one over the image, which is the sort of thing
 // nobody notices until they try to line a token up across the seam.
-const PAD_SQUARES = 12;
+const PAD_SQUARES = 24;
 const PAD_PX = PAD_SQUARES * GRID_PX;
 
 function applyGridOverlay() {
@@ -717,26 +776,35 @@ async function loadActorPicker() {
   renderActorPicker(list);
 }
 
+// The character picker is the themed custom dropdown (VTTCommon.initDropdown),
+// matching the other custom lists on the site rather than a native <select>. The
+// dropdown is init'd once (lazily) and its options are swapped on each actor
+// load via setOptions. actorNameById feeds multi-token numbering, replacing the
+// old read of an <option>'s data-name (the custom list has no <option> nodes).
+let tokActorDD = null;
+const actorNameById = new Map();
+
 function renderActorPicker(list) {
-  const sel = document.getElementById('tok-actor');
-  if (!sel) return;
-  const previous = sel.value;
-  sel.textContent = '';
+  const dd = document.getElementById('tokActorDD');
+  if (!dd) return;
 
-  const none = document.createElement('option');
-  none.value = '';
-  none.textContent = '— no character —';
-  sel.appendChild(none);
-
+  const options = [{ value: '', label: '— no character —' }];
+  actorNameById.clear();
   for (const a of list) {
     if (!isGm() && !(me && a.user_id === me.id)) continue;
-    const o = document.createElement('option');
-    o.value = a.id;
-    o.textContent = a.name + (a.is_npc ? ' (NPC)' : '');
-    o.dataset.name = a.name;   // raw name, for numbering multiples ("Frog 2"...)
-    sel.appendChild(o);
+    options.push({ value: a.id, label: a.name + (a.is_npc ? ' (NPC)' : '') });
+    actorNameById.set(a.id, a.name);   // raw name, for numbering multiples ("Frog 2"…)
   }
-  if ([...sel.options].some((o) => o.value === previous)) sel.value = previous;
+
+  const dropdownApi = window.VTTCommon && window.VTTCommon.initDropdown;
+  if (!tokActorDD && dropdownApi) {
+    // First build: init with these options. Selection defaults to "— no
+    // character —" (value ''), which is the intended default.
+    tokActorDD = window.VTTCommon.initDropdown('tokActorDD', options);
+  } else if (tokActorDD) {
+    // Later loads: swap options, preserving the current pick if it still exists.
+    tokActorDD.setOptions(options);
+  }
 }
 
 
@@ -801,9 +869,8 @@ document.getElementById('place-token').addEventListener('click', async () => {
   // "Frog", "Frog 2", "Frog 3"… rather than five identical "Frog"s. Single
   // placement and inheritance are unaffected — this only feeds the numbering.
   let numberBase = name;
-  if (!numberBase && actorId) {
-    const optEl = document.querySelector('#tok-actor option[value="' + (window.CSS && CSS.escape ? CSS.escape(actorId) : actorId) + '"]');
-    if (optEl && optEl.dataset && optEl.dataset.name) numberBase = optEl.dataset.name;
+  if (!numberBase && actorId && actorNameById.has(actorId)) {
+    numberBase = actorNameById.get(actorId);
   }
 
   // Bound the count client-side; the server independently bounds the batch too.
@@ -826,6 +893,12 @@ document.getElementById('place-token').addEventListener('click', async () => {
     // server treats an absent name on an unlinked token as no name.
     if (name) body.name = name;
     if (img_url) body.img_url = img_url;
+    // Send the chosen crop for the override image (only when the user framed it).
+    if (img_url && tokenFrame.set) {
+      body.img_offset_x = tokenFrame.ox;
+      body.img_offset_y = tokenFrame.oy;
+      body.img_scale = tokenFrame.scale;
+    }
     if (!inheritSize) { body.width = footprint; body.height = footprint; }
 
     const r = await api('POST', `/api/campaigns/${campaignId}/scenes/${scene.id}/tokens`, body);
@@ -845,6 +918,11 @@ document.getElementById('place-token').addEventListener('click', async () => {
     if (actorId) spec.actor_id = actorId;
     if (numberBase) spec.name = instanceName(numberBase, i);
     if (img_url) spec.img_url = img_url;
+    if (img_url && tokenFrame.set) {
+      spec.img_offset_x = tokenFrame.ox;
+      spec.img_offset_y = tokenFrame.oy;
+      spec.img_scale = tokenFrame.scale;
+    }
     if (!inheritSize) { spec.width = footprint; spec.height = footprint; }
     return spec;
   });
@@ -2541,6 +2619,45 @@ if (window.VTTImagePicker) {
     campaignId: () => campaignId,
     // A token's art is token art whether or not it is linked to a character.
     kind: 'token',
+    // Choosing an image frames it in the picker; the crop rides with placement.
+    frame: () => ({ offsetX: tokenFrame.ox, offsetY: tokenFrame.oy, scale: tokenFrame.scale }),
+    frameTitle: 'Frame the token image',
+    frameNote: 'Drag to move · scroll to zoom. This is the crop the token will use.',
+    onChoose: (url, framing) => {
+      if (framing) tokenFrame = { ox: framing.offsetX, oy: framing.offsetY, scale: framing.scale, set: true };
+    },
   });
+}
+
+// The Size control is the site's themed dropdown (.vtt-dd), driven by
+// VTTCommon.initDropdown; the hidden #tok-size carries the value the placement
+// code reads. Options mirror the old <select>.
+if (window.VTTCommon && window.VTTCommon.initDropdown) {
+  const sizeDD = document.getElementById('tokSizeDD');
+  if (sizeDD) {
+    window.VTTCommon.initDropdown(sizeDD, [
+      { value: '', label: 'Auto (from character)' },
+      { value: 'tiny', label: 'Tiny · ½×½' },
+      { value: 'small', label: 'Small · 1×1' },
+      { value: 'medium', label: 'Medium · 1×1' },
+      { value: 'large', label: 'Large · 2×2' },
+      { value: 'huge', label: 'Huge · 3×3' },
+      { value: 'gargantuan', label: 'Gargantuan · 4×4' },
+    ]);
+  }
+}
+
+// M6: framing for a token's OWN image now happens inside the image picker
+// (VTTImagePicker frame option) when the image is chosen. We only need to reset
+// any pending framing when the image field is changed by hand (typed/cleared),
+// because framing describes a specific picture.
+{
+  const imgEl = document.getElementById('tok-img');
+  if (imgEl) {
+    // A manual edit (typing/clearing) drops any pending crop. When the change
+    // came from the picker, its onChoose fires right AFTER this event and
+    // re-applies the crop it collected, so the reset here is harmless.
+    imgEl.addEventListener('input', () => { tokenFrame = { ox: 0, oy: 0, scale: 1, set: false }; });
+  }
 }
 

@@ -106,6 +106,7 @@
     .profile-btn { gap: 0.5rem; height: 44px; padding-top: 0; padding-bottom: 0; }
     .profile-btn .avatar {
       width: 26px; height: 26px; border-radius: 50%; flex: none; object-fit: cover;
+      overflow: hidden;   /* clip a framed (scaled) img to the circle */
       border: 1px solid var(--border); background: var(--surface-raised);
     }
     .profile-btn .avatar.mask {
@@ -692,6 +693,7 @@
     .member-row .who > :last-child, .result .who > :last-child { min-width: 0; flex: 1; }
     .member-row .avatar, .result .avatar {
       width: 44px; height: 44px; border-radius: 50%; flex: none; object-fit: cover;
+      overflow: hidden;   /* clip a framed (scaled) img to the circle */
       border: 1px solid var(--border); background: var(--surface-raised);
     }
     .member-row .name, .result .name { font-size: 0.9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1145,6 +1147,7 @@
   <script src="/socket.io/socket.io.js" defer></script>
   <script src="/js/common.js" defer></script>
   <script src="/js/imagepicker.js" defer></script>
+  <script src="/js/frametool.js" defer></script>
   <script src="/js/dashboard.js" defer></script>
 </body>
 </html>

@@ -114,6 +114,11 @@ let actorsById = new Map();
 let combat = null;
 let combatants = [];
 let members = [];
+// User ids currently connected to the game room (maintained by the presence
+// socket events). Everyone in `members` is shown in the accordion; those in this
+// set get the "connected" indicator.
+let onlineUsers = new Set();
+let presenceExpanded = false;
 let socket = null;
 let dice3d = null;        // window.VTTDice once the ES module has loaded
 let dice3dOn = true;
@@ -200,15 +205,24 @@ function renderStrip() {
     // Position badge (initiative order).
     card.appendChild(el('span', { cls: 'pos', text: String(i + 1) }));
 
-    // Portrait (or a placeholder glyph).
+    // Portrait (or a placeholder glyph). Honors the token's framing (offset/zoom)
+    // the same way the canvas does, clipped to the slot by a wrapper.
     const img = token && token.img_url;
     if (img) {
+      const frame = document.createElement('div');
+      frame.className = 'portrait';
       const im = document.createElement('img');
-      im.className = 'portrait';
+      im.className = 'portrait-img';
       im.src = img;            // attribute, not markup — no parsing context
       im.alt = '';
       im.draggable = false;    // the CARD is the drag source, not the image
-      card.appendChild(im);
+      const ox = Number(token.img_offset_x) || 0;
+      const oy = Number(token.img_offset_y) || 0;
+      const sc = Number(token.img_scale) > 0 ? Number(token.img_scale) : 1;
+      im.style.transform = `translate(${ox * 100}%, ${oy * 100}%) scale(${sc})`;
+      im.style.transformOrigin = 'center';
+      frame.appendChild(im);
+      card.appendChild(frame);
     } else {
       card.appendChild(el('div', { cls: 'noimg', text: token ? '⚔' : '⚠' }));
     }
@@ -246,7 +260,12 @@ function renderStrip() {
       const max = actor && typeof actor.hp_max === 'number' && actor.hp_max > 0 ? actor.hp_max : null;
       hpRow.appendChild(el('span', { cls: 'hp-max', text: max ? `/ ${max}` : '' }));
       card.appendChild(hpRow);
-    } else {
+    } else if (hp.cls !== 'none') {
+      // Players see an HP line ONLY when there is a concrete number to show.
+      // The 'none' states ('hp —' = no per-fight HP, 'hp: sheet' = falls back to
+      // the actor sheet) are placeholders that leak "there is something here you
+      // can't see"; a player gets nothing rather than that text. The GM still
+      // gets both, as real information, via the inline branch above.
       card.appendChild(el('div', { cls: `hp ${hp.cls}`, text: hp.text }));
     }
     if (hp.frac !== null) {
@@ -580,10 +599,12 @@ function renderMessage(m) {
   else if (m.speaker_as) tag = ` (${m.speaker_as})`;
   else if (m.speaker_role === 'player') tag = ' (Player)';
   const who = el('span', { cls: 'who', text: `${m.speaker_name || 'someone'}${tag}: ` });
-  // Same colour in the log as on the dice, so the two agree and the mapping is
-  // learnable without consulting the legend every time.
+  // Same colour identity in the log as on the dice, but rendered in the variant
+  // that reads on the current theme (deeper in light mode, vibrant in dark). The
+  // canonical hex is stashed on the node so a live theme toggle can re-resolve
+  // every name in place without re-fetching the log (see the theme observer).
   const c = colorForUser(m.user_id);
-  if (c) who.style.color = c;
+  if (c) { who.dataset.color = c; who.style.color = colorForTheme(c); }
   row.appendChild(who);
   if (m.content) row.appendChild(el('span', { text: m.content }));
   if (m.roll_data) {
@@ -679,6 +700,7 @@ async function loadMembers() {
   renderWhisperTargets();
   renderLegend();
   renderPalette();
+  renderPresence();
 }
 
 // Read the bridge at CALL TIME rather than through the `dice3d` variable, which
@@ -721,15 +743,78 @@ function renderWhisperTargets() {
 
 // Who is which colour. Without this the dice are pretty but unreadable — a
 // colour only identifies someone if you can look up what it means.
-// A fixed palette rather than a free-form colour input. Sixteen well-separated,
-// legible colours against a member cap of 8 means exhaustion is not a real
-// concern, and a swatch grid can show what is TAKEN — which a colour input
-// cannot, and which is the whole point of enforcing uniqueness.
-const PALETTE = [
-  '#e6194b', '#3cb44b', '#4363d8', '#f58231', '#911eb4', '#42d4f4',
-  '#f032e6', '#bfef45', '#fabed4', '#469990', '#dcbeff', '#9a6324',
-  '#800000', '#808000', '#000075', '#a9a9a9',
+// A fixed palette rather than a free-form colour input. Twelve well-separated,
+// legible colours against a member cap of 8 means exhaustion is not a concern,
+// and a swatch grid can show what is TAKEN — which a colour input cannot.
+//
+// Each colour has TWO tuned variants, because a single hex can't stay legible on
+// both a near-black surface and light parchment: `dark` is the vibrant version
+// for dark mode, `light` is the deeper/richer version for light mode. The `dark`
+// hex is the CANONICAL value — it is what gets stored, claimed, and uniqueness-
+// checked — so existing claims keep working and no migration is needed. The
+// light-mode partner is looked up only at render time (see colorForTheme).
+const PALETTE_PAIRS = [
+  { dark: '#f2555a', light: '#aa0005' },  // red
+  { dark: '#ff8c42', light: '#a74100' },  // orange
+  { dark: '#f5c518', light: '#8c6d00' },  // amber
+  { dark: '#9ccc3c', light: '#577d0c' },  // lime
+  { dark: '#3fb96a', light: '#126f33' },  // green
+  { dark: '#20c4b0', light: '#01796a' },  // teal
+  { dark: '#28c0e0', light: '#007189' },  // cyan
+  { dark: '#4a90e2', light: '#01489b' },  // sky
+  { dark: '#5a6cf0', light: '#0015ac' },  // blue
+  { dark: '#9b6ef0', light: '#3f00b6' },  // violet
+  { dark: '#c15ee8', light: '#7a00aa' },  // purple
+  { dark: '#e055c8', light: '#9c0482' },  // magenta
+  { dark: '#f26fa8', light: '#b80050' },  // pink
+  { dark: '#d98890', light: '#a01825' },  // rose
+  { dark: '#a9744f', light: '#653a1c' },  // brown
+  { dark: '#cbb083', light: '#8d6421' },  // tan
+  { dark: '#9fb0c4', light: '#355983' },  // slate
+  { dark: '#7d8a2e', light: '#5d6a11' },  // olive
 ];
+const PALETTE = PALETTE_PAIRS.map((p) => p.dark);   // canonical values
+const LIGHT_FOR = new Map(PALETTE_PAIRS.map((p) => [p.dark, p.light]));
+
+// Is the page currently in light mode? Read from the same data-theme attribute
+// the token system uses, so this tracks the live theme (including toggles).
+function isLightTheme() {
+  return document.documentElement.getAttribute('data-theme') === 'light';
+}
+
+// Resolve a stored (canonical/dark) hex to the variant that reads on the active
+// theme. In dark mode the stored hex is used as-is. In light mode its deeper
+// partner is used; a legacy hex not in the palette is darkened as a fallback so
+// it still contrasts against parchment rather than washing out.
+function colorForTheme(hex) {
+  if (!hex) return hex;
+  if (!isLightTheme()) return hex;
+  const paired = LIGHT_FOR.get(String(hex).toLowerCase());
+  if (paired) return paired;
+  const api = diceApi();
+  return (api && api.shade) ? api.shade(hex, -0.4) : hex;   // darken legacy hexes for light bg
+}
+
+// When the theme toggles, every colour that was resolved for the old theme is
+// now the wrong variant. Re-resolve them in place: chat names from their stashed
+// canonical hex, and the palette/legend by re-rendering (both are cheap). No
+// message re-fetch — the canonical values are already in the DOM / member list.
+(function watchThemeForColours() {
+  const reresolve = () => {
+    document.querySelectorAll('#chat .who[data-color]').forEach((el2) => {
+      el2.style.color = colorForTheme(el2.dataset.color);
+    });
+    renderPalette();
+    renderLegend();
+    renderPresence();
+  };
+  const obs = new MutationObserver((muts) => {
+    for (const mu of muts) {
+      if (mu.type === 'attributes' && mu.attributeName === 'data-theme') { reresolve(); break; }
+    }
+  });
+  obs.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+})();
 
 function renderPalette() {
   const box = document.getElementById('palette');
@@ -745,17 +830,44 @@ function renderPalette() {
     const owner = takenBy.get(hex);
     const mine = owner === (me && me.id);
     const b = document.createElement('button');
-    b.style.background = hex;
+    b.style.background = colorForTheme(hex);   // show the variant that will render on this theme
     b.className = (owner && !mine ? 'taken' : '') + (mine ? ' mine' : '');
-    b.title = owner ? (mine ? 'yours' : 'taken') : `claim ${hex}`;
+    b.title = owner ? (mine ? 'yours' : 'taken') : 'claim this colour';
     if (owner && !mine) {
       b.disabled = true;
     } else {
-      b.addEventListener('click', () => claimColor(hex));
+      b.addEventListener('click', () => claimColor(hex));   // claim the canonical (dark) value
     }
     box.appendChild(b);
   }
 }
+
+// The chat settings popover: the top gear opens it; a close button, Escape, and
+// an outside click dismiss it. Holds the dice-render controls and the palette.
+(function wireChatSettings() {
+  const panel = document.getElementById('chatSettings');
+  const gear = document.getElementById('chatGear');
+  const closeBtn = document.getElementById('chatSettingsClose');
+  if (!panel || !gear) return;
+  const setOpen = (open) => {
+    panel.hidden = !open;
+    gear.setAttribute('aria-expanded', open ? 'true' : 'false');
+    if (open) {
+      document.addEventListener('mousedown', onOutside, true);
+      document.addEventListener('keydown', onEsc, true);
+    } else {
+      document.removeEventListener('mousedown', onOutside, true);
+      document.removeEventListener('keydown', onEsc, true);
+    }
+  };
+  const isOpen = () => !panel.hidden;
+  function onOutside(e) {
+    if (!panel.contains(e.target) && e.target !== gear && !gear.contains(e.target)) setOpen(false);
+  }
+  function onEsc(e) { if (e.key === 'Escape') { setOpen(false); gear.focus(); } }
+  gear.addEventListener('click', () => setOpen(!isOpen()));
+  if (closeBtn) closeBtn.addEventListener('click', () => { setOpen(false); gear.focus(); });
+})();
 
 async function claimColor(hex) {
   const msg = document.getElementById('paletteMsg');
@@ -772,6 +884,69 @@ async function claimColor(hex) {
   await loadMembers();
 }
 
+// The players accordion above the chat log: every member with their colour, and
+// a "connected" indicator for those currently at the table. Collapsed by default
+// to a one-line summary; expanded, it lists the players and shares vertical space
+// with the chat log proportionally to how many there are (capped so the log is
+// never crowded out). Built with createElement (no innerHTML — CSP).
+function renderPresence() {
+  const wrap = document.getElementById('presence');
+  if (!wrap) return;
+  const head = document.getElementById('presenceHead');
+  const list = document.getElementById('presenceList');
+  const countEl = document.getElementById('presenceCount');
+
+  const online = members.filter((m) => onlineUsers.has(m.id)).length;
+  if (countEl) countEl.textContent = `${online}/${members.length} online`;
+
+  wrap.classList.toggle('expanded', presenceExpanded);
+  if (head) head.setAttribute('aria-expanded', presenceExpanded ? 'true' : 'false');
+  // Visibility is driven by the .expanded class in CSS (.presence.expanded
+  // .presence-list { display:block }); we also keep the hidden property in sync
+  // for assistive tech and for any code that reads it.
+  if (list) { if (presenceExpanded) list.removeAttribute('hidden'); else list.setAttribute('hidden', ''); }
+
+  // Dynamic space-sharing: the expanded list's height scales with the number of
+  // members, capped at 5 rows' worth so it never swallows the chat log. The chat
+  // log flexes to fill whatever remains.
+  const rows = Math.min(members.length, 5);
+  wrap.style.setProperty('--presence-rows', String(rows));
+
+  if (!list) return;
+  list.textContent = '';
+  if (!members.length) {
+    list.appendChild(el('div', { cls: 'presence-empty muted', text: 'No players yet.' }));
+    return;
+  }
+  // Online first, then by name, so who's here is easy to scan.
+  const sorted = [...members].sort((a, b) => {
+    const ao = onlineUsers.has(a.id) ? 0 : 1;
+    const bo = onlineUsers.has(b.id) ? 0 : 1;
+    return ao - bo || (a.name || '').localeCompare(b.name || '');
+  });
+  for (const m of sorted) {
+    const isOn = onlineUsers.has(m.id);
+    const row = el('div', { cls: 'presence-row' + (isOn ? '' : ' offline') });
+    const dot = el('span', { cls: 'presence-color' });
+    dot.style.background = colorForTheme(m.color);
+    row.appendChild(dot);
+    row.appendChild(el('span', { cls: 'presence-name', text: m.name + (m.is_gm ? ' (GM)' : '') }));
+    const status = el('span', { cls: 'presence-status' + (isOn ? ' on' : '') });
+    status.title = isOn ? 'connected' : 'offline';
+    row.appendChild(status);
+    list.appendChild(row);
+  }
+}
+
+(function wirePresenceToggle() {
+  const head = document.getElementById('presenceHead');
+  if (!head) return;
+  head.addEventListener('click', () => {
+    presenceExpanded = !presenceExpanded;
+    renderPresence();
+  });
+})();
+
 function renderLegend() {
   const box = document.getElementById('diceLegend');
   if (!box) return;
@@ -780,7 +955,7 @@ function renderLegend() {
   for (const m of members) {
     const chip = el('span', { cls: 'swatch' });
     const dot = el('i');
-    dot.style.background = m.color;
+    dot.style.background = colorForTheme(m.color);
     chip.appendChild(dot);
     chip.appendChild(el('span', { text: m.name + (m.is_gm ? ' (GM)' : '') }));
     box.appendChild(chip);
@@ -801,26 +976,32 @@ async function loadSpeakable() {
   renderSpeakAs();
 }
 
+let speakAsDD = null;
+
 function renderSpeakAs() {
-  const sel = document.getElementById('speakAs');
-  if (!sel) return;
-  const previous = sel.value;
-  sel.textContent = '';
-  const none = document.createElement('option');
-  none.value = '';
-  none.textContent = 'myself';
-  sel.appendChild(none);
+  const dd = document.getElementById('speakAsDD');
+  if (!dd) return;
+  const options = [{ value: '', label: 'yourself' }];
   for (const a of speakable) {
-    const o = document.createElement('option');
-    o.value = a.id;
-    o.textContent = a.name + (a.is_npc ? ' (NPC)' : '');
-    sel.appendChild(o);
+    options.push({ value: a.id, label: a.name + (a.is_npc ? ' (NPC)' : '') });
+  }
+  const dropdownApi = window.VTTCommon && window.VTTCommon.initDropdown;
+  if (!speakAsDD && dropdownApi) {
+    speakAsDD = window.VTTCommon.initDropdown('speakAsDD', options);
+    // Persist the pick per campaign, mirroring the old select behaviour. The
+    // dropdown fires a change event on the hidden #speakAs input when chosen.
+    const hidden = document.getElementById('speakAs');
+    if (hidden) hidden.addEventListener('change', () => {
+      localSet(`vtt.speakAs.${campaign.id}`, hidden.value);
+    });
+  } else if (speakAsDD) {
+    speakAsDD.setOptions(options);
   }
   // Restore the last choice. THIS is the "active character" M4 declined to make
   // a column: a local default, remembered per campaign, with no server state and
   // no exactly-one invariant to enforce.
-  const remembered = previous || localGet(`vtt.speakAs.${campaign.id}`) || '';
-  if ([...sel.options].some((o) => o.value === remembered)) sel.value = remembered;
+  const remembered = localGet(`vtt.speakAs.${campaign.id}`) || '';
+  if (speakAsDD && options.some((o) => o.value === remembered)) speakAsDD.set(remembered);
 }
 
 function localGet(k) { try { return window.localStorage.getItem(k); } catch { return null; } }
@@ -1018,6 +1199,26 @@ function connectSocket() {
     loadMembers();
   });
 
+  // Presence: who is currently at the table. The server seeds this socket with
+  // the present set on join (campaign:presence), then sends deltas as people
+  // come and go (user-joined / user-left). We keep a Set of online user ids and
+  // re-render the players accordion whenever it changes.
+  socket.on('campaign:presence', (d) => {
+    if (!d || d.campaign_id !== campaign.id) return;
+    onlineUsers = new Set(d.user_ids || []);
+    renderPresence();
+  });
+  socket.on('campaign:user-joined', (d) => {
+    if (!d || d.campaign_id !== campaign.id || !d.user_id) return;
+    onlineUsers.add(d.user_id);
+    renderPresence();
+  });
+  socket.on('campaign:user-left', (d) => {
+    if (!d || d.campaign_id !== campaign.id || !d.user_id) return;
+    onlineUsers.delete(d.user_id);
+    renderPresence();
+  });
+
   socket.on('combat:deleted', (d) => {
     log(`combat:deleted  ${JSON.stringify(d)}`);
     loadCombat();
@@ -1062,7 +1263,8 @@ document.getElementById('endCombat').addEventListener('click', endCombat);
 document.getElementById('deleteCombat').addEventListener('click', deleteCombat);
 document.getElementById('placeToken').addEventListener('click', placeToken);
 document.getElementById('sendChat').addEventListener('click', sendChat);
-document.getElementById('sendRoll').addEventListener('click', sendRoll);
+// #sendRoll was merged into the single bottom-tray Roll button (#trayRoll,
+// wired below): it rolls the pool when one exists, else the formula field.
 document.getElementById('clearLog').addEventListener('click', () => {
   logLines = [];
   logEl.textContent = '';
@@ -1134,23 +1336,64 @@ function poolFormula() {
   return f;
 }
 
+// Reflect the pool on the die icons in the bar: an in-pool die gets a gold ring
+// and a count badge, echoing its tag in the pool row. createElement only (CSP).
+function syncDieButtons() {
+  for (const b of document.querySelectorAll('.die')) {
+    const sides = Number(b.dataset.sides);
+    const count = pool.get(sides) || 0;
+    b.classList.toggle('in-pool', count > 0);
+    let badge = b.querySelector('.die-count');
+    if (count > 0) {
+      if (!badge) { badge = el('span', { cls: 'die-count' }); b.appendChild(badge); }
+      badge.textContent = String(count);
+    } else if (badge) {
+      badge.remove();
+    }
+  }
+}
+
+// A small ✕ glyph as an SVG, matching the tray's line-icon vocabulary.
+function xIcon() {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('fill', 'none');
+  svg.setAttribute('stroke', 'currentColor');
+  svg.setAttribute('stroke-width', '2.4');
+  svg.setAttribute('stroke-linecap', 'round');
+  svg.setAttribute('aria-hidden', 'true');
+  const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  p.setAttribute('d', 'M6 6l12 12M18 6L6 18');
+  svg.appendChild(p);
+  return svg;
+}
+
+// The pool row: one removable tag per die TYPE (e.g. "3d6"), each with its own
+// ✕ that removes that whole type. The row is hidden while the pool is empty.
 function renderPool() {
   const box = document.getElementById('trayPool');
-  box.textContent = '';
-  if (!pool.size) { box.textContent = 'empty'; return; }
-  for (const [sides, count] of [...pool.entries()].sort((a, b) => b[0] - a[0])) {
-    // Each chip removes one die, so a mis-click is one click to undo.
-    const chip = el('span', { cls: 'chip', text: `${count}d${sides} ✕` });
-    chip.title = 'remove one';
-    chip.addEventListener('click', () => {
-      const n = pool.get(sides) - 1;
-      if (n > 0) pool.set(sides, n); else pool.delete(sides);
-      renderPool();
-    });
-    box.appendChild(chip);
+  const row = document.getElementById('dicePoolRow');
+  if (box) {
+    box.textContent = '';
+    // Descending by sides: 1d20 before 2d6, how it is said out loud.
+    for (const [sides, count] of [...pool.entries()].sort((a, b) => b[0] - a[0])) {
+      const tag = el('span', { cls: 'pool-tag' });
+      tag.setAttribute('role', 'listitem');
+      tag.appendChild(el('span', { text: `${count}d${sides}` }));
+      // The remove control is its own labelled button, distinct from the tag —
+      // one click removes the ENTIRE type from the pool, per the redesign.
+      const x = el('button', { cls: 'pool-tag-x' });
+      x.type = 'button';
+      x.setAttribute('aria-label', `Remove ${count}d${sides} from the pool`);
+      x.title = `Remove all d${sides}`;
+      x.appendChild(xIcon());
+      x.addEventListener('click', () => { pool.delete(sides); renderPool(); });
+      tag.appendChild(x);
+      box.appendChild(tag);
+    }
   }
-  const f = poolFormula();
-  if (f) box.appendChild(el('span', { cls: 'muted', text: `  →  ${f}` }));
+  if (row) row.hidden = pool.size === 0;
+  syncDieButtons();
 }
 
 for (const b of document.querySelectorAll('.quick')) {
@@ -1163,13 +1406,16 @@ for (const b of document.querySelectorAll('.quick')) {
 
 document.getElementById('trayClear').addEventListener('click', () => {
   pool.clear();
-  document.getElementById('trayMod').value = '0';
+  document.getElementById('trayMod').value = '';
   renderPool();
 });
 
+// The Roll button rolls the built pool (dice + modifier). poolFormula() already
+// folds in #trayMod. Writes the freeform (now hidden) #diceFormula that
+// sendRoll() reads, so the roll pipeline is unchanged.
 document.getElementById('trayRoll').addEventListener('click', async () => {
   const f = poolFormula();
-  if (!f) return;
+  if (!f) return;                     // nothing in the pool: nothing to roll
   document.getElementById('diceFormula').value = f;
   await sendRoll();
   // The pool survives the roll deliberately — an attack is usually thrown more
@@ -1177,6 +1423,15 @@ document.getElementById('trayRoll').addEventListener('click', async () => {
 });
 
 document.getElementById('trayMod').addEventListener('input', renderPool);
+// The 'mod' hint should get out of the way the moment the field is focused, so
+// the user types into an empty box; it comes back on blur if nothing was entered.
+{
+  const modEl = document.getElementById('trayMod');
+  if (modEl) {
+    modEl.addEventListener('focus', () => { modEl.placeholder = ''; });
+    modEl.addEventListener('blur', () => { if (modEl.value === '') modEl.placeholder = 'mod'; });
+  }
+}
 
 document.getElementById('dice3d').addEventListener('change', (e) => {
   dice3dOn = e.target.checked;
@@ -1184,15 +1439,10 @@ document.getElementById('dice3d').addEventListener('change', (e) => {
   if (!dice3dOn && dice3d) dice3d.clearDice();
 });
 
+// Clear MY dice from the table: local box.clearDice() only, never broadcast, so
+// one player tidying their own view doesn't sweep anyone else's dice.
 document.getElementById('diceClear').addEventListener('click', () => {
   if (dice3d) dice3d.clearDice();
-});
-
-// Dragging settled dice is position-only — see dice3d.js. Off-switch provided
-// because a pointer handler that swallows clicks, however narrowly, should
-// always be disableable.
-document.getElementById('diceGrab').addEventListener('change', (e) => {
-  if (dice3d) dice3d.setInteractive(e.target.checked);
 });
 
 // How long dice sit before clearing themselves. 0 keeps them indefinitely, which
@@ -1202,14 +1452,28 @@ document.getElementById('diceFade').addEventListener('change', (e) => {
   if (dice3d) dice3d.setFadeSeconds(e.target.value);
 });
 
-document.getElementById('diceColor').addEventListener('change', (e) => {
-  if (dice3d) dice3d.setColorset(e.target.value);
-});
+// The dice-colour-set picker was removed from settings — a player's dice colour
+// now follows their claimed table colour. The binding is guarded so its absence
+// doesn't throw; if the element is ever reintroduced it wires up again.
+{
+  const dc = document.getElementById('diceColor');
+  if (dc) dc.addEventListener('change', (e) => {
+    if (dice3d) dice3d.setColorset(e.target.value);
+  });
+}
 
-// The module sets window.VTTDice and fires this event. Listening for it rather
-// than assuming script order means a failed or blocked module load leaves the
-// rest of the page working instead of throwing on first roll.
-document.addEventListener('vtt-dice-ready', async () => {
+// The module sets window.VTTDice and fires 'vtt-dice-ready'. A failed or blocked
+// module load leaves the rest of the page working instead of throwing on first
+// roll.
+//
+// The race this guards against: dice3d.js is a <script type="module"> and
+// combat.js is a classic <script defer>. Both wait for parsing, but a module is
+// NOT guaranteed to execute after the deferred classics — with a warm cache the
+// module often runs (and dispatches the event) BEFORE combat.js attaches this
+// listener, so a one-shot event alone would be missed and the dice would never
+// initialise. So: if VTTDice is already present, set up now; otherwise wait for
+// the event. Exactly one branch fires, whichever order the two scripts run in.
+async function onDiceReady() {
   dice3d = window.VTTDice;
   // If a campaign loaded before the module announced itself, its members were
   // coloured with the fallback. Recompute now rather than leaving the table grey
@@ -1220,11 +1484,13 @@ document.addEventListener('vtt-dice-ready', async () => {
   }
 
   const sel = document.getElementById('diceColor');
-  sel.textContent = '';
-  for (const c of dice3d.colorsets()) {
-    const o = document.createElement('option');
-    o.value = c; o.textContent = c;
-    sel.appendChild(o);
+  if (sel) {
+    sel.textContent = '';
+    for (const c of dice3d.colorsets()) {
+      const o = document.createElement('option');
+      o.value = c; o.textContent = c;
+      sel.appendChild(o);
+    }
   }
 
   try {
@@ -1239,7 +1505,18 @@ document.addEventListener('vtt-dice-ready', async () => {
     document.getElementById('dice3d').checked = false;
     log(`3D dice unavailable (${err && err.message}) — rolls still work, they just print`);
   }
-});
+}
+
+// Run-now-or-wait: covers the module executing either before or after this
+// classic script. If VTTDice is already set, the module won this race and the
+// event has already fired — call setup directly. Otherwise the listener catches
+// the event when the module runs. { once: true } so a stray re-dispatch can't
+// double-initialise.
+if (window.VTTDice) {
+  onDiceReady();
+} else {
+  document.addEventListener('vtt-dice-ready', onDiceReady, { once: true });
+}
 
 // Convenience: /combat.html?campaign=<uuid> preloads, so the GM and player
 // windows can be opened from the same link. Guarded: on the game page the

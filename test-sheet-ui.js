@@ -36,7 +36,14 @@ const { document } = window;
 window.io = () => ({ on() {}, emit() {} });
 window.fetch = async () => ({ status: 200, json: async () => ({}) });
 if (!window.TextEncoder) window.TextEncoder = require('util').TextEncoder;
+// jsdom has no layout; vtt-dd calls scrollIntoView when opening.
+window.HTMLElement.prototype.scrollIntoView = window.HTMLElement.prototype.scrollIntoView || function () {};
 
+// common.js provides VTTCommon.initDropdown, which the item editor's Type /
+// Rarity / Armour lists use. Loading it here means those custom dropdowns are
+// tested for real (not the degraded fallback), so a wrong initDropdown call
+// signature is caught instead of silently showing an empty list.
+window.eval(fs.readFileSync('public/js/common.js', 'utf8'));
 window.eval(fs.readFileSync('public/js/sheet.js', 'utf8'));
 window.eval(fs.readFileSync('public/js/itemsheet.js', 'utf8'));
 const Sheet = window.VTTSheet;
@@ -86,7 +93,12 @@ function mount() {
 function field(container, key) { return container.querySelector('#sheet-' + key); }
 function itemField(container, key) { return container.querySelector('#item-' + key); }
 function saveButton(container) {
-  return [...container.querySelectorAll('button')].find((b) => /save|create/.test(b.textContent));
+  // Prefer the primary footer action; fall back to text match. (Disclosure
+  // titles can contain the substring "save", so an exact/primary match avoids
+  // grabbing e.g. a "Charges & saves" toggle.)
+  const primary = container.querySelector('.ie-footer .btn.primary, button.primary');
+  if (primary) return primary;
+  return [...container.querySelectorAll('button')].find((b) => /^(save changes|create item|save|create)$/i.test(b.textContent.trim()));
 }
 async function clickSave(container) {
   const b = saveButton(container);
@@ -296,12 +308,50 @@ async function clickSave(container) {
   check('and carries the fields that were filled in', itemSent && itemSent.name === 'Rope' && itemSent.type === 'misc', JSON.stringify(itemSent));
   check('identified defaults to false — the non-disclosing default', itemSent.identified === false);
 
+  // The image button opens the shared picker via ctx.onPickImage; the chosen
+  // URL flows back into the draft and is sent on save.
+  {
+    let pickedCurrent = 'sentinel';
+    let pickedFrame = null;
+    let choose = null;
+    const cc = mount();
+    let sentImg = null;
+    ItemSheet.render(cc, {
+      item: { id: 'i-img', campaign_id: 'c-1', name: 'Shield', type: 'armor', img_url: 'old.png', weight: 6, description: '', identified: true, properties: {} },
+      onPickImage: (current, cb, curFrame) => { pickedCurrent = current; choose = cb; pickedFrame = curFrame; },
+      onSave: async (p) => { sentImg = p; return { status: 200 }; },
+    });
+    const imgBtn = cc.querySelector('.ie-thumb-btn');
+    imgBtn.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    check('clicking the image opens the picker with the current url', pickedCurrent === 'old.png', String(pickedCurrent));
+    check('and offers the current framing to the picker', pickedFrame && pickedFrame.scale === 1, JSON.stringify(pickedFrame));
+    check('and no inline URL popover is shown when a picker is wired', cc.querySelector('.ie-imgedit-overlay') === null);
+    // Choose a new image WITH a crop.
+    choose('new.png', { offsetX: 0.3, offsetY: -0.2, scale: 1.6 });
+    await clickSave(cc);
+    check('the chosen image is saved', sentImg && sentImg.img_url === 'new.png', JSON.stringify(sentImg));
+    check('the item framing is stored in properties', sentImg && sentImg.properties
+      && sentImg.properties.img_offset_x === 0.3 && sentImg.properties.img_scale === 1.6,
+      JSON.stringify(sentImg && sentImg.properties));
+  }
+
   itemSent = null;
   c = mount();
   ItemSheet.render(c, { item: baseItem, onSave: async (p, n) => { itemSent = p; wasNew = n; return { status: 200 }; } });
   check('editing loads the column values', itemField(c, 'name').value === 'Flame Tongue');
   check('and the properties sub-keys', itemField(c, 'damage').value === '2d6' && itemField(c, 'charges').value === '3');
-  check('the raw box shows only unclaimed properties', JSON.parse(itemField(c, 'properties').value).homebrew === true);
+  check('the Advanced/JSON editor has been removed', itemField(c, 'properties') === null);
+  // The custom Type/Rarity/Armour lists must actually populate when opened — a
+  // wrong initDropdown call once left them empty (nothing showed).
+  {
+    const dd = c.querySelector('.vtt-dd');
+    const ddBtn = dd && dd.querySelector('.vtt-dd-btn');
+    const ddList = dd && dd.querySelector('.vtt-dd-list');
+    if (ddBtn) ddBtn.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    check('a custom list is used for Type', !!dd && !!ddList);
+    check('and it populates its options when opened', ddList && ddList.children.length > 0,
+      ddList ? String(ddList.children.length) : 'no list');
+  }
 
   await clickSave(c);
   check('an untouched item sends nothing', itemSent === null, JSON.stringify(itemSent));
@@ -318,6 +368,83 @@ async function clickSave(container) {
   check('existing sub-keys survive', itemSent.properties.damage === '2d6' && itemSent.properties.charges === 3);
   check('unclaimed properties survive too', itemSent.properties.homebrew === true, JSON.stringify(itemSent.properties));
   check('charges came back as a NUMBER, not a string', typeof itemSent.properties.charges === 'number');
+
+  // ======================================================================
+  // 5b. redesign behaviours (single-flow editor)
+  // ======================================================================
+  // Changing type preserves the now-irrelevant weapon props (never silent loss).
+  itemSent = null;
+  c = mount();
+  ItemSheet.render(c, { item: baseItem, onSave: async (p) => { itemSent = p; return { status: 200 }; } });
+  itemField(c, 'type').value = 'armor';
+  itemField(c, 'type').dispatchEvent(new window.Event('change'));
+  itemField(c, 'armor_class').value = '15';
+  itemField(c, 'armor_class').dispatchEvent(new window.Event('input'));
+  await clickSave(c);
+  check('changing weapon→armour keeps the old weapon damage', itemSent && itemSent.properties.damage === '2d6', JSON.stringify(itemSent && itemSent.properties));
+  check('and records the new armour value', itemSent && itemSent.properties.armor_class === '15');
+
+  // Zero is a real charge value and must survive.
+  const zeroItem = { id: 'i-z', campaign_id: 'c-1', name: 'Wand', type: 'misc', img_url: null, weight: 0, description: '', identified: true, properties: { charges: 0, charges_max: 7 }, created_at: 1, updated_at: 1 };
+  c = mount();
+  ItemSheet.render(c, { item: zeroItem, onSave: async () => ({ status: 200 }) });
+  check('zero charges load as 0, not blank', itemField(c, 'charges').value === '0', itemField(c, 'charges').value);
+  check('the Charges section auto-opens because a value exists (incl. zero)',
+    c.querySelector('.ie-disc-charges').classList.contains('open'));
+
+  // The 8 KB properties cap is still enforced on save, now surfaced as a
+  // summary error (the Advanced/JSON editor was removed). A very long Effect
+  // pushes it over.
+  itemSent = null;
+  c = mount();
+  ItemSheet.render(c, { item: baseItem, onSave: async (p) => { itemSent = p; return { status: 200 }; } });
+  itemField(c, 'effect').value = 'x'.repeat(9000);
+  itemField(c, 'effect').dispatchEvent(new window.Event('input'));
+  await clickSave(c);
+  check('an over-budget save is not sent', itemSent === null);
+  check('and the size error is surfaced', /\bbytes\b/.test(c.querySelector('.ie-err-summary').textContent));
+
+  // Unknown/custom keys are preserved even though there is no JSON editor.
+  itemSent = null;
+  c = mount();
+  ItemSheet.render(c, { item: baseItem, onSave: async (p) => { itemSent = p; return { status: 200 }; } });
+  itemField(c, 'damage').value = '3d6';
+  itemField(c, 'damage').dispatchEvent(new window.Event('input'));
+  await clickSave(c);
+  check('a pre-existing unknown key survives a save with no JSON editor', itemSent && itemSent.properties.homebrew === true, JSON.stringify(itemSent && itemSent.properties));
+
+  // Save failure keeps the draft and allows retry; repeated clicks don't double-submit.
+  let attempts = 0;
+  c = mount();
+  ItemSheet.render(c, { item: null, onSave: async (p, n) => { attempts++; if (attempts === 1) return { status: 400, data: { error: 'name already exists' } }; return { status: 201, data: { item: { id: 'x' } } }; } });
+  itemField(c, 'name').value = 'Sword';
+  await clickSave(c);
+  check('first (failing) save was attempted', attempts === 1);
+  check('the name is still in the field after a failure', itemField(c, 'name').value === 'Sword');
+  await clickSave(c);
+  check('retry succeeds', attempts === 2);
+
+  // Player projection never discloses an unidentified item's private fields.
+  // It DOES carry image framing (offset/zoom) — pure geometry, nothing secret —
+  // so a deliberately-cropped picture looks the same to everyone.
+  const projU = ItemSheet.playerProjection({ identified: false, name: 'Flame Tongue', type: 'weapon', img_url: 'x.png', description: 'secret', weight: 3, properties: { damage: '2d6', img_offset_x: 0.2, img_scale: 1.5 } });
+  check('unidentified projection drops the name', projU.name === undefined);
+  check('unidentified projection drops description and weight',
+    projU.description === undefined && projU.weight === undefined);
+  check('unidentified projection exposes ONLY framing in properties (no secret keys)',
+    projU.properties && projU.properties.damage === undefined
+    && projU.properties.img_offset_x === 0.2 && projU.properties.img_scale === 1.5,
+    JSON.stringify(projU.properties));
+  check('unidentified projection keeps type + image + identified:false',
+    projU.type === 'weapon' && projU.img_url === 'x.png' && projU.identified === false);
+  const projI = ItemSheet.playerProjection({ identified: true, name: 'Flame Tongue', type: 'weapon', img_url: 'x.png', description: 'burns', weight: 3, properties: { damage: '2d6' } });
+  check('identified projection reveals the name and details', projI.name === 'Flame Tongue' && projI.properties.damage === '2d6');
+
+  // The read view of an unidentified projection leaks nothing into the DOM.
+  const rc = mount();
+  ItemSheet.renderRead(rc, projU);
+  check('read view shows the generic unidentified label', /Unidentified item/.test(rc.textContent));
+  check('read view does not leak the real name anywhere in its DOM', !/Flame Tongue/.test(rc.innerHTML));
 
   // ======================================================================
   // 6. the JSONB byte budgets, which the server enforces at 8192

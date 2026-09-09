@@ -392,115 +392,36 @@ async function deleteAsset(a) {
 // fraction of the unscaled frame. That is what makes an offset of 0.25 mean "a
 // quarter of the square" at any zoom and any token footprint.
 
-let framing = null;   // { actor, ox, oy, scale }
-
+// Character portrait framing (M6). The stage/drag/zoom logic now lives in the
+// reusable VTTFrameTool; here we just open it for a character and PATCH the
+// three columns on save. The values are copied onto every token placed from
+// this character (server-side), so the crop set here is what the canvas draws.
 function openFrame(a) {
-  framing = {
-    actor: a,
-    ox: Number(a.img_offset_x) || 0,
-    oy: Number(a.img_offset_y) || 0,
+  if (!window.VTTFrameTool) return;
+  window.VTTFrameTool.open({
+    imageUrl: a.img_url,
+    offsetX: Number(a.img_offset_x) || 0,
+    offsetY: Number(a.img_offset_y) || 0,
     scale: Number(a.img_scale) > 0 ? Number(a.img_scale) : 1,
-  };
-  document.getElementById('frameArt').style.backgroundImage =
-    `url("${CSS.escape(a.img_url)}")`;
-  document.getElementById('frameMsg').textContent = '';
-  document.getElementById('frameModal').classList.add('on');
-  paintFrame();
-}
-
-function closeFrame() {
-  framing = null;
-  document.getElementById('frameModal').classList.remove('on');
-}
-
-function paintFrame() {
-  if (!framing) return;
-  document.getElementById('frameArt').style.transform =
-    `translate(${framing.ox * 100}%, ${framing.oy * 100}%) scale(${framing.scale})`;
-  document.getElementById('frameScale').value = String(round3(framing.scale));
-  document.getElementById('frameX').value = String(round3(framing.ox));
-  document.getElementById('frameY').value = String(round3(framing.oy));
-}
-
-const round3 = (n) => Math.round(n * 1000) / 1000;
-const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
-
-let framePan = null;
-function initFraming() {
-  const stage = document.getElementById('frameStage');
-  if (!stage) return;
-
-  stage.addEventListener('pointerdown', (e) => {
-    if (!framing) return;
-    framePan = { x: e.clientX, y: e.clientY, ox: framing.ox, oy: framing.oy };
-    stage.classList.add('dragging');
-    stage.setPointerCapture(e.pointerId);
+    title: 'Frame the picture',
+    note: 'Drag to move · scroll to zoom. This is the crop tokens will use.',
+    onSave: async (vals) => {
+      const r = await api('PATCH', `/api/campaigns/${campaign.id}/actors/${a.id}`, {
+        img_offset_x: vals.offsetX, img_offset_y: vals.offsetY, img_scale: vals.scale,
+      });
+      show('PATCH framing', r);
+      if (r.status !== 200) return { error: (r.data && r.data.error) || 'save failed' };
+      // Framing is COPIED onto a token when it is placed, so tokens already on a
+      // board keep the framing they were given.
+      await refresh();
+      return { ok: true };
+    },
   });
-  stage.addEventListener('pointermove', (e) => {
-    if (!framePan || !framing) return;
-    // Screen pixels divided by the stage size give a FRACTION of the frame,
-    // which is the unit the offsets are stored in — so the drag is 1:1 with what
-    // gets saved, at any preview size.
-    const rect = stage.getBoundingClientRect();
-    framing.ox = clamp(framePan.ox + (e.clientX - framePan.x) / rect.width, -2, 2);
-    framing.oy = clamp(framePan.oy + (e.clientY - framePan.y) / rect.height, -2, 2);
-    paintFrame();
-  });
-  const endFramePan = (e) => {
-    if (!framePan) return;
-    framePan = null;
-    stage.classList.remove('dragging');
-    try { stage.releasePointerCapture(e.pointerId); } catch { /* released */ }
-  };
-  stage.addEventListener('pointerup', endFramePan);
-  stage.addEventListener('pointercancel', endFramePan);
-
-  stage.addEventListener('wheel', (e) => {
-    if (!framing) return;
-    e.preventDefault();
-    // Multiplicative, so a step feels the same at 0.5x as at 3x. Bounds match
-    // the server's, so the preview can never show a crop the server refuses.
-    framing.scale = clamp(framing.scale * (e.deltaY < 0 ? 1.06 : 1 / 1.06), 0.1, 5);
-    paintFrame();
-  }, { passive: false });
-
-  for (const [id, key, lo, hi] of [
-    ['frameScale', 'scale', 0.1, 5], ['frameX', 'ox', -2, 2], ['frameY', 'oy', -2, 2],
-  ]) {
-    document.getElementById(id).addEventListener('input', (e) => {
-      if (!framing) return;
-      const v = Number(e.target.value);
-      if (Number.isFinite(v)) { framing[key] = clamp(v, lo, hi); paintFrame(); }
-    });
-  }
-
-  document.getElementById('frameReset').addEventListener('click', () => {
-    if (!framing) return;
-    framing.ox = 0; framing.oy = 0; framing.scale = 1;
-    paintFrame();
-  });
-  document.getElementById('frameCancel').addEventListener('click', closeFrame);
-  document.getElementById('frameSave').addEventListener('click', saveFrame);
 }
 
-async function saveFrame() {
-  if (!framing) return;
-  const msg = document.getElementById('frameMsg');
-  const r = await api('PATCH', `/api/campaigns/${campaign.id}/actors/${framing.actor.id}`, {
-    img_offset_x: round3(framing.ox),
-    img_offset_y: round3(framing.oy),
-    img_scale: round3(framing.scale),
-  });
-  show('PATCH framing', r);
-  if (r.status !== 200) { msg.textContent = (r.data && r.data.error) || 'save failed'; return; }
-  // Stated plainly, because it is the one thing about this feature that
-  // surprises people: framing is COPIED onto a token when it is placed, exactly
-  // as the picture itself is, so tokens already on a board keep the framing they
-  // were given.
-  msg.textContent = 'saved — tokens placed from now on use this framing';
-  closeFrame();
-  await refresh();
-}
+// initFraming kept as a no-op seam: the harness and game.js both call it, and the
+// stage wiring it used to do now lives inside VTTFrameTool.
+function initFraming() { /* framing UI moved to VTTFrameTool */ }
 
 // ---------------------------------------------------------------------------
 // SPELLS (M6)
@@ -710,49 +631,213 @@ async function forgetSpell(entry) {
   if (r.status === 200) await loadSpellbook();
 }
 
+// Filter/search state for the item grid.
+const itemFilter = { q: '', type: '', rarity: '' };
+let itemFiltersWired = false;
+
+const RARITY_ORDER = ['common', 'uncommon', 'rare', 'very rare', 'legendary', 'artifact'];
+
+function itemVisible(i) {
+  const known = i.identified === true;
+  // Search: the GM can always find an item by its real name, even unidentified;
+  // a player can only match what they can see (the category).
+  if (itemFilter.q) {
+    let hay;
+    if (isGm) hay = ((i.name || '') + ' ' + i.type).toLowerCase();
+    else hay = (known ? (i.name || '') : ('unidentified ' + i.type)).toLowerCase();
+    if (!hay.includes(itemFilter.q)) return false;
+  }
+  if (itemFilter.type && i.type !== itemFilter.type) return false;
+  if (itemFilter.rarity) {
+    // The GM filters by the true rarity even when unidentified; a player has no
+    // rarity to filter on for an unidentified item.
+    const r = (isGm || known) && i.properties ? i.properties.rarity : '';
+    if (r !== itemFilter.rarity) return false;
+  }
+  return true;
+}
+
+function wireItemFilters() {
+  if (itemFiltersWired) return;
+  const IS = window.VTTItemSheet || {};
+  const search = document.getElementById('itemSearch');
+  const typeBox = document.getElementById('itemFilterType');
+  const rarityBox = document.getElementById('itemFilterRarity');
+  const toggle = document.getElementById('itemFilterToggle');
+  const panel = document.getElementById('itemFilterPanel');
+  const countBadge = document.getElementById('itemFilterCount');
+  if (!search || !typeBox || !rarityBox) return;   // not the game page
+  itemFiltersWired = true;
+
+  search.addEventListener('input', () => { itemFilter.q = search.value.trim().toLowerCase(); renderItems(); });
+
+  // Reflect how many filters are active on the toggle button; when none are set
+  // the badge hides. Called after any chip change.
+  function refreshFilterBadge() {
+    const n = (itemFilter.type ? 1 : 0) + (itemFilter.rarity ? 1 : 0);
+    if (countBadge) { countBadge.textContent = String(n); countBadge.hidden = n === 0; }
+    if (toggle) toggle.classList.toggle('has-filters', n > 0);
+  }
+
+  // Filter panel toggles open/closed so the chips don't always take space.
+  if (toggle && panel) {
+    toggle.addEventListener('click', () => {
+      const open = panel.hasAttribute('hidden');
+      if (open) panel.removeAttribute('hidden'); else panel.setAttribute('hidden', '');
+      toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+      toggle.classList.toggle('open', open);
+    });
+  }
+
+  // A segmented set of filter chips; clicking a chip toggles it (one active per group).
+  function chipGroup(box, options, key) {
+    box.textContent = '';
+    const mk = (value, label, color) => {
+      const chip = el('button', { cls: 'item-chip', text: label });
+      chip.type = 'button';
+      if (color) chip.style.setProperty('--chip-color', color);
+      if (itemFilter[key] === value) chip.classList.add('active');
+      chip.addEventListener('click', () => {
+        itemFilter[key] = (itemFilter[key] === value) ? '' : value;
+        chipGroup(box, options, key);   // re-render active state
+        refreshFilterBadge();
+        renderItems();
+      });
+      box.appendChild(chip);
+    };
+    mk('', 'All');
+    for (const o of options) mk(o.value, o.label, o.color);
+  }
+  const TYPES = (IS.TYPES || ['weapon', 'armor', 'consumable', 'misc']);
+  const TYPE_LABELS = IS.TYPE_LABELS || {};
+  chipGroup(typeBox, TYPES.map((t) => ({ value: t, label: TYPE_LABELS[t] || t })), 'type');
+  const RARITY_LABELS = IS.RARITY_LABELS || {}, RARITY_COLOR = IS.RARITY_COLOR || {};
+  chipGroup(rarityBox, RARITY_ORDER.map((r) => ({ value: r, label: RARITY_LABELS[r] || r, color: RARITY_COLOR[r] })), 'rarity');
+  refreshFilterBadge();
+}
+
 function renderItems() {
+  wireItemFilters();
+  const IS = window.VTTItemSheet || {};
   const list = document.getElementById('itemList');
   const picker = document.getElementById('invItem');
   list.textContent = '';
-  picker.textContent = '';
+  if (picker) picker.textContent = '';
+
+  // The inventory picker (separate control) always lists everything.
+  if (picker) {
+    for (const i of items) {
+      const known = i.identified === true;
+      const opt = el('option', { text: known ? i.name : `Unidentified ${i.type}` });
+      opt.value = i.id; picker.appendChild(opt);
+    }
+  }
 
   if (!items.length) {
-    list.appendChild(el('p', { cls: 'muted', text: 'no items' }));
+    list.appendChild(el('p', { cls: 'muted item-empty', text: 'No items yet.' }));
     return;
   }
-  for (const i of items) {
+  const shown = items.filter(itemVisible);
+  if (!shown.length) {
+    list.appendChild(el('p', { cls: 'muted item-empty', text: 'No items match your search or filters.' }));
+    return;
+  }
+
+  const RARITY_COLOR = IS.RARITY_COLOR || {}, RARITY_LABELS = IS.RARITY_LABELS || {}, TYPE_LABELS = IS.TYPE_LABELS || {};
+
+  for (const i of shown) {
     const known = i.identified === true;
-    // An unidentified item arrives with no NAME — the label is derived from its
-    // category, which is all a player can honestly be told. This is why the
-    // server withholds `name` rather than only the mechanical fields.
     const label = known ? i.name : `Unidentified ${i.type}`;
+    const rarity = known && i.properties ? i.properties.rarity : '';
 
-    const card = el('div', { cls: 'card' });
-    const head = el('div');
-    head.appendChild(el('b', { text: label }));
-    if (!known) head.appendChild(el('span', { cls: 'tag secret', text: 'unidentified' }));
-    card.appendChild(head);
+    const card = el('div', { cls: 'item-card' + (known ? '' : ' unidentified') });
+    if (rarity && RARITY_COLOR[rarity]) card.style.setProperty('--card-rarity', RARITY_COLOR[rarity]);
 
-    if (known) {
-      const bits = [i.type, i.weight ? `${i.weight} lb` : null, i.description].filter(Boolean);
-      card.appendChild(el('div', { cls: 'stats', text: bits.join(' · ') }));
+    // Art (image-forward). Honors framing; blurred when unidentified.
+    const art = el('div', { cls: 'item-card-art' });
+    if (i.img_url) {
+      const im = document.createElement('img'); im.alt = ''; im.src = i.img_url; im.draggable = false;
+      const props = i.properties || {};
+      const ox = Number(props.img_offset_x) || 0, oy = Number(props.img_offset_y) || 0;
+      let sc = Number(props.img_scale) > 0 ? Number(props.img_scale) : 1;
+      if (!known) sc *= 1.25;   // extra cover for the blur edge
+      im.style.transform = `translate(${ox * 100}%, ${oy * 100}%) scale(${sc})`;
+      im.style.transformOrigin = 'center';
+      im.addEventListener('error', () => { im.remove(); art.appendChild(el('div', { cls: 'item-card-noart', text: '?' })); });
+      art.appendChild(im);
     } else {
-      card.appendChild(el('div', { cls: 'muted', text: `${i.type} — its properties are unknown` }));
+      art.appendChild(el('div', { cls: 'item-card-noart', text: known ? '⚔' : '?' }));
     }
+    card.appendChild(art);
 
-    if (isGm) {
-      const row = el('div', { cls: 'row' });
-      row.appendChild(button('edit', () => editItem(i)));
-      row.appendChild(button(i.identified ? 'un-identify' : 'identify', () => toggleIdentified(i)));
-      row.appendChild(button('delete', () => deleteItem(i)));
-      card.appendChild(row);
+    // Body: name + type · rarity.
+    const body = el('div', { cls: 'item-card-body' });
+    body.appendChild(el('div', { cls: 'item-card-name', text: label }));
+    const meta = el('div', { cls: 'item-card-meta' });
+    meta.appendChild(el('span', { cls: 'item-card-type', text: TYPE_LABELS[i.type] || i.type }));
+    if (rarity) {
+      const dot = el('span', { cls: 'item-card-dot' });
+      if (RARITY_COLOR[rarity]) dot.style.background = RARITY_COLOR[rarity];
+      meta.appendChild(dot);
+      const rl = el('span', { cls: 'item-card-rarity', text: RARITY_LABELS[rarity] || rarity });
+      if (RARITY_COLOR[rarity]) rl.style.color = RARITY_COLOR[rarity];
+      meta.appendChild(rl);
+    }
+    body.appendChild(meta);
+    card.appendChild(body);
+
+    // Players click the card to view; the GM gets an explicit action row.
+    function openView() {
+      if (IS.openPreview) IS.openPreview(previewProjection(i));
+    }
+    if (!isGm) {
+      card.classList.add('clickable');
+      card.tabIndex = 0; card.setAttribute('role', 'button');
+      card.addEventListener('click', openView);
+      card.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openView(); } });
+    } else {
+      const actions = el('div', { cls: 'item-card-actions' });
+      actions.appendChild(iconBtn('Preview', 'preview', () => { if (IS.openPreview) IS.openPreview(previewProjection(i)); }));
+      actions.appendChild(iconBtn('Edit', 'edit', () => editItem(i)));
+      actions.appendChild(iconBtn(known ? 'Hide (un-identify)' : 'Identify', known ? 'hide' : 'reveal', () => toggleIdentified(i)));
+      actions.appendChild(iconBtn('Delete', 'delete', () => deleteItem(i)));
+      card.appendChild(actions);
     }
     list.appendChild(card);
-
-    const opt = el('option', { text: label });
-    opt.value = i.id;
-    picker.appendChild(opt);
   }
+}
+
+// Build the projection the read-view expects. The GM sees items in full, so the
+// preview shows the true player-facing view for that item's identified state.
+function previewProjection(i) {
+  const known = i.identified === true;
+  if (known) {
+    return { identified: true, name: i.name, img_url: i.img_url, type: i.type, weight: i.weight, description: i.description, properties: i.properties || {} };
+  }
+  const props = i.properties || {};
+  return { identified: false, type: i.type, img_url: i.img_url,
+    properties: { img_offset_x: props.img_offset_x, img_offset_y: props.img_offset_y, img_scale: props.img_scale } };
+}
+
+// A compact icon action button for the GM card row.
+function iconBtn(title, kind, onClick) {
+  const b = el('button', { cls: 'item-icon-btn item-icon-' + kind });
+  b.type = 'button'; b.title = title; b.setAttribute('aria-label', title);
+  const ICONS = {
+    preview: '<circle cx="12" cy="12" r="3"/><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/>',
+    edit: '<path d="M4 16.5 14.5 6 18 9.5 7.5 20 4 20z"/><path d="M13 7.5 16.5 11"/>',
+    reveal: '<circle cx="12" cy="12" r="3"/><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/>',
+    hide: '<path d="M2 12s3.5-7 10-7c2 0 3.7.6 5.2 1.5M22 12s-3.5 7-10 7c-2 0-3.7-.6-5.2-1.5"/><path d="M3 3l18 18"/>',
+    delete: '<path d="M4 7h16"/><path d="M9 7V4h6v3"/><path d="M6 7l1 13h10l1-13"/>',
+  };
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('fill', 'none');
+  svg.setAttribute('stroke', 'currentColor'); svg.setAttribute('stroke-width', '1.8');
+  svg.setAttribute('stroke-linecap', 'round'); svg.setAttribute('stroke-linejoin', 'round');
+  svg.innerHTML = ICONS[kind] || '';
+  b.appendChild(svg);
+  b.addEventListener('click', onClick);
+  return b;
 }
 
 function renderInventory(rows) {
@@ -935,10 +1020,58 @@ let selectedItem = null;
 function renderItemEditor() {
   if (!isGm) return;
   const panel = document.getElementById('itemEditor');
+  const dialog = document.getElementById('itemDialog');
   const item = selectedItem ? items.find((i) => i.id === selectedItem) : null;
-  document.getElementById('itemWho').textContent = item ? item.name : 'new item';
+  // The editor owns its own identity header; the dialog title stays generic so
+  // the name is not repeated in two places. (#itemWho kept for callers/tests.)
+  const who = document.getElementById('itemWho');
+  if (who) who.textContent = item ? 'Edit item' : 'New item';
+  let editorDirty = false;
+  // Guard EVERY close route (X button, Escape, backdrop click, and the editor's
+  // own Cancel) through the themed discard confirm when there are unsaved edits.
+  if (dialog) {
+    dialog._vttCloseGuard = function () {
+      if (!editorDirty) return true;                 // nothing to lose
+      if (window.VTTGame && typeof window.VTTGame.confirm === 'function') {
+        window.VTTGame.confirm(
+          'Discard changes?',
+          'This item has unsaved changes. If you leave now they will be lost.',
+          true,
+          function () {
+            editorDirty = false;
+            if (window.VTTCommon && window.VTTCommon.closeDialog) window.VTTCommon.closeDialog(dialog, { force: true });
+            else if (dialog.close) dialog.close();
+          }
+        );
+        return false;                                // veto for now; confirm closes it
+      }
+      return true;
+    };
+  }
+  function closeEditor() {
+    // Cancel routes through the same guard as every other close affordance.
+    if (dialog && window.VTTCommon && window.VTTCommon.closeDialog) window.VTTCommon.closeDialog(dialog);
+    else if (dialog && dialog.close) dialog.close();
+  }
   window.VTTItemSheet.render(panel, {
     item,
+    onDirtyChange: (d) => { editorDirty = d; },
+    requestClose: closeEditor,
+    // Open the site's shared image picker (the same grid modal the dashboard
+    // uses for avatars) so item art is chosen from the campaign's uploaded
+    // images, a fresh upload, or a URL.
+    onPickImage: (current, choose, currentFrame) => {
+      if (!window.VTTImagePicker || !window.VTTImagePicker.open) return;
+      window.VTTImagePicker.open({
+        kind: 'item',
+        campaignId: campaign.id,
+        current: current || null,
+        frame: currentFrame || { offsetX: 0, offsetY: 0, scale: 1 },
+        frameTitle: 'Frame the item image',
+        frameNote: 'Drag to move · scroll to zoom. This is how the item art will be cropped.',
+        onChoose: (url, framing) => choose(url, framing),
+      });
+    },
     onSave: async (patch, isNew) => {
       const r = isNew
         ? await api('POST', `/api/campaigns/${campaign.id}/items`, patch)
@@ -959,11 +1092,24 @@ function renderItemEditor() {
 function newItem() {
   selectedItem = null;
   renderItemEditor();
+  openItemDialog();
 }
 
 function editItem(i) {
   selectedItem = i.id;
   renderItemEditor();
+  openItemDialog();
+}
+
+// On game.html the item editor lives inside <dialog id="itemDialog">, which has
+// to be opened explicitly; on the standalone actors.html the editor is an inline
+// fieldset with no dialog. Guarded so both work: open the dialog if present,
+// otherwise the inline editor is already visible.
+function openItemDialog() {
+  const d = document.getElementById('itemDialog');
+  if (d && window.VTTCommon && typeof window.VTTCommon.openDialog === 'function') {
+    window.VTTCommon.openDialog(d, { invoker: document.getElementById('newItem') });
+  }
 }
 
 async function toggleIdentified(i) {

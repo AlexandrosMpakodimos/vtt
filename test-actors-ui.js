@@ -64,7 +64,11 @@ window.fetch = async (path, opts = {}) => {
         ],
       };
     }
-    if (/\/items$/.test(path)) return { items: [] };
+    if (/\/items$/.test(path)) return { items: [
+      { id: 'IT1', campaign_id: 'C1', name: 'Longsword', type: 'weapon', img_url: null, weight: 3, description: 'A blade.', identified: true, properties: { rarity: 'common', damage: '1d8' } },
+      { id: 'IT2', campaign_id: 'C1', name: 'Cloak of Stars', type: 'misc', img_url: null, weight: 1, description: 'Shimmers.', identified: true, properties: { rarity: 'rare' } },
+      { id: 'IT3', campaign_id: 'C1', name: 'Cursed Helm', type: 'armor', img_url: null, weight: 2, description: 'Ominous.', identified: false, properties: { rarity: 'legendary' } },
+    ] };
     // Two SEPARATE scopes, and the client fetches both: campaign images and
     // personal ones (avatars), which have different quotas and different
     // owners. A stub returning the same list for each would have hidden that.
@@ -142,8 +146,6 @@ if (loadError) { console.log(`\n${pass} passed, ${fail} failed`); process.exit(1
 console.log('\n--- every element the handlers bind to exists ---');
 for (const id of [
   'whoami', 'campaignId', 'loadCampaign', 'campaignInfo', 'actorList',
-  'frameModal', 'frameStage', 'frameArt', 'frameScale', 'frameX', 'frameY',
-  'frameReset', 'frameCancel', 'frameSave', 'frameMsg',
   'assetKind', 'assetFile', 'assetUpload', 'assetUrl', 'assetLink', 'assetMsg', 'assetList',
   'spName', 'spLevel', 'spDesc', 'createSpell', 'spFilter', 'spellList',
   'sbSpell', 'sbSource', 'learnSpell', 'sbList', 'sbWho',
@@ -162,6 +164,26 @@ for (const id of [
     runError && `${runError.name}: ${runError.message}`);
   t('characters rendered', document.querySelectorAll('#actorList .card').length === 3,
     String(document.querySelectorAll('#actorList .card').length));
+
+  console.log('\n--- the item editor opens its dialog (game.html wraps it in one) ---');
+  // On game.html the item editor lives inside <dialog id="itemDialog"> which must
+  // be opened explicitly (nothing did, so "+ New item" silently did nothing).
+  // Simulate that structure: give the page an #itemDialog and a spy openDialog,
+  // then click #newItem and assert the dialog was opened.
+  {
+    let openedWith = null;
+    const dlg = document.createElement('dialog');
+    dlg.id = 'itemDialog';
+    document.body.appendChild(dlg);
+    window.VTTCommon = window.VTTCommon || {};
+    const prevOpen = window.VTTCommon.openDialog;
+    window.VTTCommon.openDialog = (d) => { openedWith = d; };
+    document.getElementById('newItem').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    t('"+ New item" opens the item dialog', openedWith === dlg,
+      openedWith ? 'opened a dialog' : 'no dialog opened');
+    window.VTTCommon.openDialog = prevOpen;
+    dlg.remove();
+  }
 
   console.log('\n--- the image library ---');
   const assetCards = [...document.querySelectorAll("#assetList .asset")];
@@ -229,76 +251,93 @@ for (const id of [
   t('...because framing describes a picture that is not there',
     !btns(cards[1]).includes('frame picture'));
 
-  console.log('\n--- the modal loads the saved framing ---');
+  console.log('\n--- framing opens the reusable tool and PATCHes the character ---');
+  // Framing mechanics live in VTTFrameTool (see test-frametool.js). Here we only
+  // check the wiring: the button opens the tool for the right image/values, and
+  // the save callback PATCHes exactly the three framing fields onto the actor.
+  let frameOpen = null;
+  window.VTTFrameTool = { open: (opts) => { frameOpen = opts; }, close: () => {}, isOpen: () => false };
   const frameBtn = [...cards[0].querySelectorAll('button')].find((b) => b.textContent === 'frame picture');
   frameBtn.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
-  t('the modal opens', document.getElementById('frameModal').classList.contains('on'));
-  t('scale loaded', document.getElementById('frameScale').value === '1.4',
-    document.getElementById('frameScale').value);
-  t('offset x loaded', document.getElementById('frameX').value === '0.25');
-  t('offset y loaded', document.getElementById('frameY').value === '-0.1');
-  t('the art carries the picture',
-    /aria\.png/.test(document.getElementById('frameArt').style.backgroundImage));
-
-  console.log('\n--- the transform matches what scene.js will draw ---');
-  // scene.js writes `translate(ox*100%, oy*100%) scale(s)`. If the preview used
-  // a different order or unit it would agree by coincidence at the identity and
-  // disagree everywhere else.
-  const tf = document.getElementById('frameArt').style.transform;
-  t('translate comes first, in PERCENT', /^translate\(25%, -10%\)/.test(tf), tf);
-  t('...and scale second', /scale\(1\.4\)$/.test(tf), tf);
-
-  console.log('\n--- dragging moves by a FRACTION of the frame ---');
-  const stage = document.getElementById('frameStage');
-  stage.dispatchEvent(new window.PointerEvent('pointerdown', { clientX: 0, clientY: 0, bubbles: true }));
-  stage.dispatchEvent(new window.PointerEvent('pointermove', { clientX: 55, clientY: 0, bubbles: true }));
-  stage.dispatchEvent(new window.PointerEvent('pointerup', { clientX: 55, clientY: 0, bubbles: true }));
-  // 55px across a 220px stage is a quarter of the frame: 0.25 + 0.25 = 0.5
-  t('55px on a 220px stage is 0.25 of the frame',
-    Math.abs(Number(document.getElementById('frameX').value) - 0.5) < 0.001,
-    document.getElementById('frameX').value);
-  t('the other axis is untouched',
-    Math.abs(Number(document.getElementById('frameY').value) + 0.1) < 0.001);
-
-  console.log('\n--- bounds match the server, so the preview cannot show a refused crop ---');
-  const scaleIn = document.getElementById('frameScale');
-  scaleIn.value = '99';
-  scaleIn.dispatchEvent(new window.Event('input'));
-  t('zoom is clamped to 5', Number(scaleIn.value) === 5, scaleIn.value);
-  scaleIn.value = '0';
-  scaleIn.dispatchEvent(new window.Event('input'));
-  t('...and to 0.1', Number(scaleIn.value) === 0.1, scaleIn.value);
-  const xIn = document.getElementById('frameX');
-  xIn.value = '9';
-  xIn.dispatchEvent(new window.Event('input'));
-  t('offset is clamped to 2', Number(xIn.value) === 2, xIn.value);
-
-  console.log('\n--- reset, cancel, save ---');
-  document.getElementById('frameReset').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
-  t('reset returns the identity transform',
-    document.getElementById('frameScale').value === '1'
-      && document.getElementById('frameX').value === '0'
-      && document.getElementById('frameY').value === '0');
+  t('the tool is opened', !!frameOpen);
+  t('with the saved scale', frameOpen && frameOpen.scale === 1.4, frameOpen && String(frameOpen.scale));
+  t('with the saved offsets', frameOpen && frameOpen.offsetX === 0.25 && frameOpen.offsetY === -0.1);
+  t('and the character picture', frameOpen && /aria\.png/.test(String(frameOpen.imageUrl)));
 
   const before = calls.filter((c) => c.method === 'PATCH').length;
-  document.getElementById('frameSave').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
-  await new Promise((r) => setTimeout(r, 10));
+  await frameOpen.onSave({ offsetX: 0.5, offsetY: -0.1, scale: 1 });
   const patch = calls.filter((c) => c.method === 'PATCH').pop();
-  t('a PATCH was issued', calls.filter((c) => c.method === 'PATCH').length === before + 1);
-  t('...to the character, not the token', /\/actors\/A1$/.test(patch.path), patch.path);
+  t('the save callback issues a PATCH', calls.filter((c) => c.method === 'PATCH').length === before + 1);
+  t('...to the character, not a token', /\/actors\/A1$/.test(patch.path), patch.path);
   t('...carrying exactly the three framing fields',
     Object.keys(patch.body).sort().join(',') === 'img_offset_x,img_offset_y,img_scale',
     Object.keys(patch.body).join(','));
   t('...and nothing else, so it cannot touch hp or a stat',
     !('hp_current' in patch.body) && !('name' in patch.body));
-  t('the modal closes after saving',
-    !document.getElementById('frameModal').classList.contains('on'));
 
-  frameBtn.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
-  document.getElementById('frameCancel').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
-  t('cancel closes without a further PATCH',
-    !document.getElementById('frameModal').classList.contains('on')
-      && calls.filter((c) => c.method === 'PATCH').length === before + 1);
+  console.log('\n--- the item library: image-forward grid, search, filters ---');
+  {
+    const grid = document.getElementById('itemList');
+    const cards = () => [...grid.querySelectorAll('.item-card')];
+    t('every item renders as an image-forward card', cards().length === 3, String(cards().length));
+    t('the unidentified item is marked and blurred-eligible',
+      grid.querySelectorAll('.item-card.unidentified').length === 1);
+    t('an identified card shows its name', /Longsword/.test(grid.textContent));
+    t('the unidentified card hides the name, showing its category',
+      /Unidentified armor/i.test(grid.textContent));
+
+    // Filter chips exist for type and rarity (plus an "All").
+    const typeChips = [...document.getElementById('itemFilterType').querySelectorAll('.item-chip')];
+    t('type filter chips are built', typeChips.length >= 5, String(typeChips.length));
+
+    // Filters live behind a toggle; the panel starts hidden.
+    const panel = document.getElementById('itemFilterPanel');
+    const toggle = document.getElementById('itemFilterToggle');
+    t('the filter panel starts hidden', panel.hasAttribute('hidden'));
+    toggle.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    t('clicking Filter reveals the panel', !panel.hasAttribute('hidden'));
+
+    // Search narrows the grid.
+    const search = document.getElementById('itemSearch');
+    search.value = 'longsword';
+    search.dispatchEvent(new window.Event('input', { bubbles: true }));
+    t('search narrows to matching items', cards().length === 1 && /Longsword/.test(grid.textContent), String(cards().length));
+    search.value = '';
+    search.dispatchEvent(new window.Event('input', { bubbles: true }));
+    t('clearing search restores all', cards().length === 3);
+
+    // The GM can find an unidentified item by its true name, even though the card
+    // still shows only the category.
+    search.value = 'cursed helm';
+    search.dispatchEvent(new window.Event('input', { bubbles: true }));
+    t('GM search matches an unidentified item by its hidden name',
+      cards().length === 1 && /Unidentified armor/i.test(grid.textContent), String(cards().length));
+    search.value = '';
+    search.dispatchEvent(new window.Event('input', { bubbles: true }));
+
+    // Type filter: click the "weapon" chip.
+    const weaponChip = typeChips.find((c) => /weapon/i.test(c.textContent));
+    weaponChip.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    t('type filter shows only that type', cards().length === 1 && /Longsword/.test(grid.textContent), String(cards().length));
+    t('the filter count badge reflects one active filter',
+      document.getElementById('itemFilterCount').textContent === '1' && !document.getElementById('itemFilterCount').hidden);
+    // Toggling it off restores.
+    [...document.getElementById('itemFilterType').querySelectorAll('.item-chip')].find((c) => /weapon/i.test(c.textContent))
+      .dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    t('toggling the type filter off restores all', cards().length === 3);
+
+    // Rarity filter: rare shows only the identified rare item.
+    const rareChip = [...document.getElementById('itemFilterRarity').querySelectorAll('.item-chip')].find((c) => /^rare$/i.test(c.textContent));
+    rareChip.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    t('rarity filter shows only that rarity', cards().length === 1 && /Cloak/.test(grid.textContent), String(cards().length));
+    [...document.getElementById('itemFilterRarity').querySelectorAll('.item-chip')].find((c) => /^rare$/i.test(c.textContent))
+      .dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+
+    // GM cards carry the action row incl. a preview button.
+    const firstCard = cards()[0];
+    t('GM cards have an action row with a preview button',
+      !!firstCard.querySelector('.item-icon-preview') && !!firstCard.querySelector('.item-icon-edit'));
+  }
 
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);

@@ -143,6 +143,7 @@
         img.alt = '';
         img.style.width = '100%'; img.style.height = '100%';
         img.style.objectFit = 'cover'; img.style.borderRadius = '50%';
+        applyFrame(img, me.avatar_offset_x, me.avatar_offset_y, me.avatar_scale);
         av.appendChild(img);
       } else {
         av.classList.add('mask');
@@ -835,7 +836,7 @@
       row.className = 'member-row'; row.setAttribute('data-user', m.user_id);
       var who = document.createElement('div'); who.className = 'who';
       var av = document.createElement('span'); av.className = 'avatar';
-      if (m.avatar_url) { var i = document.createElement('img'); i.src = m.avatar_url; i.alt = ''; i.style.width = '100%'; i.style.height = '100%'; i.style.objectFit = 'cover'; i.style.borderRadius = '50%'; av.appendChild(i); }
+      if (m.avatar_url) { var i = document.createElement('img'); i.src = m.avatar_url; i.alt = ''; i.style.width = '100%'; i.style.height = '100%'; i.style.objectFit = 'cover'; i.style.borderRadius = '50%'; applyFrame(i, m.avatar_offset_x, m.avatar_offset_y, m.avatar_scale); av.appendChild(i); }
       var col = document.createElement('div');
       var nm = document.createElement('div'); nm.className = 'name'; nm.textContent = m.username || m.user_id;
       var meta = document.createElement('div'); meta.className = 'meta'; meta.textContent = (m.is_gm ? 'GM' : 'Player') + (m.joined_at ? (' · joined ' + fmtDate(m.joined_at)) : '');
@@ -1501,11 +1502,18 @@
       window.VTTImagePicker.open({
         kind: 'avatar', campaignId: null,
         current: (me && me.avatar_url) || ($('pfAvatarInput') && $('pfAvatarInput').value) || null,
-        onChoose: function (url) {
+        // Framing happens inside the picker: choosing an image opens the frame
+        // step, and we get the crop back alongside the URL.
+        frame: { offsetX: pfFrame.ox, offsetY: pfFrame.oy, scale: pfFrame.scale },
+        frameTitle: 'Frame your avatar',
+        frameNote: 'Drag to move · scroll to zoom. This is how your avatar will be cropped.',
+        onChoose: function (url, framing) {
           var i = $('pfAvatarInput');
+          if (framing) pfFrame = { ox: framing.offsetX, oy: framing.offsetY, scale: framing.scale };
+          else pfFrame = { ox: 0, oy: 0, scale: 1 };
           if (i) { i.value = url; i.dispatchEvent(new Event('input', { bubbles: true })); }
-          // Live-update the portrait so the choice is visible immediately.
           previewAvatar(url);
+          markPfDirty();
         }
       });
     });
@@ -1633,13 +1641,29 @@
   }
 
   // Render a URL (or the d20 fallback) into the portrait immediately.
+  // Avatar framing chosen in the profile editor but not yet saved. Seeded from
+  // `me` on open; the frame tool updates it; savePf sends it.
+  var pfFrame = { ox: 0, oy: 0, scale: 1 };
+
+  // Apply a framing transform to an avatar <img>. Mirrors how the canvas draws
+  // token art: translate (a fraction of the square) THEN scale. object-fit:cover
+  // is the identity case, so 0,0,1 renders exactly as before.
+  function applyFrame(img, ox, oy, scale) {
+    var o = Number(ox) || 0, p = Number(oy) || 0, s = Number(scale) > 0 ? Number(scale) : 1;
+    img.style.transform = 'translate(' + (o * 100) + '%, ' + (p * 100) + '%) scale(' + s + ')';
+    img.style.transformOrigin = 'center';
+  }
+
   function previewAvatar(url) {
     var av = $('pfAvatar');
     if (!av) return;
     while (av.firstChild) av.removeChild(av.firstChild);
     av.classList.remove('mask');
-    if (url) { var img = document.createElement('img'); img.src = url; img.alt = ''; av.appendChild(img); }
-    else av.classList.add('mask');
+    if (url) {
+      var img = document.createElement('img'); img.src = url; img.alt = '';
+      applyFrame(img, pfFrame.ox, pfFrame.oy, pfFrame.scale);
+      av.appendChild(img);
+    } else av.classList.add('mask');
   }
 
   // Mask an email for display: keep the first and last character of the username
@@ -1665,6 +1689,11 @@
 
   function fillProfile() {
     if (!me) return;
+    pfFrame = {
+      ox: Number(me.avatar_offset_x) || 0,
+      oy: Number(me.avatar_offset_y) || 0,
+      scale: Number(me.avatar_scale) > 0 ? Number(me.avatar_scale) : 1,
+    };
     previewAvatar(me.avatar_url || '');
     setText('pfUsername', me.username || '');
     setText('pfEmail', maskEmail(me.email || ''));
@@ -1686,8 +1715,13 @@
       if (e) e.setAttribute('hidden', '');
       if (b) { b.classList.remove('active'); b.textContent = 'Change'; }
     });
-    // Avatar: revert the hidden input + portrait to the saved value.
+    // Avatar: revert the hidden input + portrait + framing to the saved value.
     if ($('pfAvatarInput')) $('pfAvatarInput').value = (me && me.avatar_url) || '';
+    pfFrame = {
+      ox: (me && Number(me.avatar_offset_x)) || 0,
+      oy: (me && Number(me.avatar_offset_y)) || 0,
+      scale: (me && Number(me.avatar_scale) > 0) ? Number(me.avatar_scale) : 1,
+    };
     previewAvatar((me && me.avatar_url) || '');
     ['emNew', 'emPassword', 'pwCurrent', 'pwNew'].forEach(function (id) { var e = $(id); if (e) e.value = ''; });
     setText('pfStatus', ''); setText('pwStatus', ''); setText('emStatus', '');
@@ -1711,8 +1745,13 @@
     // Profile (username/avatar) — only if changed from `me`.
     var newName = $('pfNameInput') ? $('pfNameInput').value : (me && me.username);
     var newAvatar = $('pfAvatarInput') ? $('pfAvatarInput').value : (me && me.avatar_url);
-    if (me && (newName !== (me.username || '') || newAvatar !== (me.avatar_url || ''))) {
-      tasks.push(api('PATCH', '/api/auth/me', { username: newName, avatar_url: newAvatar }).then(function (r) {
+    var frameChanged = me && (pfFrame.ox !== (Number(me.avatar_offset_x) || 0)
+      || pfFrame.oy !== (Number(me.avatar_offset_y) || 0)
+      || pfFrame.scale !== (Number(me.avatar_scale) || 1));
+    if (me && (newName !== (me.username || '') || newAvatar !== (me.avatar_url || '') || frameChanged)) {
+      var patch = { username: newName, avatar_url: newAvatar };
+      if (newAvatar) { patch.avatar_offset_x = pfFrame.ox; patch.avatar_offset_y = pfFrame.oy; patch.avatar_scale = pfFrame.scale; }
+      tasks.push(api('PATCH', '/api/auth/me', patch).then(function (r) {
         if (r.status === 200 && r.data && r.data.user) { me = r.data.user; renderHeader(); fillProfile(); loadList(); }
         else { anyErr = true; setText('pfStatus', serverError(r)); }
       }).catch(function () { anyErr = true; setText('pfStatus', NETWORK_ERROR); }));

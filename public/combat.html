@@ -194,7 +194,11 @@
       <div class="row">
         <div style="flex:2">
           <label for="speakAs">speaking as</label>
-          <select id="speakAs"></select>
+          <div class="vtt-dd" id="speakAsDD" data-value="">
+            <input type="hidden" id="speakAs" value="" />
+            <button type="button" id="speakAsBtn" class="vtt-dd-btn" aria-haspopup="listbox" aria-expanded="false">yourself</button>
+            <ul class="vtt-dd-list" role="listbox" aria-label="Speaking as" tabindex="-1" hidden></ul>
+          </div>
         </div>
         <div style="flex:3"><label for="chatText">message</label><input id="chatText" placeholder="I attack the goblin" /></div>
         <button id="sendChat">say</button>

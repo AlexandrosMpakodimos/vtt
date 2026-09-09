@@ -171,8 +171,12 @@ function idsIn(file) {
 }
 // Harness ids intentionally absent from game.html: the dead campaign-loader ids,
 // plus `shortcuts` (the canvas-shortcuts legend was removed from the Scenes
-// modal — it belongs to the canvas, not scene management).
-const DEAD = ['campaignId', 'loadCampaign', 'campaign-id', 'shortcuts'];
+// modal — it belongs to the canvas, not scene management), plus `sendRoll` (the
+// dice moved to the bottom tray, where the standalone formula-roll button was
+// merged into the single tray Roll button #trayRoll), plus `diceGrab` (the
+// grab-dice toggle was removed — grabbing is always on while 3D dice are on).
+const DEAD = ['campaignId', 'loadCampaign', 'campaign-id', 'shortcuts', 'sendRoll', 'diceGrab', 'diceColor',
+  'frameModal', 'frameStage', 'frameArt', 'frameScale', 'frameX', 'frameY', 'frameReset', 'frameCancel', 'frameSave', 'frameMsg'];
 const SHELL = [
   'topBar', 'barBack', 'campName', 'sceneName', 'connState', 'sidebarToggle',
   'stripZone', 'btnEncounter',
@@ -188,7 +192,9 @@ const SHELL = [
       idsIn('public/scene.html'), idsIn('public/combat.html'),
       idsIn('public/actors.html'), idsIn('public/align.html'),
     )));
-    t('harness id union is 146', union.length === 146, 'got ' + union.length);
+    // 156 — the item filters moved behind a toggle: +#itemFilterToggle,
+    // +#itemFilterPanel, +#itemFilterCount (present in actors.html and game.html).
+    t('harness id union is 156', union.length === 156, 'got ' + union.length);
 
     const expected = new Set(union.filter((id) => DEAD.indexOf(id) === -1));
     SHELL.forEach((id) => expected.add(id));

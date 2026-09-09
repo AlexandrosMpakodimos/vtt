@@ -235,7 +235,23 @@ export function notationFor(rollData) {
     }
 
     parts.push(`${g.count}d${g.sides}`);
-    faces.push(...g.results);
+    if (g.sides === 100) {
+      // The percentile die shows tens. The server rolls d100 as {10,20,…,100}
+      // (see services/dice.js). The library's d100 face index is: 0 → shows 100,
+      // and 1..9 → shows 10..90 (it multiplies by ten internally). So map the
+      // stored tens value to that index — 100 → 0, otherwise value/10.
+      //
+      // Legacy rows rolled before the tens change hold raw 1..100 values, which
+      // aren't all multiples of ten; round to the nearest ten so an old row still
+      // animates on a real face (index 10 wraps to 0 = "100") rather than being
+      // handed a fractional face the physics engine can't use.
+      for (const r of g.results) {
+        const tens = Math.round(r / 10) % 10;   // 100 and 10..90 → 0..9
+        faces.push(tens);
+      }
+    } else {
+      faces.push(...g.results);
+    }
     counted += g.count;
   }
 

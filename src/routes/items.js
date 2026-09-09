@@ -86,11 +86,21 @@ function publicItem(i) {
 // description, no properties.
 function unidentifiedItem(i) {
   if (!i) return null;
+  const props = i.properties || {};
   return {
     id: i.id,
     campaign_id: i.campaign_id,
     type: i.type,
     img_url: i.img_url,
+    // Image FRAMING only (offset/zoom): pure geometry that crops the picture the
+    // player can already see. It reveals nothing about what the item is, so it is
+    // safe to send even while name/description/stats stay hidden — and it keeps a
+    // deliberately-cropped unidentified image looking the same to everyone.
+    properties: {
+      img_offset_x: props.img_offset_x,
+      img_offset_y: props.img_offset_y,
+      img_scale: props.img_scale,
+    },
     identified: false,
   };
 }

@@ -111,6 +111,31 @@
   // ── Tabs (spec §2): the dashboard's APG tablist, now in common.js ──────────
   function initTabs() {
     C.initTabs('sideTabs', onTab);
+    initLibrarySubtabs();
+  }
+  // The Library panel has three sub-tabs (Items / Spells / Images); only one
+  // section shows at a time, replacing the old single long scroll.
+  function initLibrarySubtabs() {
+    var map = [
+      ['libTabItems', 'libItems'],
+      ['libTabSpells', 'libSpells'],
+      ['libTabImages', 'libImages'],
+    ];
+    function select(activeTab) {
+      map.forEach(function (pair) {
+        var tab = document.getElementById(pair[0]);
+        var sec = document.getElementById(pair[1]);
+        if (!tab || !sec) return;
+        var on = pair[0] === activeTab;
+        tab.classList.toggle('is-active', on);
+        tab.setAttribute('aria-selected', on ? 'true' : 'false');
+        if (on) sec.removeAttribute('hidden'); else sec.setAttribute('hidden', '');
+      });
+    }
+    map.forEach(function (pair) {
+      var tab = document.getElementById(pair[0]);
+      if (tab) tab.addEventListener('click', function () { select(pair[0]); });
+    });
   }
   function onTab(tabId) {
     // Characters and Library share the deferred heavy boot (spec §3).

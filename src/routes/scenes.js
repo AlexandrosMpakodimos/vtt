@@ -775,28 +775,49 @@ router.post('/:sceneId/tokens', requireMember, async (req, res, next) => {
     // character's name and creature size; renaming the character afterwards
     // does not sweep the board, because tokens are renamed individually all the
     // time and bulk placement numbers them.
+    // M6 framing on placement. A token may carry its OWN framing for its OWN
+    // picture — the crop chosen in the frame tool before placing. Validate the
+    // three optional values up front; how they are APPLIED depends on whether the
+    // token has an override image, resolved below.
+    const bodyOffX = validateImgFrame(body.img_offset_x, 'img_offset_x');
+    if (bodyOffX.error) return res.status(400).json({ error: bodyOffX.error });
+    const bodyOffY = validateImgFrame(body.img_offset_y, 'img_offset_y');
+    if (bodyOffY.error) return res.status(400).json({ error: bodyOffY.error });
+    const bodyScale = validateImgScale(body.img_scale);
+    if (bodyScale.error) return res.status(400).json({ error: bodyScale.error });
+    const hasBodyFrame = bodyOffX.value !== undefined || bodyOffY.value !== undefined || bodyScale.value !== undefined;
+    // The identity transform, written explicitly (the columns default to NULL =
+    // "inherit", so an override image needs its framing spelled out).
+    const bodyFrame = {
+      img_offset_x: bodyOffX.value === undefined ? 0 : bodyOffX.value,
+      img_offset_y: bodyOffY.value === undefined ? 0 : bodyOffY.value,
+      img_scale: bodyScale.value === undefined ? 1 : bodyScale.value,
+    };
+
     let tokenFrame = null;
     if (actor) {
       if (body.name === undefined) tokenName = actor.name;
       if (body.img_url === undefined) {
         tokenImg = null;
+        // No override picture: inherit the character's framing too (NULL).
+        // Body framing without a body picture is meaningless and is ignored.
         tokenFrame = { img_offset_x: null, img_offset_y: null, img_scale: null };
       } else {
         // A token given its OWN picture must NOT inherit the character's
         // framing: framing describes an image, and this is a different image.
-        //
-        // Explicit rather than left to the column default, because the defaults
-        // were REMOVED when these columns became nullable — omitting them now
-        // stores NULL, which means "inherit". So the identity transform has to
-        // be written down, or an explicit picture silently arrives cropped to
-        // the character's portrait.
-        tokenFrame = { img_offset_x: 0, img_offset_y: 0, img_scale: 1 };
+        // Use the framing the client sent for that override if any, else the
+        // identity transform (written explicitly, since NULL means "inherit").
+        tokenFrame = bodyFrame;
       }
       const preset = SIZE_PRESETS[String(actor.size || '').toLowerCase()];
       if (preset !== undefined) {
         if (body.width === undefined) tokenW = preset;
         if (body.height === undefined) tokenH = preset;
       }
+    } else if (body.img_url !== undefined && hasBodyFrame) {
+      // Unlinked token with its own picture AND explicit framing: honour it.
+      // (Without explicit framing the columns keep their default, unchanged.)
+      tokenFrame = bodyFrame;
     }
 
     const insertRow = {
@@ -1239,6 +1260,20 @@ router.post('/:sceneId/tokens/copy', requireOwner, async (req, res, next) => {
       let specImg = img.value;
       let specW = width.value;
       let specH = height.value;
+      // M6 framing per spec, same rule as single placement: a spec may carry its
+      // own crop for its own picture.
+      const sOffX = validateImgFrame(spec.img_offset_x, 'img_offset_x');
+      if (sOffX.error) return res.status(400).json({ error: sOffX.error });
+      const sOffY = validateImgFrame(spec.img_offset_y, 'img_offset_y');
+      if (sOffY.error) return res.status(400).json({ error: sOffY.error });
+      const sScale = validateImgScale(spec.img_scale);
+      if (sScale.error) return res.status(400).json({ error: sScale.error });
+      const sHasFrame = sOffX.value !== undefined || sOffY.value !== undefined || sScale.value !== undefined;
+      const specBodyFrame = {
+        img_offset_x: sOffX.value === undefined ? 0 : sOffX.value,
+        img_offset_y: sOffY.value === undefined ? 0 : sOffY.value,
+        img_scale: sScale.value === undefined ? 1 : sScale.value,
+      };
       // Same rule as single placement: the picture is inherited by being left
       // NULL, the name and footprint are copied.
       let specFrame = null;
@@ -1249,15 +1284,17 @@ router.post('/:sceneId/tokens/copy', requireOwner, async (req, res, next) => {
           specImg = null;
           specFrame = { img_offset_x: null, img_offset_y: null, img_scale: null };
         } else {
-          // Same rule as single placement: an explicit picture gets the
-          // identity transform, not the character's framing.
-          specFrame = { img_offset_x: 0, img_offset_y: 0, img_scale: 1 };
+          // An explicit picture gets the framing the spec sent for it, else the
+          // identity transform (not the character's framing).
+          specFrame = specBodyFrame;
         }
         const preset = SIZE_PRESETS[String(a.size || '').toLowerCase()];
         if (preset !== undefined) {
           if (spec.width === undefined) specW = preset;
           if (spec.height === undefined) specH = preset;
         }
+      } else if (spec.img_url !== undefined && sHasFrame) {
+        specFrame = specBodyFrame;
       }
 
       // Hand-listed columns only. scene_id / created_by come from the server,

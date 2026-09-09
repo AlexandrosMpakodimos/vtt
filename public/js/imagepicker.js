@@ -246,7 +246,29 @@
   }
 
   function choose(url) {
-    const cb = state && state.onChoose;
+    // When the caller asked for framing (and the frame tool is available), a
+    // chosen image gets a "position & zoom" step before we complete — so every
+    // image context that opts in gets framing uniformly, whether the image came
+    // from the grid, an upload, or a pasted URL. The picker itself stays hidden
+    // beneath the frame tool; cancelling the frame step returns to it.
+    const st = state;
+    if (st && st.frame && url && window.VTTFrameTool && typeof window.VTTFrameTool.open === 'function') {
+      const f = st.frame;
+      window.VTTFrameTool.open({
+        imageUrl: url,
+        offsetX: f.offsetX || 0, offsetY: f.offsetY || 0, scale: f.scale > 0 ? f.scale : 1,
+        title: st.frameTitle || 'Frame the image',
+        note: st.frameNote || 'Drag to move · scroll to zoom. This is the crop that will be used.',
+        onSave: (vals) => {
+          const cb = st.onChoose;
+          hide();
+          if (cb) cb(url, vals);
+          return { ok: true };
+        },
+      });
+      return;
+    }
+    const cb = st && st.onChoose;
     hide();
     if (cb) cb(url);
   }
@@ -405,6 +427,12 @@
       kind: KINDS.includes(opts.kind) ? opts.kind : 'portrait',
       onChoose: typeof opts.onChoose === 'function' ? opts.onChoose : null,
       current: opts.current || null,   // the URL currently in use → gold outline
+      // Optional framing step: pass frame:{offsetX,offsetY,scale} (or true) to
+      // have a chosen image run through the frame tool before onChoose fires.
+      // onChoose then receives (url, {offsetX,offsetY,scale}).
+      frame: opts.frame ? (opts.frame === true ? {} : opts.frame) : null,
+      frameTitle: opts.frameTitle || null,
+      frameNote: opts.frameNote || null,
     };
     // A <dialog> opened with showModal() lives in the browser's top layer, which
     // sits above every normal-flow z-index. A fixed overlay on document.body
@@ -439,13 +467,18 @@
       campaignId: typeof opts.campaignId === 'function' ? opts.campaignId() : opts.campaignId,
       kind: typeof opts.kind === 'function' ? opts.kind() : opts.kind,
       current: input.value || null,      // highlight the image already in the field
-      onChoose: (url) => {
+      // Framing passthrough: a caller that can store a crop passes frame:{…} (or
+      // a getter). onChoose then receives (url, framing).
+      frame: typeof opts.frame === 'function' ? opts.frame() : opts.frame,
+      frameTitle: opts.frameTitle || null,
+      frameNote: opts.frameNote || null,
+      onChoose: (url, framing) => {
         input.value = url;
         // Dispatched so anything listening for edits — a live preview, a dirty
         // flag — reacts exactly as it would to typing.
         input.dispatchEvent(new Event('input', { bubbles: true }));
         input.dispatchEvent(new Event('change', { bubbles: true }));
-        if (opts.onChoose) opts.onChoose(url);
+        if (opts.onChoose) opts.onChoose(url, framing);
       },
     }));
     input.insertAdjacentElement('afterend', btn);

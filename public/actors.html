@@ -181,6 +181,12 @@
       <p class="muted player-only">Only the GM authors items. You see the catalogue; unidentified entries show their category and picture only.</p>
 
       <hr />
+      <input id="itemSearch" type="search" />
+      <button id="itemFilterToggle"><span id="itemFilterCount" hidden>0</span></button>
+      <div id="itemFilterPanel" hidden>
+        <div id="itemFilterType"></div>
+        <div id="itemFilterRarity"></div>
+      </div>
       <div id="itemList"></div>
     </fieldset>
   </div>

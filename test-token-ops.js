@@ -196,6 +196,49 @@ function waitFor(s, ev, ms = 1200) { return new Promise((res) => { const t = set
   const wrongScene = await gm.req('PATCH', `/api/campaigns/${cid}/scenes/${s2.id}/tokens/${p1.id}`, { size: 'large' });
   check('PATCH token via wrong scene -> 404', wrongScene.status === 404, `got ${wrongScene.status}`);
 
+  // ---- M6: framing a token's OWN image at placement ----
+  // A token given its own picture may carry its own crop; it is stored on the
+  // token and does not touch any character.
+  const framed = await gm.req('POST', `${scenePath}/tokens`, {
+    name: 'Statue', x: 5, y: 5, img_url: 'https://ex/statue.png',
+    img_offset_x: 0.25, img_offset_y: -0.1, img_scale: 1.5,
+  });
+  check('placing a token with an override image + framing succeeds (201)', framed.status === 201, `got ${framed.status}`);
+  const framedRow = framed.data && framed.data.token;
+  check('the token stores the sent offset x', framedRow && Number(framedRow.img_offset_x) === 0.25, JSON.stringify(framedRow && framedRow.img_offset_x));
+  check('the token stores the sent offset y', framedRow && Number(framedRow.img_offset_y) === -0.1);
+  check('the token stores the sent scale', framedRow && Number(framedRow.img_scale) === 1.5);
+
+  // Framing sent WITHOUT an override image is ignored: an image-less token
+  // inherits (or, unlinked, keeps the default identity), never a stray crop.
+  const noImgFrame = await gm.req('POST', `${scenePath}/tokens`, {
+    name: 'Plain', x: 6, y: 6, img_offset_x: 0.9, img_scale: 4,
+  });
+  check('a token with no image but stray framing still places (201)', noImgFrame.status === 201, `got ${noImgFrame.status}`);
+  const plainRow = noImgFrame.data && noImgFrame.data.token;
+  // Unlinked + no image → default identity transform, NOT the stray 0.9/4.
+  check('stray framing without an image is not applied', plainRow && Number(plainRow.img_offset_x) !== 0.9 && Number(plainRow.img_scale) !== 4,
+    JSON.stringify(plainRow && { x: plainRow.img_offset_x, s: plainRow.img_scale }));
+
+  // Out-of-range framing is refused, same bounds as the character route.
+  const badScale = await gm.req('POST', `${scenePath}/tokens`, {
+    name: 'Bad', x: 7, y: 7, img_url: 'https://ex/x.png', img_scale: 99,
+  });
+  check('an out-of-range scale is refused (400)', badScale.status === 400, `got ${badScale.status}`);
+  const badOff = await gm.req('POST', `${scenePath}/tokens`, {
+    name: 'Bad2', x: 7, y: 8, img_url: 'https://ex/x.png', img_offset_x: 9,
+  });
+  check('an out-of-range offset is refused (400)', badOff.status === 400, `got ${badOff.status}`);
+
+  // Bulk paste honours per-spec framing on an override image too.
+  const pasteFramed = await gm.req('POST', `${scenePath}/tokens/copy`, {
+    tokens: [{ name: 'PF', x: 9, y: 9, img_url: 'https://ex/pf.png', img_offset_x: 0.3, img_scale: 2 }],
+  });
+  check('paste with framing succeeds (201)', pasteFramed.status === 201, `got ${pasteFramed.status}`);
+  const pfRow = pasteFramed.data && pasteFramed.data.tokens && pasteFramed.data.tokens[0];
+  check('the pasted token carries its framing', pfRow && Number(pfRow.img_offset_x) === 0.3 && Number(pfRow.img_scale) === 2,
+    JSON.stringify(pfRow && { x: pfRow.img_offset_x, s: pfRow.img_scale }));
+
   gmSock.close(); playerSock.close();
   console.log('\n' + results.join('\n'));
   console.log(`\n${pass} passed, ${fail} failed`);

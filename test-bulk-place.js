@@ -29,6 +29,8 @@ window.io = () => ({ on(){}, emit(ev,p,cb){ if(cb) cb({ok:true}); } });
 window.CSS = { escape: s => s };
 window.PointerEvent = class extends window.MouseEvent { constructor(t,o={}){super(t,o);this.pointerId=o.pointerId||1;} };
 window.Element.prototype.setPointerCapture=function(){}; window.Element.prototype.releasePointerCapture=function(){};
+// jsdom implements neither; the custom dropdown calls scrollIntoView on open.
+window.Element.prototype.scrollIntoView=function(){};
 let pass=0, fail=0;
 window.__check=(n,c,d='')=>{ if(c){pass++;console.log('  PASS  '+n);} else {fail++;console.log('  FAIL  '+n+'  '+d);} };
 // The tests run inside the jsdom sandbox, which has no `process`. They signal
@@ -39,7 +41,7 @@ window.__done=()=>{
 };
 window.__calls = calls;
 
-window.eval(fs.readFileSync('public/js/scene.js','utf8') + `
+window.eval(fs.readFileSync('public/js/common.js','utf8') + '\n' + fs.readFileSync('public/js/scene.js','utf8') + `
 ;(function(){
   const calls = window.__calls;
   campaignId='C'; scene={id:'S',width:1000,height:800,img_url:null};  // 20x16 grid
@@ -142,13 +144,34 @@ window.eval(fs.readFileSync('public/js/scene.js','utf8') + `
     // --- M6: placing a token FOR a character -------------------------------
   // The picker is what finally lets the client send actor_id; the server has
   // accepted it since M4 and nothing ever did.
-  const picker = document.getElementById('tok-actor');
-  __check('the placement bar offers a character picker', !!picker);
+  // The picker is what finally lets the client send actor_id; the server has
+  // accepted it since M4 and nothing ever did. It is now the themed custom list
+  // (.vtt-dd) rather than a native <select>, so options are read from the
+  // rendered list items and the value lives in the hidden #tok-actor input.
+  const picker = document.getElementById('tok-actor');           // hidden value input
+  const pickerBtn = document.getElementById('tok-actorBtn');     // trigger
+  __check('the placement bar offers a character picker', !!picker && !!pickerBtn);
   __check('...defaulting to no character', picker && picker.value === '');
+
+  // Open the dropdown and read its rendered option labels, then close it.
+  const clickEl = (elm) => elm.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  const readOptions = () => {
+    clickEl(pickerBtn);                                           // open → renders <li>s
+    const labels = [...document.querySelectorAll('#tokActorDD .vtt-dd-opt')].map(li => li.textContent);
+    clickEl(pickerBtn);                                           // close
+    return labels;
+  };
+  const pickByLabel = (label) => {
+    clickEl(pickerBtn);
+    const li = [...document.querySelectorAll('#tokActorDD .vtt-dd-opt')].find(x => x.textContent === label);
+    if (li) clickEl(li);                                          // choose() sets value + closes
+    return li;
+  };
+
   // The picker's SOURCE was the defect, so probe the source — and the role
   // filter, since these lines run while the test is acting as a PLAYER.
   await window.loadActorPicker();
-  const playerOpts = [...document.getElementById('tok-actor').options].map(o => o.textContent);
+  const playerOpts = readOptions();
   __check('a player is offered their OWN character',
     playerOpts.includes('Aria'), playerOpts.join(' | '));
   __check('...and NOT an NPC belonging to the GM',
@@ -157,12 +180,12 @@ window.eval(fs.readFileSync('public/js/scene.js','utf8') + `
     calls.fetch.some(c => c.path.slice(-7) === '/actors'),
     calls.fetch.map(c => c.path).join(' | '));
   __check('...and still offers "no character" first',
-    document.getElementById('tok-actor').options[0].value === '');
+    playerOpts[0] === '— no character —', playerOpts.join(' | '));
 
   // As the GM the same list yields both.
   asUser('GM');
   await window.loadActorPicker();
-  const gmOpts = [...document.getElementById('tok-actor').options].map(o => o.textContent);
+  const gmOpts = readOptions();
   __check('the GM is offered every character, NPCs included',
     gmOpts.includes('Aria') && gmOpts.includes('Goblin (NPC)'), gmOpts.join(' | '));
 
@@ -171,11 +194,9 @@ window.eval(fs.readFileSync('public/js/scene.js','utf8') + `
   // numbered pile ("Goblin", "Goblin 2"…), read from the character's own name,
   // rather than five identically-named tokens. Regression guard for that fix.
   {
-    const pk = document.getElementById('tok-actor');
-    const goblinOpt = [...pk.options].find(o => o.dataset && o.dataset.name === 'Goblin');
-    __check('character options carry a raw data-name for numbering', !!goblinOpt,
-      goblinOpt && goblinOpt.dataset.name);
-    pk.value = goblinOpt.value;
+    const goblinLi = pickByLabel('Goblin (NPC)');
+    __check('the Goblin character can be selected from the custom list', !!goblinLi);
+    __check('...and selecting it sets the hidden actor value', picker.value === 'PA2', picker.value);
     // place() sets the NAME field; pass '' so the character's name drives numbering.
     const cc = await place('', 5, 'medium', { x: 0, y: 0 });
     __check('character multiples use the /tokens/copy endpoint',
@@ -184,9 +205,9 @@ window.eval(fs.readFileSync('public/js/scene.js','utf8') + `
     __check('a pile from a character is numbered from its own name',
       cnames.join(',') === 'Goblin,Goblin 2,Goblin 3,Goblin 4,Goblin 5', cnames.join(','));
     __check('...and every token stays linked to the character',
-      cc.body.tokens.every(t => t.actor_id === goblinOpt.value),
+      cc.body.tokens.every(t => t.actor_id === 'PA2'),
       JSON.stringify(cc.body.tokens.map(t => t.actor_id)));
-    pk.value = '';   // restore for any later assertions
+    pickByLabel('— no character —');   // restore for any later assertions
   }
 
   __check('the size select offers "from character"',
@@ -194,6 +215,42 @@ window.eval(fs.readFileSync('public/js/scene.js','utf8') + `
     [...document.getElementById('tok-size').options].map(o=>o.value).join(','));
 
   __check('player can still place a single token', c && c.path.endsWith('/tokens'), c && c.path);
+
+  // --- token image framing (M6) ---
+  // Framing now happens in the image picker: its onChoose sets the module's
+  // tokenFrame (with set:true). Placement then includes the crop for an override
+  // image, and a manual image edit resets it.
+  {
+    const imgEl = document.getElementById('tok-img');
+    // Simulate the picker having framed a chosen override image.
+    imgEl.value = 'https://ex/sword.png';
+    imgEl.dispatchEvent(new window.Event('input'));   // manual-edit reset path
+    tokenFrame = { ox: 0.2, oy: -0.1, scale: 1.5, set: true };   // what onChoose sets
+
+    // Place a single token with that image + framing.
+    document.getElementById('tok-name').value = 'Statue';
+    document.getElementById('tok-count').value = '1';
+    document.getElementById('tok-size').value = 'medium';
+    cursorGrid = { x: 2, y: 2 };
+    calls.fetch.length = 0;
+    document.getElementById('place-token').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    await new Promise(r => setTimeout(r, 80));
+    const fp = calls.fetch.filter(x => x.path.includes('/tokens')).pop();
+    __check('placement carries the chosen framing', fp && fp.body.img_offset_x === 0.2 && fp.body.img_offset_y === -0.1 && fp.body.img_scale === 1.5,
+      fp && JSON.stringify({ x: fp.body.img_offset_x, y: fp.body.img_offset_y, s: fp.body.img_scale }));
+
+    // A manual image edit resets the pending framing (framing is per-picture).
+    imgEl.value = 'https://ex/other.png';
+    imgEl.dispatchEvent(new window.Event('input'));
+    document.getElementById('tok-name').value = 'Other';
+    calls.fetch.length = 0;
+    document.getElementById('place-token').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    await new Promise(r => setTimeout(r, 80));
+    const fp2 = calls.fetch.filter(x => x.path.includes('/tokens')).pop();
+    __check('a manual image edit clears stale framing from the body',
+      fp2 && fp2.body.img_offset_x === undefined && fp2.body.img_scale === undefined,
+      fp2 && JSON.stringify(fp2.body));
+  }
 
     window.__done();
   })();

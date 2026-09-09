@@ -35,6 +35,8 @@
       --rail-w: 52px;
       /* d20 glyph reused as a mask so marks follow theme colour. */
       --d20: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 3 L27 9.5 L27 22.5 L16 29 L5 22.5 L5 9.5 Z M16 3 L16 29 M5 9.5 L27 22.5 M27 9.5 L5 22.5' fill='none' stroke='black' stroke-width='1.6'/%3E%3C/svg%3E");
+      /* pencil glyph, used as a mask for the item image edit overlay */
+      --edit-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M4 16.5 L14.5 6 L18 9.5 L7.5 20 L4 20 Z M13 7.5 L16.5 11' fill='none' stroke='black' stroke-width='1.8' stroke-linejoin='round' stroke-linecap='round'/%3E%3C/svg%3E");
     }
 
     * { box-sizing: border-box; }
@@ -165,10 +167,11 @@
     #stage-wrap.panning { cursor: grabbing; }
 
     /* ── Token-picking mode (Stage D) ────────────────────────────────────────
-       While picking, a scrim (inside #stage, in the tokens' stacking context)
-       dims the MAP; the tokens sit above it at full brightness with selectable
+       While picking, #pick-dim (inside #stage, sized inset:0 so it matches the
+       map image's exact size and position — it pans and zooms with the map)
+       darkens the map. Tokens sit above it at full brightness with selectable
        rings. Excluded tokens (already in the fight) are made semi-transparent so
-       the dark scrim shows through — dimming just them, not the selectable ones. */
+       the scrim shows through, dimming just them. */
     #pick-dim {
       position: absolute; inset: 0; z-index: 5; pointer-events: none;
       background: rgba(6, 8, 12, 0.66);
@@ -227,13 +230,12 @@
 
     /* ── Initiative strip ─────────────────────────────────────────────────────
        A content-sized turn control, not a second dashboard. The transparent
-       outer zone centres it in the usable map area while the panel itself only
+       outer zone centres it in the full viewport while the panel itself only
        grows as wide as its controls or combatants require.
-       The left/right insets are CONSTANT — deliberately not tied to the live
-       sidebar state — so opening or closing the chat sidebar never re-centres
-       the panel and shifts it sideways. It stays put. */
+       Equal left/right gutters keep that centre fixed, independent of the rail
+       and sidebar, so opening or closing the chat never shifts it sideways. */
     #stripZone {
-      position: fixed; left: calc(var(--rail-w) + 20px); right: calc(var(--side-w) + 12px);
+      position: fixed; left: 12px; right: 12px;
       top: calc(var(--bar-h) + 10px); bottom: auto;
       z-index: 30; display: flex; justify-content: center; width: auto; max-width: none;
       pointer-events: none;
@@ -345,8 +347,10 @@
     }
     .combatant .portrait, .combatant .noimg {
       grid-column: 1; grid-row: 1 / span 3;
-      width: 2.55rem; height: 2.85rem; object-fit: cover; border-radius: 3px; display: block; background: var(--surface);
+      width: 2.55rem; height: 2.85rem; border-radius: 3px; display: block; background: var(--surface);
     }
+    .combatant .portrait { overflow: hidden; position: relative; }
+    .combatant .portrait-img { width: 100%; height: 100%; object-fit: cover; display: block; }
     .combatant .noimg { display: flex; align-items: center; justify-content: center; font-size: 17px; color: var(--text-muted); }
     .combatant .nm {
       grid-column: 2; grid-row: 1; min-width: 0; margin: 0;
@@ -651,6 +655,15 @@
     dialog::backdrop { background: rgba(6, 7, 10, 0.7); backdrop-filter: blur(2px); }
     .card-inner { padding: 1.4rem; position: relative; max-height: 88vh; overflow-y: auto; width: min(46rem, 94vw); }
     #alignDialog .card-inner { width: auto; }
+    #itemDialog .card-inner { width: min(760px, 94vw); }
+    /* Circular close X for the item editor, matching the .cp-close style used on
+       the dashboard game-card modals. */
+    #itemDialog .card-close {
+      width: 2rem; height: 2rem; display: flex; align-items: center; justify-content: center;
+      border-radius: 50%; border: none; background: rgba(0,0,0,0.45); color: #fff; font-size: 1rem; line-height: 1;
+    }
+    #itemDialog .card-close:hover { background: rgba(0,0,0,0.65); color: #fff; border: none; }
+    #itemDialog .card-close:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
     .dialog-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: 0.4rem; }
     .card-inner h2 { font-size: 1.2rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--accent); overflow-wrap: anywhere; }
     .card-inner h2 + .rule { height: 2px; width: 3rem; background: var(--rule); margin: 0.3rem 0 1rem; }
@@ -887,11 +900,7 @@
     /* The framing modal (from actors.html). actors.js toggles the `.on` class
        (NOT `.open`) — matching the harness — so this must key off `.on` or the
        whole M6 image-framing modal never appears. */
-    #frameModal { position: fixed; inset: 0; z-index: 80; display: none; align-items: center; justify-content: center; background: rgba(6,7,10,0.7); }
-    #frameModal.on { display: flex; }
-    #frameModal .frame-box { background: var(--surface-raised); border: 1px solid var(--rule); border-radius: 4px; padding: 1.2rem; width: min(34rem, 94vw); box-shadow: 0 24px 60px rgba(0,0,0,0.5); }
-    #frameStage { position: relative; overflow: hidden; border: 1px solid var(--border); background: var(--surface); height: 40vh; margin: 0.6rem 0; }
-    #frameArt { position: absolute; inset: 0; background-repeat: no-repeat; background-position: center; transform-origin: center; }
+    #frameModal { display: none; }
 
     /* ── Debug drawer (spec §2) — GM-only, collapsed to nothing by default ──── */
     #drawer {
@@ -953,7 +962,11 @@
     /* ── scene.html: the canvas world ──────────────────────────────────────── */
     #stage { position: relative; transform-origin: 0 0; will-change: transform; }
     #grid-pad { position: absolute; z-index: 0; pointer-events: none; }
-    #stage-bg { position: absolute; inset: 0; background-size: cover; background-position: center; opacity: 0.85; }
+    /* z-index:-1 keeps the map image behind #grid-pad (z-index:0) so the grid
+       lines draw over the map. #stage-bg is a later DOM sibling than #grid-pad,
+       so without this it paints on top and hides the grid. Tokens, fog and the
+       marquee are z-index >= 0, so they stay above both. */
+    #stage-bg { position: absolute; inset: 0; z-index: -1; background-size: cover; background-position: center; opacity: 0.85; }
 
     /* Pings: radar rings expanding outward from the pinged point. */
     .ping { position: absolute; width: 0; height: 0; pointer-events: none; z-index: 40; }
@@ -982,11 +995,30 @@
     .token.mine { border-color: #6f6; }
     .token.dragging { cursor: grabbing; opacity: 0.8; z-index: 10; }
     .token.selected { outline: 2px dashed #fc6; outline-offset: 2px; }
-    /* The token whose turn it is in the running encounter: a glowing accent ring
-       and a pulse so it's obvious on the board. */
-    .token.is-turn { outline: 3px solid var(--accent); outline-offset: 2px; box-shadow: 0 0 16px 3px color-mix(in srgb, var(--accent) 65%, transparent); z-index: 6; animation: token-turn-pulse 1.6s ease-in-out infinite; }
-    @keyframes token-turn-pulse { 0%,100% { box-shadow: 0 0 12px 2px color-mix(in srgb, var(--accent) 55%, transparent); } 50% { box-shadow: 0 0 20px 5px color-mix(in srgb, var(--accent) 80%, transparent); } }
-    @media (prefers-reduced-motion: reduce) { .token.is-turn { animation: none; } }
+    /* Encounter highlight: one continuous low-to-high pulse. The border and
+       its matching bloom interpolate together, while alternate direction
+       avoids a jump at the loop seam. The dashed selection outline is left
+       untouched and visible. */
+    .token.is-turn {
+      z-index: 6;
+      animation: token-turn-shine 0.8s cubic-bezier(0.45, 0, 0.55, 1) infinite alternate;
+    }
+    @keyframes token-turn-shine {
+      from {
+        box-shadow: 0 0 2px 0 rgba(255, 232, 128, 0.16);
+      }
+      to {
+        border-color: rgb(255, 248, 205);
+        box-shadow: 0 0 13px 4px rgba(255, 232, 128, 0.68);
+      }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .token.is-turn {
+        animation: none;
+        border-color: rgb(255, 248, 205);
+        box-shadow: 0 0 10px 3px rgba(255, 232, 128, 0.52);
+      }
+    }
     .token.locked { cursor: not-allowed; }
     /* A small lock badge in the top-right corner of a locked token, so its state
        is visible on the board at a glance. Sits above the art/caption; the glyph
@@ -1076,31 +1108,265 @@
     .tok .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .tok button { margin: 0; padding: 1px 6px; font-size: 11px; }
 
-    .msg { padding: 2px 0; border-bottom: 1px dotted color-mix(in srgb, var(--border) 60%, transparent); }
-    .msg .who { font-weight: bold; }
-    .msg.whisper { background: color-mix(in srgb, var(--accent) 8%, transparent); }
-    .msg.whisper .who { color: #b98; }
-    .msg.roll .res { color: var(--accent); }
+    /* Messages: colour the NAME (per group-chat best practice), keep the body at
+       full text contrast, and the meta/timestamp muted and small. No bubbles —
+       this is a compact log, and coloured names are the lighter, clearer choice. */
+    .msg { padding: 3px 0; border-bottom: 1px dotted color-mix(in srgb, var(--border) 45%, transparent); line-height: 1.4; color: var(--chat-text); }
+    .msg .who { font-weight: 700; }
+    .msg .who[data-color] { /* colour set inline, per theme variant */ }
+    .msg.whisper { background: color-mix(in srgb, var(--accent) 8%, transparent); border-radius: 3px; padding-left: 5px; padding-right: 5px; }
+    .msg.whisper .who { font-style: italic; }
+    .msg.roll .res { color: var(--accent); font-weight: 600; }
     .msg .meta { color: var(--text-muted); font-size: 10px; }
 
-    #diceTray { position: fixed; inset: 0; z-index: 50; pointer-events: none; display: none; }
+    /* ── Chat panel (redesigned) ─────────────────────────────────────────────
+       The panel is a column: the log grows to fill, the composer and footer sit
+       at the bottom, and the settings popover floats above the footer. */
+    /* The chat panel fills the sidebar and is a bounded flex column with NO
+       scroll of its own (overflow:hidden) — the chat log is the only scroller.
+       This is what lets the log shrink to make room for the players accordion
+       instead of the whole panel scrolling and pushing the accordion away.
+       (Overrides .side-panel's flex:1 1 auto / overflow-y:auto for this panel.) */
+    .chat-panel { display: flex; flex-direction: column; gap: 0.6rem; position: relative;
+                  height: 100%; overflow: hidden; }
+    .chat-panel #chat { flex: 1 1 auto; height: auto; min-height: 6rem; }
+
+    /* Top bar: title + settings gear (gear now lives at the TOP of the panel). */
+    .chat-topbar { display: flex; align-items: center; justify-content: space-between; flex: none; }
+    .chat-topbar-title { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--accent); font-weight: 700; }
+
+    /* Players accordion. flex:none so it always keeps its full height — the chat
+       log (which can shrink) yields the space instead. Collapsed = just the
+       header; expanded = a scrollable list sized to member count. */
+    .presence { flex: none; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+    .presence-head {
+      display: flex; align-items: center; gap: 0.45rem; width: 100%;
+      padding: 0.45rem 0.6rem; background: transparent; border: none; cursor: pointer;
+      color: var(--text); font: inherit; text-align: left; border-radius: 8px;
+    }
+    .presence-chevron { width: 15px; height: 15px; flex: none; color: var(--text-muted); transition: transform 0.16s var(--ease); }
+    .presence.expanded .presence-chevron { transform: rotate(90deg); }
+    .presence-title { font-weight: 600; font-size: 0.85rem; }
+    .presence-count { margin-left: auto; font-size: 0.75rem; }
+    .presence-list {
+      /* Hidden when collapsed; shown via the .expanded class. Height scales with
+         member count (via --presence-rows) up to a cap so it never swallows the
+         whole panel. */
+      display: none;
+      max-height: 11rem;
+      max-height: min(11rem, calc(var(--presence-rows, 5) * 2.1rem + 0.5rem));
+      overflow-y: auto; padding: 0.25rem 0.35rem 0.4rem;
+      border-top: 1px solid var(--border);
+    }
+    .presence.expanded .presence-list { display: block; }
+    .presence-row { display: flex; align-items: center; gap: 0.5rem; padding: 0.25rem 0.35rem; border-radius: 5px; }
+    .presence-color { width: 13px; height: 13px; border-radius: 50%; flex: none; border: 1px solid color-mix(in srgb, var(--text) 20%, transparent); }
+    .presence-name { font-size: 0.85rem; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .presence-row.offline .presence-name, .presence-row.offline .presence-color { opacity: 0.45; }
+    /* Connected indicator: a filled green dot when online, a hollow ring when not. */
+    .presence-status { width: 9px; height: 9px; border-radius: 50%; flex: none; border: 1.5px solid var(--text-muted); }
+    .presence-status.on { background: #3fbf6a; border-color: #3fbf6a; box-shadow: 0 0 5px rgba(63,191,106,0.6); }
+    .presence-empty { padding: 0.4rem; font-size: 0.82rem; }
+
+    .chat-composer { display: flex; flex-direction: column; gap: 0.45rem; flex: none; }
+    .chat-composer-top { display: flex; gap: 0.5rem; }
+    .chat-composer-top .field { display: flex; flex-direction: column; gap: 0.15rem; margin: 0; min-width: 0; }
+    .chat-composer-top .speak-field { flex: 1 1 45%; }
+    .chat-composer-top .whisper-field { flex: 1 1 55%; }
+    .chat-composer-top label { font-size: 0.7rem; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .chat-composer-top .opt { color: var(--text-muted); font-weight: 400; }
+    /* whisper select styled to match the site's form controls (site-standard). */
+    .site-select { min-height: 34px; font: inherit; padding: 0.35rem 0.5rem; border-radius: 2px;
+                   border: 1px solid var(--border); background: var(--surface); color: var(--text); width: 100%; }
+    .chat-composer-send { display: flex; gap: 0.5rem; align-items: stretch; }
+    /* The message input uses the site-standard field appearance. */
+    .chat-input { flex: 1 1 auto; min-width: 0; min-height: 40px; font: inherit;
+                  padding: 0.5rem 0.6rem; border-radius: 2px; border: 1px solid var(--border);
+                  background: var(--surface); color: var(--chat-text); }
+    .chat-composer-send .btn { flex: none; min-height: 40px; }
+
+    .chat-gear {
+      width: 34px; height: 34px; display: grid; place-items: center;
+      background: transparent; border: 1px solid var(--border); border-radius: 8px;
+      color: var(--text-muted); cursor: pointer; transition: color 0.12s, border-color 0.12s;
+    }
+    .chat-gear svg { width: 18px; height: 18px; }
+    .chat-gear:hover { color: var(--accent); border-color: var(--accent); }
+    .chat-gear[aria-expanded="true"] { color: var(--accent); border-color: var(--accent); }
+
+    /* Settings popover: anchored under the top gear. Sectioned layout with clear
+       item rows (label left, control right), the 3D-dice switch matching the
+       encounter HP toggle. */
+    .chat-settings {
+      position: absolute; left: 0.9rem; right: 0.9rem; top: 3rem; z-index: 8;
+      background: var(--surface-raised); border: 1px solid var(--border); border-radius: 10px;
+      box-shadow: 0 12px 30px rgba(0,0,0,0.45); padding: 0.85rem 0.9rem;
+      max-height: calc(100% - 4rem); overflow-y: auto;
+      animation: chat-settings-in 0.15s var(--ease) both;
+    }
+    @keyframes chat-settings-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+    .chat-settings-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.7rem; }
+    .chat-settings-head h3 { font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--accent); margin: 0; }
+    .chat-settings-close { width: 26px; height: 26px; display: grid; place-items: center; background: transparent; border: none; border-radius: 6px; color: var(--text-muted); cursor: pointer; }
+    .chat-settings-close:hover { color: var(--text); background: color-mix(in srgb, var(--text) 8%, transparent); }
+    .chat-settings-close svg { width: 15px; height: 15px; }
+
+    .settings-section { margin-bottom: 1rem; }
+    .settings-section:last-child { margin-bottom: 0; }
+    .settings-section-title {
+      font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em;
+      color: var(--text-muted); font-weight: 600; margin-bottom: 0.5rem;
+      padding-bottom: 0.35rem; border-bottom: 1px solid var(--rule);
+    }
+    /* An item row: label on the left, control on the right, comfortably spaced. */
+    .settings-item { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; min-height: 2.2rem; }
+    .settings-item + .settings-item { margin-top: 0.2rem; }
+    .settings-item-label { font-size: 0.85rem; color: var(--text); }
+    .settings-control { flex: none; }
+    .settings-control.site-select { width: 9rem; }
+    .settings-num { width: 4.5rem; text-align: center; font: inherit; padding: 0.4rem 0.5rem;
+                    border-radius: 2px; border: 1px solid var(--border); background: var(--surface); color: var(--text); min-height: 34px; }
+    .settings-hint { font-size: 0.78rem; color: var(--text-muted); margin: 0 0 0.55rem; line-height: 1.35; }
+    .settings-msg { font-size: 0.78rem; min-height: 1rem; }
+    .settings-legend-label { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); margin: 0.7rem 0 0.35rem; }
+    .chat-settings .legend { display: flex; flex-wrap: wrap; gap: 0.3rem 0.6rem; }
+
+    /* z-index:25 places the 3D dice ABOVE the map/token/fog canvas layers (which
+       top out at 20: dragging tokens 10, fog 15, zoom-hud and marquee 20) but
+       BELOW every piece of UI chrome the player controls or reads: the
+       initiative strip (30), tool/rail panels (32–33), the dice tray bar itself
+       (34), the sidebar (35), the top bar (40), and all modals/menus (80+). So
+       the stack reads canvas → dice → UI: dice tumble over the battlefield but
+       never cover a control or a dialog. (Transient pings at 40 stay above the
+       dice — they're pointer-events:none pulses, not controls.) */
+    #diceTray { position: fixed; inset: 0; z-index: 25; pointer-events: none; display: none; }
     #diceTray.on { display: block; }
     #diceTray canvas { width: 100%; height: 100%; display: block; }
     .dice-bar { display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap; }
     .dice-bar > * { margin-top: 0; }
     .quick { padding: 4px 8px; }
     .swatch { display: inline-flex; align-items: center; gap: 4px; margin-right: 10px; font-size: 11px; }
-    .swatch > i { width: 11px; height: 11px; border-radius: 50%; display: inline-block; border: 1px solid #0003; }
-    .palette { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 5px; }
-    .palette button { margin: 0; width: 26px; height: 26px; padding: 0; border-radius: 4px;
-                      border: 2px solid #0002; cursor: pointer; position: relative; }
-    .palette button.taken { cursor: not-allowed; opacity: .35; }
-    .palette button.mine { border-color: #111; box-shadow: 0 0 0 2px #fff inset; }
+    .swatch > i { width: 11px; height: 11px; border-radius: 50%; display: inline-block; border: 1px solid color-mix(in srgb, var(--text) 20%, transparent); }
+    .palette { margin-top: 2px; display: grid; grid-template-columns: repeat(9, 1fr); gap: 6px; }
+    .palette button { margin: 0; width: 100%; aspect-ratio: 1; height: auto; padding: 0; border-radius: 6px;
+                      border: 2px solid color-mix(in srgb, var(--text) 15%, transparent); cursor: pointer; position: relative;
+                      transition: transform 0.1s; }
+    .palette button:hover:not(.taken) { transform: scale(1.08); }
+    .palette button.taken { cursor: not-allowed; opacity: .3; }
+    .palette button.mine { border-color: var(--accent); box-shadow: 0 0 0 2px var(--surface-raised) inset, 0 0 0 3px var(--accent); }
     .pool { border: 1px solid var(--border); border-radius: 3px; padding: 5px; min-height: 24px;
             font-size: 12px; background: var(--surface); }
     .pool .chip { display: inline-block; border: 1px solid var(--accent); color: var(--accent);
                   border-radius: 3px; padding: 0 5px; margin: 1px 3px 1px 0; cursor: pointer; }
     .pool .chip:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+
+    /* ── Bottom dice tray ──────────────────────────────────────────────────
+       Centred in the FULL viewport (like the initiative strip and the campaign
+       title), not inset between rail and sidebar. Two stacked rows: the pool
+       (row 1, hidden while empty) sits above the always-visible dice bar (row 2)
+       and grows upward, so the bar never shifts. */
+    .dice-tray {
+      position: fixed; z-index: 34; bottom: 14px;
+      left: 50%; transform: translateX(-50%);
+      display: flex; flex-direction: column; align-items: center;
+      max-width: calc(100vw - 24px); pointer-events: none;
+    }
+    .dice-tray > * { pointer-events: auto; }
+
+    /* Shared surface for both rows. */
+    .dice-pool-row, .dice-bar-row {
+      background: color-mix(in srgb, var(--surface-raised) 96%, transparent);
+      border: 1px solid var(--border); border-radius: 8px;
+      box-shadow: 0 10px 28px rgba(0,0,0,0.4);
+      -webkit-backdrop-filter: blur(9px); backdrop-filter: blur(9px);
+      max-width: 100%;
+    }
+
+    /* Row 1 — pool tags. */
+    .dice-pool-row {
+      display: flex; align-items: center; gap: 0.5rem;
+      padding: 0.35rem 0.5rem; margin-bottom: 0.4rem;
+      animation: dice-pool-in 0.16s var(--ease) both;
+    }
+    @keyframes dice-pool-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+    .dice-pool-label { font-size: 0.7rem; letter-spacing: 0.03em; color: var(--text-muted); flex: none; }
+    .dice-pool-tags { display: flex; flex-wrap: wrap; gap: 0.3rem; flex: 1 1 auto; }
+    /* A removable die-type tag: label + a clearly separate remove control, per
+       chip a11y guidance (the ✕ is its own button with its own label). */
+    .pool-tag {
+      display: inline-flex; align-items: center; gap: 0.3rem;
+      padding: 0.1rem 0.2rem 0.1rem 0.5rem;
+      border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
+      border-radius: 999px; background: color-mix(in srgb, var(--accent) 10%, transparent);
+      color: var(--accent); font-size: 0.82rem; font-weight: 700; line-height: 1.6;
+    }
+    .pool-tag-x {
+      display: inline-grid; place-items: center; width: 18px; height: 18px;
+      border: none; border-radius: 50%; background: transparent;
+      color: var(--accent); cursor: pointer; font-size: 0; padding: 0;
+      transition: background 0.12s;
+    }
+    .pool-tag-x svg { width: 12px; height: 12px; }
+    .pool-tag-x:hover { background: color-mix(in srgb, var(--accent) 25%, transparent); }
+
+    /* Row 2 — dice · modifier · Roll · clear-my-dice. */
+    .dice-bar-row { display: flex; align-items: center; gap: 0.5rem; padding: 0.4rem 0.5rem; }
+    .dice-dice { display: flex; gap: 0.25rem; }
+    /* A die icon: gold line-polygon with its number set as SVG <text>, so the
+       numeral and shape are one unit — centred together at the shape's optical
+       centre and identical in size across every die. All shapes share the 32×32
+       viewBox and the same ~26px vertical extent, so the icons are uniform in
+       height. currentColor drives both stroke and text, so hover/active recolour
+       them together. */
+    .die {
+      position: relative; width: 42px; height: 42px; padding: 0; margin: 0;
+      display: grid; place-items: center;
+      background: transparent; border: 1px solid transparent; border-radius: 7px;
+      color: var(--text-muted); cursor: pointer;
+      transition: color 0.12s, background 0.12s, border-color 0.12s;
+    }
+    .die svg { width: 34px; height: 34px; display: block; }
+    .die .die-t {
+      fill: currentColor; stroke: none;
+      font-size: 11px; font-weight: 700;
+      text-anchor: middle; dominant-baseline: central;
+    }
+    .die .die-t-sm { font-size: 8.5px; letter-spacing: -0.3px; }
+    .die:hover { color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+    .die:active { transform: translateY(1px); }
+    /* In the pool: gold ring + count badge, echoing the tag in row 1. */
+    .die.in-pool { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
+    .die .die-count {
+      position: absolute; top: -3px; right: -3px; min-width: 15px; height: 15px;
+      padding: 0 3px; border-radius: 8px; background: var(--accent); color: var(--on-accent);
+      font-size: 10px; font-weight: 800; line-height: 15px; text-align: center;
+    }
+
+    .dice-sep { width: 1px; align-self: stretch; margin: 2px 0.15rem; background: var(--rule); opacity: 0.45; }
+    /* The modifier field: 'mod' shows as the placeholder until a number is typed;
+       no separate label. Aligned to the Roll button height. */
+    .dice-mod-input {
+      width: 5rem; flex: none; font: inherit; padding: 0.5rem 0.55rem; border-radius: 2px;
+      border: 1px solid var(--border); background: var(--surface); color: var(--text);
+      min-height: 40px; text-align: center;
+    }
+    .dice-mod-input::placeholder { color: var(--text-muted); }
+    .dice-roll { flex: none; min-height: 40px; }
+    /* Clear-my-dice: an ✕ that sweeps only THIS client's 3D dice (local
+       box.clearDice(), never broadcast — one player tidying their own table
+       doesn't clear anyone else's). */
+    .dice-sweep {
+      flex: none; width: 38px; height: 38px; display: grid; place-items: center;
+      background: transparent; border: 1px solid var(--border); border-radius: 7px;
+      color: var(--text-muted); cursor: pointer; transition: color 0.12s, border-color 0.12s;
+    }
+    .dice-sweep svg { width: 18px; height: 18px; }
+    .dice-sweep:hover { color: var(--danger); border-color: var(--danger); }
+
+    @media (max-width: 640px) {
+      .dice-tray { left: 8px; right: 8px; transform: none; max-width: none; }
+      .die { width: 38px; height: 38px; }
+    }
 
     /* ── actors.html: character cards, sheet, image library, framing ───────── */
     .card { border: 1px solid var(--border); padding: 8px; margin: 6px 0; border-radius: 4px; }
@@ -1120,10 +1386,183 @@
     .sheet-cell.narrow input[type=text] { width: 52px; text-align: center; }
     .sheet-cell.narrow input[type=checkbox] { width: auto; margin: 0 0 0 2px; }
     .sheet-cell.narrow label { white-space: nowrap; font-size: 11px; }
-    .sheet-group .sheet-grid { align-items: flex-end; }
-    .sheet-cell label .tag { margin-left: 4px; opacity: .7; }
-    .field-error { color: var(--danger); font-size: 11px; min-height: 12px; }
-    .sheet-error { color: var(--danger); font-size: 12px; }
+
+    /* ── Item editor (single-flow redesign) ──────────────────────────────────
+       One vertically-flowing sheet: identity header, then core content and
+       independent disclosures (opening one never closes another). Scoped to
+       .item-editor / .item-read so nothing leaks to the rest of the app. */
+    .item-editor { display: flex; flex-direction: column; gap: 20px; font-size: 15px; position: relative; }
+    .item-editor label, .item-editor .ie-lab { font-size: 13px; color: var(--text-muted); font-weight: 600; }
+    .ie-err-summary { margin: 0; padding: 0.6rem 0.75rem; border-radius: 8px;
+      background: color-mix(in srgb, var(--danger) 14%, transparent);
+      border: 1px solid color-mix(in srgb, var(--danger) 50%, transparent); color: var(--text); font-size: 14px; }
+
+    /* Identity: fixed square image (user-tuned size). */
+    .ie-identity { display: flex; gap: 16px; align-items: flex-start; }
+    .ie-thumb-btn { flex: none; width: 170px; height: 170px; min-width: 96px; padding: 0; border: none; background: none;
+      border-radius: 12px; cursor: pointer; position: relative; display: block; }
+    .ie-thumb-btn:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
+    .ie-thumb { display: block; width: 100%; height: 100%; border-radius: 12px; overflow: hidden;
+      border: 1px solid var(--border); background: var(--surface); position: relative; }
+    .ie-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .ie-thumb-empty { position: absolute; inset: 0; display: grid; place-items: center; font-size: 12px; color: var(--text-muted); }
+    /* Edit overlay: darkens the image and shows a pencil on hover/focus. */
+    .ie-thumb-overlay { position: absolute; inset: 0; border-radius: 12px; display: flex; align-items: center; justify-content: center;
+      background: rgba(0,0,0,0.5); opacity: 0; transition: opacity 0.16s var(--ease); }
+    .ie-thumb-overlay::before { content: ""; width: 2rem; height: 2rem; background: #fff;
+      -webkit-mask: var(--edit-icon) center / contain no-repeat; mask: var(--edit-icon) center / contain no-repeat; }
+    .ie-thumb-btn:hover .ie-thumb-overlay, .ie-thumb-btn:focus-visible .ie-thumb-overlay { opacity: 1; }
+    .ie-id-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+    .ie-namewrap { display: flex; flex-direction: column; gap: 5px; }
+    .ie-name { font: inherit; font-size: 23px; font-weight: 700; line-height: 1.2; padding: 8px 10px;
+      border: 1px solid var(--border); border-radius: 8px; background: var(--surface-raised); color: var(--text); width: 100%; }
+    .ie-row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .ie-cell { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+    .ie-cell.wide { grid-column: 1 / -1; }
+    .item-editor select, .item-editor input:not([type=checkbox]), .item-editor textarea {
+      font: inherit; font-size: 15px; padding: 9px 11px; min-height: 42px; border-radius: 8px;
+      border: 1px solid var(--border); background: var(--surface-raised); color: var(--text); width: 100%; }
+    .item-editor textarea { min-height: auto; line-height: 1.45; resize: vertical; }
+    .item-editor input:focus, .item-editor select:focus, .item-editor textarea:focus,
+    .ie-name:focus { outline: 2px solid var(--focus); outline-offset: 1px; border-color: var(--accent); }
+    .item-editor input[aria-invalid="true"], .item-editor textarea[aria-invalid="true"] { border-color: var(--danger); }
+    .ie-field-err { color: var(--danger); font-size: 13px; min-height: 0; }
+    .ie-field-err:not(:empty) { min-height: 18px; margin-top: 2px; }
+    .ie-help { font-size: 13px; color: var(--text-muted); line-height: 1.4; }
+    .ie-inline-btn { align-self: flex-start; margin-top: 4px; }
+
+    /* Identified block */
+    .ie-known { border: 1px solid var(--border); border-radius: 10px; background: var(--surface); padding: 12px 14px; }
+    .ie-check-row { display: flex; align-items: flex-start; gap: 12px; cursor: pointer; }
+    .ie-check-row.inline { align-items: center; }
+    .ie-check-title { font-size: 15px; font-weight: 600; color: var(--text); }
+
+    /* Custom tick-box: applies to EVERY checkbox in the item editor (Identified,
+       Magical, Requires attunement, Stealth disadvantage). A bordered square that
+       fills with the accent and shows a check when ticked — in the site's style. */
+    .item-editor input[type=checkbox] {
+      appearance: none; -webkit-appearance: none; -moz-appearance: none;
+      flex: none; width: 20px; height: 20px; margin: 0; padding: 0;
+      border: 1px solid var(--border); border-radius: 5px; background: var(--surface-raised);
+      cursor: pointer; position: relative; transition: background 0.12s, border-color 0.12s;
+    }
+    .ie-check-row input[type=checkbox] { margin-top: 2px; }
+    .item-editor input[type=checkbox]:hover { border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); }
+    .item-editor input[type=checkbox]:checked { background: var(--accent); border-color: var(--accent); }
+    .item-editor input[type=checkbox]:checked::after {
+      content: ""; position: absolute; left: 6px; top: 2px; width: 5px; height: 10px;
+      border: solid var(--on-accent); border-width: 0 2px 2px 0; transform: rotate(45deg);
+    }
+    .item-editor input[type=checkbox]:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+    /* Blocks & grids */
+    .ie-block { }
+    .ie-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+    .ie-grid .ie-cell.wide { grid-column: 1 / -1; }
+
+    /* Type sections (inline, no navigation) */
+    .ie-typesec { border: 1px solid var(--border); border-radius: 10px; background: var(--surface); padding: 14px 16px; }
+    .ie-sec-title { margin: 0 0 12px; font-size: 15px; }
+
+    /* Disclosures — each independent */
+    .ie-disc { border: 1px solid var(--border); border-radius: 10px; background: var(--surface); overflow: hidden; }
+    .ie-disc-head { display: flex; align-items: center; gap: 10px; width: 100%; padding: 13px 14px;
+      background: transparent; border: none; cursor: pointer; color: var(--text); font: inherit; font-size: 15px; font-weight: 600; text-align: left; }
+    .ie-chev { color: var(--text-muted); transition: transform 0.16s var(--ease); display: inline-block; }
+    .ie-disc.open .ie-chev { transform: rotate(90deg); }
+    .ie-disc-summary { margin-left: auto; font-size: 13px; color: var(--text-muted); font-weight: 400; }
+    .ie-disc-body { padding: 4px 16px 16px; display: flex; flex-direction: column; gap: 14px; }
+    .ie-counter { font-size: 12px; color: var(--text-muted); }
+    .ie-counter.over { color: var(--danger); }
+    .ie-orphan { display: flex; flex-direction: column; gap: 8px; padding-top: 8px; border-top: 1px solid var(--rule); }
+    .ie-orphan-list { display: flex; flex-wrap: wrap; gap: 6px; }
+    .ie-orphan-chip { font-size: 12px; padding: 3px 8px; border-radius: 999px; background: var(--surface-raised); border: 1px solid var(--border); color: var(--text-muted); }
+
+    /* Footer */
+    .ie-footer { display: flex; align-items: center; gap: 10px; padding-top: 16px; border-top: 1px solid var(--border); flex-wrap: wrap; }
+    .ie-footer-spacer { flex: 1 1 auto; }
+    .ie-status { font-size: 14px; color: var(--text-muted); }
+
+    @media (max-width: 560px) {
+      .ie-row2, .ie-grid { grid-template-columns: 1fr; }
+      .ie-identity { align-items: flex-start; }
+      .ie-thumb-btn { width: 84px; height: 84px; align-self: flex-start; }
+      .ie-name { font-size: 20px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .ie-chev, .ie-disc-body { transition: none; }
+    }
+
+    /* Player read view / preview — image-forward item card. */
+    .item-read { display: flex; flex-direction: column; gap: 14px; font-size: 15px; color: var(--text); }
+    /* Hero image: large, on top, with a rarity-tinted frame. */
+    .ir-hero {
+      --ir-rarity: var(--border);
+      width: 100%; aspect-ratio: 1; border-radius: 12px; overflow: hidden;
+      background: var(--surface); position: relative;
+      border: 1px solid color-mix(in srgb, var(--ir-rarity) 55%, var(--border));
+      box-shadow: inset 0 -60px 60px -50px color-mix(in srgb, var(--ir-rarity) 60%, transparent);
+    }
+    .ir-hero img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    /* Unidentified: blur the art. The extra scale that keeps the blur edge from
+       revealing the frame is applied in JS together with the framing transform. */
+    .ir-hero-blur img { filter: blur(14px); }
+    .ir-hero-empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--text-muted); font-size: 34px; }
+
+    /* Title block. */
+    .ir-title { display: flex; flex-direction: column; gap: 4px; }
+    .ir-name { margin: 0; font-size: 21px; font-weight: 700; line-height: 1.2; }
+    .ir-meta { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+    .ir-type { color: var(--text-muted); text-transform: capitalize; }
+    .ir-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+    .ir-rarity { font-weight: 600; }
+    .ir-unid { color: var(--text-muted); font-size: 14px; font-style: italic; margin: 0; }
+
+    /* Stat block — the "rolls": value big, label small beneath. */
+    .ir-stats {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(84px, 1fr));
+      background: var(--surface); border: 1px solid var(--border); border-radius: 10px; overflow: hidden;
+    }
+    /* Cells carry their own thin dividers, so empty trailing cells stay the same
+       surface colour as filled ones (no warm gap showing through). */
+    .ir-stat { background: var(--surface); padding: 10px 12px; display: flex; flex-direction: column; gap: 2px;
+      border-left: 1px solid var(--border); border-top: 1px solid var(--border); margin: -1px 0 0 -1px; }
+    .ir-stat-val { font-size: 16px; font-weight: 650; color: var(--text); }
+    .ir-stat-key { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); }
+
+    /* Flag tags. */
+    .ir-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+    .ir-tag { font-size: 12px; padding: 3px 9px; border-radius: 999px; color: var(--accent);
+      background: color-mix(in srgb, var(--accent) 12%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); }
+
+    /* Prose blocks. */
+    .ir-block-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); font-weight: 600; margin-top: 2px; }
+    .ir-prose { margin: 0; font-size: 14px; line-height: 1.55; white-space: pre-wrap; }
+    .ir-effect { color: var(--text); padding: 10px 12px; border-left: 2px solid var(--accent);
+      background: color-mix(in srgb, var(--accent) 7%, transparent); border-radius: 0 8px 8px 0; }
+
+    /* Footer metadata. */
+    .ir-foot { font-size: 12px; color: var(--text-muted); border-top: 1px solid var(--rule); padding-top: 10px; }
+
+    /* Preview overlay inside the editor */
+    /* Fixed (viewport-relative) so the preview is centered in the VISIBLE view,
+       not in the middle of the tall scrollable editor. As a descendant of the
+       item dialog (top layer) it still renders above everything. */
+    .ie-preview-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.55); display: grid; place-items: center; z-index: 50; padding: 20px; }
+    .ie-preview-card { width: min(420px, 100%); max-height: 90vh; overflow-y: auto; background: var(--surface-raised); border: 1px solid var(--border); border-radius: 12px; padding: 16px; box-shadow: 0 16px 40px rgba(0,0,0,0.5); }
+    .ie-preview-bar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+    .ie-preview-close {
+      width: 2rem; height: 2rem; flex: none; display: flex; align-items: center; justify-content: center;
+      border-radius: 50%; border: none; background: rgba(0,0,0,0.45); color: #fff; font-size: 0.95rem; line-height: 1; cursor: pointer;
+    }
+    .ie-preview-close:hover { background: rgba(0,0,0,0.65); }
+    .ie-preview-close:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+    .ie-preview-title { font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--accent); font-weight: 700; }
+
+    /* Image editor popover (opened by the item image button). */
+    .ie-imgedit-overlay { position: absolute; inset: 0; background: rgba(0,0,0,0.55); display: grid; place-items: center; z-index: 6; padding: 20px; }
+    .ie-imgedit-card { width: min(440px, 100%); background: var(--surface-raised); border: 1px solid var(--border); border-radius: 12px; padding: 16px; box-shadow: 0 16px 40px rgba(0,0,0,0.5); display: flex; flex-direction: column; gap: 10px; }
+    .ie-imgedit-actions { display: flex; justify-content: space-between; gap: 10px; margin-top: 4px; }
 
     .asset { width: 116px; border: 1px solid var(--border); border-radius: 4px; padding: 5px;
              font-size: 11px; text-align: center; background: var(--surface); }
@@ -1133,6 +1572,168 @@
     .asset button { margin-top: 4px; padding: 1px 6px; font-size: 11px; }
     .asset.external { border-color: #a40; }
     .asset.external .k { color: #b96; }
+
+    /* ── Library panel redesign ──────────────────────────────────────────────
+       Three sub-tabs (Items / Spells / Images), each a clean section with a
+       tidy form and a card/thumbnail grid, replacing one long stacked scroll. */
+    .lib-panel { display: flex; flex-direction: column; }
+    /* Segmented sub-tab control. */
+    .lib-subtabs {
+      display: flex; gap: 0.25rem; padding: 0.25rem; margin-bottom: 0.9rem;
+      background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+    }
+    .lib-subtab {
+      flex: 1; padding: 0.45rem 0.5rem; border: none; border-radius: 6px;
+      background: transparent; color: var(--text-muted); font: inherit; font-weight: 600;
+      font-size: 0.82rem; cursor: pointer; transition: background 0.12s, color 0.12s;
+    }
+    .lib-subtab:hover { color: var(--text); }
+    .lib-subtab.is-active { background: var(--accent); color: var(--on-accent); }
+
+    .lib-section-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.6rem; }
+    .lib-section-head h3 { margin: 0; }
+    .lib-note { font-size: 0.8rem; line-height: 1.4; margin: 0 0 0.75rem; }
+    .lib-msg { font-size: 0.8rem; min-height: 1rem; margin: 0.4rem 0 0.6rem; }
+
+    /* A clean, boxed form for authoring/uploading. Fields wrap tidily. */
+    .lib-form {
+      display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: flex-end;
+      padding: 0.75rem; margin-bottom: 0.9rem;
+      background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+    }
+    .lib-field { display: flex; flex-direction: column; gap: 0.25rem; flex: 1 1 7rem; min-width: 0; }
+    .lib-field.lib-field-wide { flex: 2 1 10rem; }
+    .lib-field label { font-size: 0.72rem; color: var(--text-muted); font-weight: 600; }
+    .lib-field input, .lib-field select {
+      font: inherit; padding: 0.5rem 0.6rem; min-height: 38px; border-radius: 5px;
+      border: 1px solid var(--border); background: var(--surface-raised); color: var(--text); width: 100%;
+    }
+    .lib-field input:focus, .lib-field select:focus,
+    .lib-filter select:focus { outline: 2px solid var(--focus); outline-offset: 1px; border-color: var(--accent); }
+    .lib-field input[type=file] { padding: 0.35rem 0.5rem; }
+    .lib-form-submit { flex: none; min-height: 38px; }
+
+    .lib-filter { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.9rem; }
+    .lib-filter label { font-size: 0.75rem; color: var(--text-muted); font-weight: 600; }
+    .lib-filter select {
+      font: inherit; padding: 0.4rem 0.55rem; min-height: 36px; border-radius: 5px;
+      border: 1px solid var(--border); background: var(--surface-raised); color: var(--text);
+    }
+
+    /* Card grid for items and spells (text cards, two columns). */
+    .lib-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.6rem; }
+    .lib-grid > .card {
+      margin: 0; background: var(--surface); border: 1px solid var(--border);
+      border-radius: 8px; padding: 0.6rem 0.7rem; display: flex; flex-direction: column; gap: 0.35rem;
+      transition: border-color 0.12s;
+    }
+    .lib-grid > .card:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+    .lib-grid > .card > div:first-child b { font-size: 0.9rem; }
+    .lib-grid > .card .stats { font-size: 0.78rem; color: var(--text-muted); line-height: 1.4; }
+    .lib-grid > .card .row { gap: 0.3rem; margin-top: auto; padding-top: 0.35rem; }
+    .lib-grid > .card .row button { padding: 0.2rem 0.5rem; font-size: 0.75rem; }
+    .lib-grid > .muted { grid-column: 1 / -1; padding: 1.5rem; text-align: center; }
+
+    /* ── Item library: search + filters + image-forward card grid ──────────── */
+    .item-toolbar { display: flex; flex-direction: column; gap: 0.55rem; margin-bottom: 0.9rem; }
+    .item-toolbar-row { display: flex; gap: 0.5rem; align-items: stretch; }
+    .item-search { position: relative; display: flex; align-items: center; flex: 1 1 auto; }
+    .item-search svg { position: absolute; left: 0.6rem; width: 15px; height: 15px; color: var(--text-muted); pointer-events: none; }
+    .item-search input {
+      width: 100%; font: inherit; font-size: 0.9rem; padding: 0.5rem 0.6rem 0.5rem 2rem; min-height: 38px;
+      border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text);
+    }
+    .item-search input:focus { outline: 2px solid var(--focus); outline-offset: 1px; border-color: var(--accent); }
+    /* Filter toggle button — reveals the chip panel; shows a count badge when active. */
+    .item-filter-toggle {
+      flex: none; display: inline-flex; align-items: center; gap: 0.35rem; font: inherit; font-size: 0.85rem;
+      padding: 0 0.7rem; min-height: 38px; border-radius: 8px; cursor: pointer;
+      border: 1px solid var(--border); background: var(--surface); color: var(--text);
+    }
+    .item-filter-toggle svg { width: 15px; height: 15px; }
+    .item-filter-toggle:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+    .item-filter-toggle.open, .item-filter-toggle.has-filters { border-color: var(--accent); color: var(--accent); }
+    .item-filter-count {
+      display: inline-grid; place-items: center; min-width: 1.1rem; height: 1.1rem; padding: 0 0.25rem;
+      border-radius: 999px; background: var(--accent); color: var(--on-accent); font-size: 0.7rem; font-weight: 700;
+    }
+    .item-filters { display: flex; flex-direction: column; gap: 0.4rem;
+      padding: 0.6rem; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
+    .item-filter { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+    .item-chip {
+      --chip-color: var(--text-muted);
+      font: inherit; font-size: 0.76rem; padding: 0.25rem 0.6rem; border-radius: 999px; cursor: pointer;
+      border: 1px solid var(--border); background: var(--surface); color: var(--text-muted); transition: all 0.12s;
+    }
+    .item-chip:hover { color: var(--text); border-color: color-mix(in srgb, var(--chip-color) 45%, var(--border)); }
+    .item-chip.active {
+      color: var(--chip-color); border-color: color-mix(in srgb, var(--chip-color) 60%, var(--border));
+      background: color-mix(in srgb, var(--chip-color) 14%, transparent); font-weight: 600;
+    }
+
+    /* Image-forward card grid. */
+    .item-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 0.7rem; }
+    .item-empty { grid-column: 1 / -1; padding: 1.75rem; text-align: center; }
+    .item-card {
+      --card-rarity: var(--border);
+      display: flex; flex-direction: column; background: var(--surface);
+      border: 1px solid color-mix(in srgb, var(--card-rarity) 45%, var(--border));
+      border-radius: 10px; overflow: hidden; position: relative; transition: transform 0.1s, border-color 0.12s, box-shadow 0.12s;
+    }
+    .item-card.clickable { cursor: pointer; }
+    .item-card.clickable:hover, .item-card.clickable:focus-visible {
+      transform: translateY(-2px); outline: none;
+      border-color: color-mix(in srgb, var(--card-rarity) 75%, var(--border));
+      box-shadow: 0 6px 18px -8px color-mix(in srgb, var(--card-rarity) 60%, black);
+    }
+    /* Square-ish art panel, rarity-tinted. Framing honored; blur on unidentified. */
+    .item-card-art {
+      position: relative; width: 100%; aspect-ratio: 1; overflow: hidden; background: var(--surface-raised);
+      box-shadow: inset 0 -40px 40px -36px color-mix(in srgb, var(--card-rarity) 70%, transparent);
+    }
+    .item-card-art img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .item-card.unidentified .item-card-art img { filter: blur(10px); }
+    .item-card-noart { position: absolute; inset: 0; display: grid; place-items: center; font-size: 28px; color: var(--text-muted); }
+    .item-card-body { padding: 0.5rem 0.6rem; display: flex; flex-direction: column; gap: 0.2rem; flex: 1 1 auto; }
+    .item-card-name { font-size: 0.86rem; font-weight: 600; line-height: 1.25; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .item-card.unidentified .item-card-name { color: var(--text-muted); font-style: italic; }
+    .item-card-meta { display: flex; align-items: center; gap: 5px; font-size: 0.72rem; color: var(--text-muted); }
+    .item-card-type { text-transform: capitalize; }
+    .item-card-dot { width: 6px; height: 6px; border-radius: 50%; flex: none; }
+    .item-card-rarity { font-weight: 600; }
+
+    /* GM action row — compact icon buttons, so the card stays art-first. */
+    .item-card-actions { display: flex; gap: 1px; border-top: 1px solid var(--border); background: var(--border); }
+    .item-icon-btn {
+      flex: 1; min-height: 30px; display: grid; place-items: center; padding: 0; cursor: pointer;
+      background: var(--surface); border: none; color: var(--text-muted); transition: color 0.12s, background 0.12s;
+    }
+    .item-icon-btn svg { width: 15px; height: 15px; }
+    .item-icon-btn:hover { color: var(--text); background: color-mix(in srgb, var(--text) 6%, var(--surface)); }
+    .item-icon-delete:hover { color: var(--danger); }
+    .item-icon-reveal:hover { color: var(--accent); }
+
+    @media (max-width: 380px) { .item-grid { grid-template-columns: repeat(2, 1fr); } }
+
+    /* Image thumbnail grid — image-forward cards, the pick-and-choose surface. */
+    .lib-grid-img { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.55rem; }
+    .lib-grid-img .asset {
+      width: auto; margin: 0; padding: 0; border-radius: 8px; overflow: hidden;
+      background: var(--surface); border: 1px solid var(--border); text-align: left;
+      display: flex; flex-direction: column; transition: border-color 0.12s, transform 0.1s;
+    }
+    .lib-grid-img .asset:hover { border-color: var(--accent); transform: translateY(-1px); }
+    .lib-grid-img .asset img { width: 100%; height: 78px; object-fit: cover; border-radius: 0; background: var(--surface-raised); }
+    .lib-grid-img .asset .k { font-size: 0.68rem; padding: 0.15rem 0.4rem 0; color: var(--text-muted); }
+    .lib-grid-img .asset button {
+      margin: 0.25rem 0.4rem; margin-top: auto; padding: 0.2rem 0.4rem; font-size: 0.68rem;
+    }
+    .lib-grid-img > .muted { grid-column: 1 / -1; padding: 1.5rem; text-align: center; }
+
+    @media (max-width: 380px) {
+      .lib-grid { grid-template-columns: 1fr; }
+      .lib-grid-img { grid-template-columns: repeat(2, 1fr); }
+    }
 
     .frame-box { background: var(--surface-raised); padding: 16px; border-radius: 6px; max-width: 420px; }
     .frame-stage { width: 220px; height: 220px; margin: 8px auto; position: relative;
@@ -1277,10 +1878,12 @@
     <!-- Primary choice: the character. Everything else is optional and overrides
          what the character would otherwise supply. -->
     <div class="field tok-primary">
-      <label for="tok-actor">Character</label>
-      <select id="tok-actor" title="place a token for a character">
-        <option value="">— none (a plain token) —</option>
-      </select>
+      <label for="tok-actorBtn">Character</label>
+      <div class="vtt-dd" id="tokActorDD" data-value="">
+        <input type="hidden" id="tok-actor" value="" />
+        <button type="button" id="tok-actorBtn" class="vtt-dd-btn" aria-haspopup="listbox" aria-expanded="false" title="place a token for a character">— no character —</button>
+        <ul class="vtt-dd-list" role="listbox" aria-label="Character" tabindex="-1" hidden></ul>
+      </div>
       <span class="help" id="tok-inherit-note">A plain token uses just the name and image you give below.</span>
     </div>
 
@@ -1293,22 +1896,21 @@
          what the character would provide. -->
     <div class="tok-overrides">
       <div class="field">
-        <label for="tok-img">Image <span class="opt">— optional</span></label>
-        <div class="input-with-btn">
-          <input id="tok-img" placeholder="https://… or choose a file" />
-        </div>
+        <label for="tok-imgBtn">Image <span class="opt">— optional</span></label>
+        <!-- The image is chosen through the picker (VTTImagePicker.attach adds the
+             button after this input). The input is hidden: the "choose" button is
+             the only control, so there is no redundant URL field. -->
+        <input id="tok-img" type="hidden" />
       </div>
       <div class="field tok-size-field">
-        <label for="tok-size">Size</label>
-        <select id="tok-size" title="creature size">
-          <option value="">Auto (from character)</option>
-          <option value="tiny">Tiny · ½×½</option>
-          <option value="small">Small · 1×1</option>
-          <option value="medium">Medium · 1×1</option>
-          <option value="large">Large · 2×2</option>
-          <option value="huge">Huge · 3×3</option>
-          <option value="gargantuan">Gargantuan · 4×4</option>
-        </select>
+        <label for="tok-sizeBtn">Size</label>
+        <!-- Custom themed dropdown (.vtt-dd), matching the site's other lists.
+             #tok-size stays as the hidden value input the code reads. -->
+        <div class="vtt-dd" id="tokSizeDD" data-value="">
+          <input type="hidden" id="tok-size" value="" />
+          <button type="button" id="tok-sizeBtn" class="vtt-dd-btn" aria-haspopup="listbox" aria-expanded="false" title="creature size">Auto (from character)</button>
+          <ul class="vtt-dd-list" role="listbox" aria-label="Size" tabindex="-1" hidden></ul>
+        </div>
       </div>
     </div>
 
@@ -1401,53 +2003,85 @@
       <button class="tab" id="tabLibrary" role="tab" aria-controls="panelLibrary" aria-selected="false" tabindex="-1" type="button">Library</button>
     </div>
 
-    <!-- Chat & Dice panel (verbatim from combat.html's chat & dice fieldset). -->
-    <section class="side-panel" id="panelChat" role="tabpanel" aria-labelledby="tabChat">
+    <!-- Chat panel. Rolling lives in the bottom dice tray. Top: a title row with
+         the settings gear. Then the players accordion (presence), the chat log,
+         and the composer (speaking-as as a custom list, a standard input, Send,
+         and whisper targets). The gear opens the dice-render + colour settings. -->
+    <section class="side-panel chat-panel" id="panelChat" role="tabpanel" aria-labelledby="tabChat">
+      <div class="chat-topbar">
+        <span class="chat-topbar-title">Chat</span>
+        <button id="chatGear" class="chat-gear" type="button" aria-haspopup="dialog" aria-controls="chatSettings" aria-expanded="false" title="Dice &amp; colour settings" aria-label="Dice and colour settings">
+          <svg viewBox="0 0 52.93 52.93" fill="currentColor" aria-hidden="true"><circle cx="26.465" cy="25.59" r="4.462"/><path d="M52.791,32.256c-0.187-1.034-1.345-2.119-2.327-2.492l-2.645-1.004c-0.982-0.373-1.699-1.237-1.651-1.935c0.029-0.417,0.046-0.838,0.046-1.263c0-0.284-0.008-0.566-0.021-0.846c-0.023-0.467,0.719-1.193,1.677-1.624l2.39-1.074c0.958-0.432,2.121-1.565,2.194-2.613c0.064-0.929-0.047-2.196-0.648-3.765c-0.699-1.831-1.834-3.005-2.779-3.718c-0.839-0.633-2.423-0.595-3.381-0.163l-2.08,0.936c-0.958,0.431-2.274,0.119-3.025-0.616c-0.177-0.174-0.356-0.343-0.54-0.509c-0.778-0.705-1.17-2-0.796-2.983l0.819-2.162c0.373-0.982,0.368-2.594-0.322-3.385c-0.635-0.728-1.643-1.579-3.215-2.281c-1.764-0.788-3.346-0.811-4.483-0.639c-1.039,0.158-2.121,1.331-2.494,2.312l-0.946,2.491c-0.373,0.982-0.798,1.775-0.949,1.771c-0.092-0.004-0.183-0.005-0.274-0.005c-0.622,0-1.238,0.03-1.846,0.09c-1.016,0.1-2.176-0.507-2.607-1.465l-1.124-2.5c-0.431-0.959-1.538-2.21-2.589-2.227c-0.916-0.016-2.207,0.209-3.936,1.028c-1.874,0.889-2.971,1.742-3.611,2.437c-0.712,0.771-0.554,2.416-0.122,3.374l1.481,3.296c0.431,0.958,0.256,2.266-0.324,2.979c-0.579,0.714-1.786,1.033-2.768,0.661l-3.598-1.365c-0.982-0.373-2.65-0.476-3.406,0.256c-0.658,0.637-1.412,1.709-2.056,3.51c-0.696,1.954-0.867,3.332-0.83,4.276c0.042,1.05,1.317,2.101,2.3,2.474l4.392,1.667c0.982,0.373,1.782,1.244,1.839,1.941c0.055,0.699-0.635,1.61-1.593,2.042l-4.382,1.97c-0.958,0.431-2.211,1.539-2.227,2.589c-0.015,0.916,0.21,2.208,1.028,3.935c0.89,1.874,1.742,2.971,2.437,3.611c0.773,0.713,2.417,0.554,3.375,0.123l4.698-2.112c0.958-0.432,2.076-0.412,2.525,0.013s0.535,1.541,0.162,2.524L12.743,46.6c-0.373,0.982-0.476,2.65,0.256,3.404c0.638,0.659,1.709,1.414,3.51,2.057c1.954,0.697,3.333,0.868,4.277,0.831c1.05-0.042,2.1-1.318,2.473-2.3l1.693-4.46c0.373-0.982,1.058-1.742,1.531-1.719c0.284,0.014,0.57,0.021,0.857,0.021c0.134,0,0.266-0.001,0.398-0.005c0.219-0.007,0.747,0.762,1.178,1.721l1.963,4.364c0.431,0.958,1.605,1.986,2.653,2.038c1.121,0.056,2.669-0.062,4.43-0.734c1.685-0.645,2.659-1.604,3.219-2.442c0.584-0.873,0.388-2.517-0.044-3.475l-1.606-3.573c-0.431-0.958-0.169-2.191,0.527-2.824c0.693-0.633,2-0.9,2.981-0.526l3.432,1.303c0.982,0.373,2.64,0.489,3.478-0.145c0.738-0.56,1.591-1.49,2.281-3.034C53.057,35.248,53.015,33.497,52.791,32.256z M26.465,39.79c-7.844,0-14.201-6.357-14.201-14.2s6.357-14.2,14.201-14.2c7.842,0,14.2,6.357,14.2,14.2C40.666,33.433,34.307,39.79,26.465,39.79z"/></svg>
+        </button>
+      </div>
+
+      <!-- Players accordion: colour, name, connected status. Collapsed by default. -->
+      <div id="presence" class="presence">
+        <button id="presenceHead" class="presence-head" type="button" aria-expanded="false" aria-controls="presenceList">
+          <svg class="presence-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+          <span class="presence-title">Players</span>
+          <span id="presenceCount" class="presence-count muted">0/0 online</span>
+        </button>
+        <div id="presenceList" class="presence-list" role="list" hidden></div>
+      </div>
+
       <div id="chat" aria-live="polite"></div>
-      <div class="row">
-        <div class="field" style="flex:2"><label for="speakAs">speaking as</label><select id="speakAs"></select></div>
-        <div class="field" style="flex:3"><label for="chatText">message</label><input id="chatText" placeholder="I attack the goblin" /></div>
-        <button id="sendChat" class="btn small primary" type="button">say</button>
+
+      <div class="chat-composer">
+        <div class="chat-composer-send">
+          <input id="chatText" class="chat-input" placeholder="Say something…" />
+          <button id="sendChat" class="btn small primary" type="button">Send</button>
+        </div>
+        <div class="chat-composer-top">
+          <div class="field speak-field">
+            <label for="speakAsBtn">speaking as</label>
+            <div class="vtt-dd" id="speakAsDD" data-value="">
+              <input type="hidden" id="speakAs" value="" />
+              <button type="button" id="speakAsBtn" class="vtt-dd-btn" aria-haspopup="listbox" aria-expanded="false">yourself</button>
+              <ul class="vtt-dd-list" role="listbox" aria-label="Speaking as" tabindex="-1" hidden></ul>
+            </div>
+          </div>
+          <div class="field whisper-field">
+            <label for="whisperTo">whisper to <span class="opt">— empty = everyone</span></label>
+            <select id="whisperTo" class="site-select" multiple size="1"></select>
+          </div>
+        </div>
       </div>
-      <div class="row dice-bar">
-        <div style="flex:0 0 100%"><label class="muted">dice tray — click to add, click again to stack</label></div>
-        <button class="btn small quick" data-sides="4" type="button">d4</button>
-        <button class="btn small quick" data-sides="6" type="button">d6</button>
-        <button class="btn small quick" data-sides="8" type="button">d8</button>
-        <button class="btn small quick" data-sides="10" type="button">d10</button>
-        <button class="btn small quick" data-sides="12" type="button">d12</button>
-        <button class="btn small quick" data-sides="20" type="button">d20</button>
-        <button class="btn small quick" data-sides="100" type="button">d100</button>
-      </div>
-      <div class="row dice-bar">
-        <div class="field" style="flex:2"><label for="trayMod">modifier</label><input id="trayMod" type="number" value="0" /></div>
-        <div class="field" style="flex:3"><label>pool</label><div id="trayPool" class="pool">empty</div></div>
-        <button id="trayRoll" class="btn small secondary" type="button">roll pool</button>
-        <button id="trayClear" class="btn small secondary" type="button">clear</button>
-      </div>
-      <div class="row">
-        <div class="field" style="flex:2"><label for="diceFormula">roll</label><input id="diceFormula" value="2d6+3" /></div>
-        <div class="field" style="flex:2"><label for="diceLabel">label (optional)</label><input id="diceLabel" placeholder="Perception" /></div>
-        <button id="sendRoll" class="btn small primary" type="button">roll</button>
-      </div>
-      <div class="row">
-        <div class="field" style="flex:3"><label for="whisperTo">whisper to (empty = everyone)</label><select id="whisperTo" multiple size="3"></select></div>
-      </div>
-      <div class="subhead">3D dice</div>
-      <div class="row">
-        <label for="dice3d" style="display:inline-flex;align-items:center;gap:0.35rem"><input id="dice3d" type="checkbox" checked /> 3D dice</label>
-        <div class="field" style="flex:2"><label for="diceColor">dice colour</label><select id="diceColor"></select></div>
-      </div>
-      <div class="row">
-        <label for="diceGrab" style="display:inline-flex;align-items:center;gap:0.35rem"><input id="diceGrab" type="checkbox" checked /> grab dice</label>
-        <div class="field"><label for="diceFade">fade after (s)</label><input id="diceFade" type="number" value="6" min="0" max="60" /></div>
-        <button id="diceClear" class="btn small secondary" type="button">clear tray</button>
-      </div>
-      <div>
-        <label class="muted">whose dice are whose — click a free swatch to claim it</label>
-        <div id="diceLegend" class="muted">—</div>
-        <div id="palette" class="palette"></div>
-        <div id="paletteMsg" class="muted"></div>
+
+      <!-- Settings popover, opened by the top gear. Two clean sections: 3D-dice
+           rendering (a gold switch matching the encounter HP toggle, plus its
+           sub-settings) and the player's table colour (palette + legend). -->
+      <div id="chatSettings" class="chat-settings" role="dialog" aria-label="Dice and colour settings" hidden>
+        <div class="chat-settings-head">
+          <h3>Settings</h3>
+          <button id="chatSettingsClose" class="chat-settings-close" type="button" aria-label="Close">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+          </button>
+        </div>
+
+        <div class="settings-section">
+          <div class="settings-section-title">3D dice</div>
+          <div class="settings-item">
+            <span class="settings-item-label">Show 3D dice</span>
+            <label class="switch" title="Roll dice in 3D on the table">
+              <input type="checkbox" id="dice3d" checked />
+              <span class="switch-track"><span class="switch-thumb"></span></span>
+            </label>
+          </div>
+          <div class="settings-item">
+            <label class="settings-item-label" for="diceFade">Fade after (seconds)</label>
+            <input id="diceFade" class="settings-control settings-num" type="number" value="6" min="0" max="60" />
+          </div>
+        </div>
+
+        <div class="settings-section">
+          <div class="settings-section-title">Your table colour</div>
+          <p class="settings-hint">Click a free swatch to claim it. Taken colours are dimmed.</p>
+          <div id="palette" class="palette"></div>
+          <div id="paletteMsg" class="muted settings-msg"></div>
+          <div class="settings-legend-label">In this game</div>
+          <div id="diceLegend" class="muted legend">—</div>
+        </div>
       </div>
     </section>
 
@@ -1497,35 +2131,80 @@
       <div id="actorList"></div>
     </section>
 
-    <!-- Library panel: items + spells + image library (verbatim from actors.html
-         items/spell-catalogue/spellbook/image-library fieldsets). ─────────── -->
-    <section class="side-panel" id="panelLibrary" role="tabpanel" aria-labelledby="tabLibrary" hidden>
-      <h3>Items</h3>
-      <div class="gm-only"><button id="newItem" class="btn small secondary" type="button">+ new item</button></div>
-      <p class="muted player-only">Only the GM authors items. Unidentified entries show their category and picture only.</p>
-      <div id="itemList"></div>
-
-      <div class="subhead">Spell catalogue</div>
-      <div class="row gm-only">
-        <div class="field" style="flex:2"><label for="spName">name</label><input id="spName" placeholder="Magic Missile" /></div>
-        <div class="field"><label for="spLevel">level</label>
-          <select id="spLevel">
-            <option value="0">cantrip</option>
-            <option value="1">1st</option><option value="2">2nd</option>
-            <option value="3">3rd</option><option value="4">4th</option>
-            <option value="5">5th</option><option value="6">6th</option>
-            <option value="7">7th</option><option value="8">8th</option>
-            <option value="9">9th</option>
-          </select>
-        </div>
-        <div class="field" style="flex:3"><label for="spDesc">description</label><input id="spDesc" placeholder="Three darts of force." /></div>
-        <button id="createSpell" class="btn small primary" type="button">add spell</button>
+    <!-- Library panel: three sub-tabs — Items, Spells, Images. The spellbook
+         (a per-character list) is being moved into the character sheet next to
+         inventory; its controls are kept here but HIDDEN so actors.js bindings
+         still resolve until that move lands. -->
+    <section class="side-panel lib-panel" id="panelLibrary" role="tabpanel" aria-labelledby="tabLibrary" hidden>
+      <div class="lib-subtabs" role="tablist" aria-label="Library sections">
+        <button class="lib-subtab is-active" id="libTabItems" role="tab" aria-selected="true" aria-controls="libItems" type="button">Items</button>
+        <button class="lib-subtab" id="libTabSpells" role="tab" aria-selected="false" aria-controls="libSpells" type="button">Spells</button>
+        <button class="lib-subtab" id="libTabImages" role="tab" aria-selected="false" aria-controls="libImages" type="button">Images</button>
       </div>
-      <div class="row">
-        <div class="field" style="flex:2"><label for="spFilter">show</label>
+
+      <!-- ITEMS ------------------------------------------------------------ -->
+      <div class="lib-section" id="libItems" role="tabpanel" aria-labelledby="libTabItems">
+        <div class="lib-section-head">
+          <h3>Items</h3>
+          <button id="newItem" class="btn small primary gm-only" type="button">+ New item</button>
+        </div>
+        <p class="muted player-only lib-note">Only the GM authors items. Unidentified entries show their category and picture only.</p>
+
+        <!-- Search + a Filter toggle. The filter chips live in a panel that only
+             shows when Filter is active, so they don't always take space. -->
+        <div class="item-toolbar">
+          <div class="item-toolbar-row">
+            <div class="item-search">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+              <input id="itemSearch" type="search" placeholder="Search items…" aria-label="Search items" />
+            </div>
+            <button id="itemFilterToggle" class="item-filter-toggle" type="button" aria-expanded="false" aria-controls="itemFilterPanel" title="Filter items">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 5h18M6 12h12M10 19h4"/></svg>
+              <span>Filter</span>
+              <span id="itemFilterCount" class="item-filter-count" hidden>0</span>
+            </button>
+          </div>
+          <div id="itemFilterPanel" class="item-filters" hidden>
+            <div class="item-filter" id="itemFilterType" role="group" aria-label="Filter by type"></div>
+            <div class="item-filter" id="itemFilterRarity" role="group" aria-label="Filter by rarity"></div>
+          </div>
+        </div>
+
+        <div id="itemList" class="item-grid"></div>
+      </div>
+
+      <!-- SPELLS ----------------------------------------------------------- -->
+      <div class="lib-section" id="libSpells" role="tabpanel" aria-labelledby="libTabSpells" hidden>
+        <div class="lib-section-head">
+          <h3>Spell catalogue</h3>
+        </div>
+        <div class="lib-form gm-only">
+          <div class="lib-field lib-field-wide">
+            <label for="spName">Name</label>
+            <input id="spName" placeholder="Magic Missile" />
+          </div>
+          <div class="lib-field">
+            <label for="spLevel">Level</label>
+            <select id="spLevel">
+              <option value="0">Cantrip</option>
+              <option value="1">1st</option><option value="2">2nd</option>
+              <option value="3">3rd</option><option value="4">4th</option>
+              <option value="5">5th</option><option value="6">6th</option>
+              <option value="7">7th</option><option value="8">8th</option>
+              <option value="9">9th</option>
+            </select>
+          </div>
+          <div class="lib-field lib-field-wide">
+            <label for="spDesc">Description</label>
+            <input id="spDesc" placeholder="Three darts of force." />
+          </div>
+          <button id="createSpell" class="btn small primary lib-form-submit" type="button">Add spell</button>
+        </div>
+        <div class="lib-filter">
+          <label for="spFilter">Show</label>
           <select id="spFilter">
-            <option value="">every level</option>
-            <option value="0">cantrips</option>
+            <option value="">Every level</option>
+            <option value="0">Cantrips</option>
             <option value="1">1st</option><option value="2">2nd</option>
             <option value="3">3rd</option><option value="4">4th</option>
             <option value="5">5th</option><option value="6">6th</option>
@@ -1533,46 +2212,56 @@
             <option value="9">9th</option>
           </select>
         </div>
+        <div id="spellList" class="lib-grid"></div>
       </div>
-      <div id="spellList"></div>
 
-      <div class="subhead">Spellbook — <span id="sbWho" class="muted">select a character</span></div>
-      <div class="row">
-        <div class="field" style="flex:3"><label for="sbSpell">spell</label><select id="sbSpell"></select></div>
-        <div class="field"><label for="sbSource">source</label>
-          <select id="sbSource">
-            <option value="">—</option>
-            <option value="class">class</option>
-            <option value="race">race</option>
-            <option value="item">item</option>
-            <option value="other">other</option>
-          </select>
+      <!-- IMAGES ----------------------------------------------------------- -->
+      <div class="lib-section" id="libImages" role="tabpanel" aria-labelledby="libTabImages" hidden>
+        <div class="lib-section-head">
+          <h3>Image library</h3>
         </div>
-        <button id="learnSpell" class="btn small secondary" type="button">learn</button>
+        <p class="muted lib-note">An upload goes straight from your browser to the bucket. A pasted link is stored as-is; every viewer connects directly to that host.</p>
+        <div class="lib-form">
+          <div class="lib-field">
+            <label for="assetKind">Kind</label>
+            <select id="assetKind">
+              <option value="portrait">Portrait</option>
+              <option value="token">Token art</option>
+              <option value="item">Item art</option>
+              <option value="map">Map (GM only)</option>
+              <option value="avatar">My profile picture</option>
+            </select>
+          </div>
+          <div class="lib-field lib-field-wide">
+            <label for="assetFile">Upload a file</label>
+            <input id="assetFile" type="file" accept="image/png,image/jpeg,image/webp,image/gif" />
+          </div>
+          <button id="assetUpload" class="btn small primary lib-form-submit" type="button">Upload</button>
+        </div>
+        <div class="lib-form">
+          <div class="lib-field lib-field-wide">
+            <label for="assetUrl">…or paste an image link</label>
+            <input id="assetUrl" placeholder="https://example.com/portrait.png" />
+          </div>
+          <button id="assetLink" class="btn small secondary lib-form-submit" type="button">Add link</button>
+        </div>
+        <p class="muted lib-msg" id="assetMsg"></p>
+        <div id="assetList" class="assets lib-grid-img"></div>
       </div>
-      <div id="sbList"></div>
 
-      <div class="subhead">Image library</div>
-      <p class="muted">An upload goes straight from your browser to the bucket. A pasted link is stored as-is; every viewer connects directly to that host.</p>
-      <div class="row">
-        <div class="field"><label for="assetKind">kind</label>
-          <select id="assetKind">
-            <option value="portrait">portrait</option>
-            <option value="token">token art</option>
-            <option value="item">item art</option>
-            <option value="map">map (GM only)</option>
-            <option value="avatar">my profile picture</option>
-          </select>
-        </div>
-        <div class="field" style="flex:2"><label for="assetFile">upload a file</label><input id="assetFile" type="file" accept="image/png,image/jpeg,image/webp,image/gif" /></div>
-        <button id="assetUpload" class="btn small secondary" type="button">upload</button>
+      <!-- Spellbook — hidden; moving into the character sheet. Kept so actors.js
+           (sbWho/sbSpell/sbSource/learnSpell/sbList) still binds without error. -->
+      <div hidden aria-hidden="true">
+        <span id="sbWho"></span>
+        <select id="sbSpell"></select>
+        <select id="sbSource">
+          <option value="">—</option><option value="class">class</option>
+          <option value="race">race</option><option value="item">item</option>
+          <option value="other">other</option>
+        </select>
+        <button id="learnSpell" type="button">learn</button>
+        <div id="sbList"></div>
       </div>
-      <div class="row">
-        <div class="field" style="flex:3"><label for="assetUrl">…or paste an image link</label><input id="assetUrl" placeholder="https://example.com/portrait.png" /></div>
-        <button id="assetLink" class="btn small secondary" type="button">add link</button>
-      </div>
-      <p class="muted" id="assetMsg"></p>
-      <div id="assetList" class="assets"></div>
     </section>
   </aside>
 
@@ -1763,24 +2452,9 @@
   </dialog>
 
   <!-- The framing modal (from actors.html): stacks above the sheet dialog. -->
-  <div id="frameModal">
-    <div class="frame-box">
-      <b>Frame the picture</b>
-      <p class="muted">Drag to move · scroll to zoom. This is the crop tokens will use.</p>
-      <div class="frame-stage" id="frameStage"><div class="art" id="frameArt"></div></div>
-      <div class="row">
-        <div class="field"><label for="frameScale">zoom</label><input id="frameScale" type="number" step="0.05" min="0.1" max="5" value="1" /></div>
-        <div class="field"><label for="frameX">offset x</label><input id="frameX" type="number" step="0.01" min="-2" max="2" value="0" /></div>
-        <div class="field"><label for="frameY">offset y</label><input id="frameY" type="number" step="0.01" min="-2" max="2" value="0" /></div>
-      </div>
-      <div class="row">
-        <button id="frameReset" class="btn small secondary" type="button">reset</button>
-        <button id="frameCancel" class="btn small secondary" type="button">cancel</button>
-        <button id="frameSave" class="btn small primary" type="button">save framing</button>
-        <span class="muted" id="frameMsg"></span>
-      </div>
-    </div>
-  </div>
+  <!-- Image framing now uses the reusable VTTFrameTool (public/js/frametool.js),
+       which builds its own modal on demand; no inline markup needed here. -->
+
 
   <!-- Quick-place tokens on the scene (GM combat tooling; verbatim from
        combat.html's "tokens on this scene"). Lives in the encounter popover's
@@ -1816,6 +2490,63 @@
   <!-- The 3D dice tray canvas: fixed, click-through, over everything. -->
   <div id="diceTray"></div>
 
+  <!-- ── Bottom dice tray ──────────────────────────────────────────────────
+       Always at bottom-centre. The collapsed bar is the die icons + a live
+       formula + Roll + an expand chevron. Expanding raises the advanced panel
+       (pool, modifier, formula/label, whisper, and every 3D-dice control) that
+       used to live in the chat sidebar. Every control keeps its original id, so
+       combat.js's handlers bind unchanged — the tray is a relocation, not a
+       rewrite of the roll pipeline. -->
+  <div id="diceTrayBar" class="dice-tray">
+    <!-- Row 1 — the roll pool: one removable tag per die TYPE, plus clear-all.
+         Hidden entirely while the pool is empty (an empty bar is just noise). -->
+    <div id="dicePoolRow" class="dice-pool-row" hidden>
+      <span class="dice-pool-label">Pool</span>
+      <div id="trayPool" class="dice-pool-tags" role="list" aria-label="Dice in the pool"></div>
+      <button id="trayClear" class="btn small secondary" type="button">Clear pool</button>
+    </div>
+
+    <!-- Row 2 — dice · modifier · Roll · clear-my-3D-tray. Always visible. -->
+    <div class="dice-bar-row">
+      <div class="dice-dice" role="group" aria-label="Add dice to the pool">
+        <button class="quick die" data-sides="4" type="button" title="Add a d4" aria-label="Add a d4">
+          <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 3 L28.5 27 L3.5 27 Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><text x="16" y="19.5" class="die-t">4</text></svg>
+        </button>
+        <button class="quick die" data-sides="6" type="button" title="Add a d6" aria-label="Add a d6">
+          <svg viewBox="0 0 32 32" aria-hidden="true"><rect x="4.5" y="4.5" width="23" height="23" rx="3.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><text x="16" y="16.5" class="die-t">6</text></svg>
+        </button>
+        <button class="quick die" data-sides="8" type="button" title="Add a d8" aria-label="Add a d8">
+          <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 3 L27 16 L16 29 L5 16 Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><text x="16" y="16.5" class="die-t">8</text></svg>
+        </button>
+        <button class="quick die" data-sides="10" type="button" title="Add a d10" aria-label="Add a d10">
+          <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 3 L26 11 L26 21 L16 29 L6 21 L6 11 Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><text x="16" y="16.5" class="die-t">10</text></svg>
+        </button>
+        <button class="quick die" data-sides="12" type="button" title="Add a d12" aria-label="Add a d12">
+          <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M9 4 L23 4 L29 16 L23 28 L9 28 L3 16 Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><text x="16" y="16.5" class="die-t">12</text></svg>
+        </button>
+        <button class="quick die" data-sides="20" type="button" title="Add a d20" aria-label="Add a d20">
+          <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M6 9 L16 3 L26 9 L26 23 L16 29 L6 23 Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><text x="16" y="16.5" class="die-t">20</text></svg>
+        </button>
+        <button class="quick die" data-sides="100" type="button" title="Add a d100" aria-label="Add a d100">
+          <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 3 L26 11 L26 21 L16 29 L6 21 L6 11 Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><text x="16" y="16.5" class="die-t die-t-sm">100</text></svg>
+        </button>
+      </div>
+      <div class="dice-sep" aria-hidden="true"></div>
+      <input id="trayMod" class="dice-mod-input" type="number" placeholder="mod" aria-label="modifier" />
+      <button id="trayRoll" class="btn small primary dice-roll" type="button">Roll</button>
+      <button id="diceClear" class="dice-sweep" type="button" title="Clear my dice from the table" aria-label="Clear my dice from the table">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
+
+    <!-- The freeform formula/label the roll pipeline reads. No longer surfaced as
+         its own field in the redesign, but kept as hidden inputs so sendRoll()'s
+         contract (reads #diceFormula/#diceLabel) is unchanged: the pool writes
+         the formula here before rolling. -->
+    <input id="diceFormula" type="hidden" value="" />
+    <input id="diceLabel" type="hidden" value="" />
+  </div>
+
   <!-- Script order per the build skill: socket.io → theme (head) → dice3d
        (module) → common → imagepicker → closednotice → scene → combat →
        actors → sheet → itemsheet → align → game. defer throughout (theme is in
@@ -1825,6 +2556,7 @@
   <script type="module" src="/js/dice3d.js"></script>
   <script src="/js/common.js" defer></script>
   <script src="/js/imagepicker.js" defer></script>
+  <script src="/js/frametool.js" defer></script>
   <script src="/js/closednotice.js" defer></script>
   <script src="/js/scene.js" defer></script>
   <script src="/js/combat.js" defer></script>

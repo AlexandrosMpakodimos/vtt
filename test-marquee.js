@@ -33,6 +33,48 @@ window.eval(fs.readFileSync('public/js/scene.js','utf8') + `
   const wrapEl = document.getElementById('stage-wrap');
   Object.defineProperty(wrapEl,'clientWidth',{value:600,configurable:true});
   Object.defineProperty(wrapEl,'clientHeight',{value:400,configurable:true});
+
+  // ── Uncalibrated large map is shown whole, not cover-cropped ──────────────
+  // A map with no grid.size calibration used to render with background-size:
+  // cover, which crops any image whose aspect ratio differs from the scene box.
+  // The fix sizes #stage-bg to the image's natural dimensions instead. Stub
+  // Image so the probe's onload resolves synchronously-ish, point the scene at
+  // an uncalibrated image LARGER than the 1000x800 scene box, and assert the
+  // element grew to the image rather than staying clamped to the box.
+  window.Image = class { set src(v){ this._src=v; this.naturalWidth=1920; this.naturalHeight=1080; if(this.onload) this.onload(); } get src(){ return this._src; } };
+  scene.img_url = 'http://x/big.jpg'; scene.grid = {};
+  applyGridAlignment();
+  window.__check('an uncalibrated map is sized to its natural width (not cropped)',
+    bg.style.width === '1920px', bg.style.width);
+  window.__check('...and its natural height',
+    bg.style.height === '1080px', bg.style.height);
+  window.__check('...filling the element 1:1 with no repeat',
+    bg.style.backgroundSize === '1920px 1080px' && bg.style.backgroundRepeat === 'no-repeat',
+    bg.style.backgroundSize + ' / ' + bg.style.backgroundRepeat);
+  // Switching to an image-less scene must reset the inline sizing back to the
+  // CSS inset:0 baseline (no stale big-map dimensions carried over).
+  scene.img_url = null; applyGridAlignment();
+  window.__check('switching away resets the inline element sizing',
+    bg.style.width === '' && bg.style.height === '', bg.style.width + '/' + bg.style.height);
+  scene.img_url = null;   // leave the scene as the marquee probes expect
+
+  // ── Calibrated (aligned) tall map is shown whole, not clipped ─────────────
+  // The reported bug: upload a ~1000x2500 map, ALIGN it (sets grid.size), save,
+  // and it clips "below the dragon". Same element-clipping cause as above but on
+  // the calibrated path. With cell=50 the scale is 1.0, so a 1000x2500 image must
+  // grow #stage-bg to 1000x2500 rather than staying clamped to the scene box.
+  scene.img_url = 'http://x/tall.jpg';
+  scene.grid = { size: 50, offset_x: 0, offset_y: 0 };
+  window.Image = class { set src(v){ this._src=v; this.naturalWidth=1000; this.naturalHeight=2500; if(this.onload) this.onload(); } get src(){ return this._src; } };
+  applyGridAlignment();
+  window.__check('an aligned tall map grows stage-bg to full scaled height (not clipped)',
+    bg.style.height === '2500px', bg.style.height);
+  window.__check('...and full scaled width', bg.style.width === '1000px', bg.style.width);
+  scene.img_url = null; scene.grid = {}; applyGridAlignment();
+  window.__check('switching away from an aligned map also resets the sizing',
+    bg.style.width === '' && bg.style.height === '' && bg.style.left === '',
+    bg.style.width + '/' + bg.style.height + '/' + bg.style.left);
+  scene.img_url = null;
   // [CHANGED 2026-08-10] The marquee moved from the LEFT button to the RIGHT,
   // because left-drag now pans the map. These probes therefore dispatch
   // button:2 — the gesture is the same, the button is not.
@@ -386,9 +428,13 @@ window.eval(fs.readFileSync('public/js/scene.js','utf8') + `
   // image. The pad exists so panning has somewhere to overshoot and so a GM can
   // park tokens off the board.
   //
-  // Viewport 600x400, scene 1000x800, pad 12 squares = 600px. World is
-  // 2200x2000, and stage-local 0,0 sits 600px into it.
-  const PAD = 12 * 50;
+  // PAD is taken from scene.js's own PAD_SQUARES * GRID_PX — both are top-level
+  // consts in the script eval'd above, so they are in scope here. Deriving it
+  // rather than hardcoding means raising PAD_SQUARES (the pan/grid overshoot)
+  // can never silently drift this suite. With the default 24 squares: viewport
+  // 600x400, scene 1000x800, pad = 1200px, world 3400x3200, stage-local 0,0 sits
+  // PAD into it.
+  const PAD = PAD_SQUARES * GRID_PX;
 
   // The pad element itself: sized from the scene, offset negatively so it
   // reaches equally in every direction, and carrying the grid that used to be
@@ -422,7 +468,7 @@ window.eval(fs.readFileSync('public/js/scene.js','utf8') + `
   __check('...in both axes', tx().y === PAD, JSON.stringify(tx()));
 
   // ...and far left stops at the pad beyond the map's right edge:
-  // 600 - (1000 + 1200) + 600 = -1000.
+  // vw - (imgW + PAD*2) + PAD, all derived from PAD above.
   fireW('pointerdown',500,500); fireW('pointermove',-4000,-4000); fireW('pointerup',-4000,-4000);
   __check('the map cannot be dragged past the far edge of the pad',
     tx().x === 600 - (1000 + PAD * 2) + PAD, JSON.stringify(tx()));

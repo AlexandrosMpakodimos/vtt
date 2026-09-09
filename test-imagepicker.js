@@ -58,6 +58,7 @@ window.fetch = async (path, opts = {}) => {
 };
 
 window.eval(fs.readFileSync('public/js/imagepicker.js', 'utf8'));
+window.eval(fs.readFileSync('public/js/frametool.js', 'utf8'));
 const P = window.VTTImagePicker;
 
 console.log('\n--- the module loads and exposes its surface ---');
@@ -304,6 +305,32 @@ t('...offering exactly the four allowed types',
   await new Promise((r) => setTimeout(r, 10));
   t('with no current value, no tile is marked', document.querySelectorAll('.vttpick-item.current').length === 0);
   document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+
+  // --- framing: choosing an image with frame:{} runs the frame step ---
+  {
+    let got = null;
+    P.open({
+      campaignId: 'C1', kind: 'token', frame: { offsetX: 0, offsetY: 0, scale: 1 },
+      onChoose: (url, framing) => { got = { url: url, framing: framing }; },
+    });
+    await new Promise((r) => setTimeout(r, 10));
+    // Simulate picking a grid tile (the first one).
+    const tile = document.querySelector('.vttpick-item');
+    t('a tile is available to pick', !!tile);
+    tile.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    // The frame tool should now be open over the picker; onChoose has NOT fired.
+    t('choosing with frame does not complete immediately', got === null);
+    t('the frame tool opened', !!(window.VTTFrameTool && window.VTTFrameTool.isOpen && window.VTTFrameTool.isOpen()));
+    // Save a crop in the frame tool.
+    const saveBtn = [...document.querySelectorAll('.vttframe button')].find((b) => /Save framing/.test(b.textContent));
+    // Drive the inputs to a known crop first.
+    const scaleI = document.querySelector('.vttframe-field input[step="0.05"]');
+    scaleI.value = '1.4'; scaleI.dispatchEvent(new window.Event('input'));
+    saveBtn.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 10));
+    t('onChoose fires after framing with the url', got && typeof got.url === 'string' && got.url.length > 0);
+    t('...and carries the chosen framing', got && got.framing && got.framing.scale === 1.4, JSON.stringify(got && got.framing));
+  }
 
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
