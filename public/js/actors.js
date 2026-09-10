@@ -84,6 +84,7 @@ let actors = [];
 let items = [];
 let selectedActor = null;
 let socket = null;
+let invItemDd = null;   // the inventory item picker's vtt-dd controller
 
 async function whoami() {
   const r = await api('GET', '/api/auth/me');
@@ -119,74 +120,242 @@ function hpBar(a) {
   return wrap;
 }
 
+// Initials for the portrait fallback.
+function actorInitials(name) {
+  const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return '?';
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
+// Roster search + filter state. `type` ∈ '' | 'pc' | 'npc'; `control` ∈ '' |
+// 'mine' | 'unassigned'. These narrow ONLY the roster render — the `actors`
+// array that token placement, combat, inventory and selectActor read is never
+// filtered.
+const charFilter = { q: '', type: '', control: '', party: '' };
+let charFiltersWired = false;
+// UI state belongs to the character, not to DOM rows recreated after mutations.
+const characterHpPanels = new Map();
+
+function charVisible(a) {
+  if (!isGm && a.in_party !== true && !(me && a.user_id === me.id)) return false;
+  if (charFilter.party === 'party' && a.in_party !== true) return false;
+  if (charFilter.party === 'outside' && a.in_party === true) return false;
+  if (charFilter.q && !String(a.name || '').toLowerCase().includes(charFilter.q)) return false;
+  if (charFilter.type === 'pc' && a.is_npc) return false;
+  if (charFilter.type === 'npc' && !a.is_npc) return false;
+  if (charFilter.control === 'mine' && !(me && a.user_id === me.id)) return false;
+  if (charFilter.control === 'unassigned' && a.user_id != null) return false;
+  return true;
+}
+
+function wireCharFilters() {
+  if (charFiltersWired) return;
+  const search = document.getElementById('charSearch');
+  const typeBox = document.getElementById('charFilterType');
+  const controlBox = document.getElementById('charFilterControl');
+  const toggle = document.getElementById('charFilterToggle');
+  const panel = document.getElementById('charFilterPanel');
+  const countBadge = document.getElementById('charFilterCount');
+  if (!search || !typeBox || !controlBox) return;
+  charFiltersWired = true;
+
+  search.addEventListener('input', () => { charFilter.q = search.value.trim().toLowerCase(); renderActors(); });
+
+  function refreshBadge() {
+    const n = (charFilter.type !== '' ? 1 : 0) + (charFilter.control !== '' ? 1 : 0) + (charFilter.party !== '' ? 1 : 0);
+    if (countBadge) { countBadge.textContent = String(n); countBadge.hidden = n === 0; }
+    if (toggle) toggle.classList.toggle('has-filters', n > 0);
+  }
+  if (toggle && panel) {
+    toggle.addEventListener('click', () => {
+      const open = panel.hasAttribute('hidden');
+      if (open) panel.removeAttribute('hidden'); else panel.setAttribute('hidden', '');
+      toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+      toggle.classList.toggle('open', open);
+    });
+  }
+  function chipGroup(box, options, key) {
+    box.textContent = '';
+    for (const o of options) {
+      const chip = el('button', { cls: 'char-chip', text: o.label }); chip.type = 'button';
+      if (charFilter[key] === o.value) chip.classList.add('active');
+      chip.addEventListener('click', () => {
+        charFilter[key] = (charFilter[key] === o.value) ? '' : o.value;
+        chipGroup(box, options, key); refreshBadge(); renderActors();
+      });
+      box.appendChild(chip);
+    }
+  }
+  chipGroup(typeBox, [
+    { value: '', label: 'All' }, { value: 'pc', label: 'Player characters' }, { value: 'npc', label: 'NPCs' },
+  ], 'type');
+  chipGroup(controlBox, [
+    { value: '', label: 'All' }, { value: 'mine', label: 'Yours' }, { value: 'unassigned', label: 'Unassigned' },
+  ], 'control');
+  const partyBox = document.getElementById('charFilterParty');
+  if (partyBox) {
+    partyBox.hidden = false;
+    chipGroup(partyBox, [{ value: '', label: 'All' }, { value: 'party', label: 'In party' }, { value: 'outside', label: 'Not in party' }], 'party');
+  }
+  refreshBadge();
+}
+
 function renderActors() {
+  wireCharFilters();
   const list = document.getElementById('actorList');
+  if (!list) return;
   list.textContent = '';
-  if (!actors.length) {
-    list.appendChild(el('p', { cls: 'muted', text: 'no characters visible to you' }));
+
+  if (!actors.length || (!isGm && !actors.some((a) => a.in_party === true || (me && a.user_id === me.id)))) {
+    list.appendChild(el('p', { cls: 'muted char-empty', text: isGm ? 'No characters yet.' : 'No characters to show. Create your own character or ask the GM to add party members.' }));
     return;
   }
-  for (const a of actors) {
-    const card = el('div', { cls: 'card' + (selectedActor === a.id ? ' sel' : '') });
+  const shown = actors.filter(charVisible);
+  if (!shown.length) {
+    const empty = el('div', { cls: 'muted char-empty' });
+    empty.appendChild(el('div', { text: 'No characters match your search or filters.' }));
+    const clear = el('button', { cls: 'btn small secondary', text: 'Clear search and filters' });
+    clear.type = 'button';
+    clear.addEventListener('click', () => {
+      charFilter.q = ''; charFilter.type = ''; charFilter.control = ''; charFilter.party = '';
+      const s = document.getElementById('charSearch'); if (s) s.value = '';
+      charFiltersWired = false;
+      const panel = document.getElementById('charFilterPanel');
+      const toggle = document.getElementById('charFilterToggle');
+      if (panel) panel.setAttribute('hidden', '');
+      if (toggle) { toggle.classList.remove('open', 'has-filters'); toggle.setAttribute('aria-expanded', 'false'); }
+      renderActors();
+    });
+    empty.appendChild(clear);
+    list.appendChild(empty);
+    return;
+  }
 
-    const head = el('div');
-    head.appendChild(el('b', { text: a.name }));
-    if (a.is_npc) head.appendChild(el('span', { cls: 'tag npc', text: 'NPC' }));
-    if (me && a.user_id === me.id) head.appendChild(el('span', { cls: 'tag mine', text: 'yours' }));
-    if (isProjected(a)) head.appendChild(el('span', { cls: 'tag secret', text: 'stats withheld' }));
-    card.appendChild(head);
+  for (const a of shown) {
+    const mayWrite = isGm || (me && a.user_id === me.id);
+    const card = el('div', { cls: 'char-card' + (selectedActor === a.id ? ' sel' : '') });
+
+    // ── Main clickable body → opens the sheet ──────────────────────────────
+    const main = el('div', { cls: 'char-card-main' });
+    main.setAttribute('role', 'button'); main.tabIndex = 0;
+    main.setAttribute('aria-label', `Open ${a.name}`);
+    const openSheet = () => selectActor(a);
+    main.addEventListener('click', openSheet);
+    main.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openSheet(); } });
+
+    const portrait = el('div', { cls: 'char-portrait' });
+    if (a.img_url) {
+      const img = el('img'); img.alt = '';
+      img.src = a.img_url;
+      const ox = Number(a.img_offset_x) || 0, oy = Number(a.img_offset_y) || 0, sc = Number(a.img_scale) > 0 ? Number(a.img_scale) : 1;
+      img.style.transform = `translate(${ox * 100}%, ${oy * 100}%) scale(${sc})`;
+      img.addEventListener('error', () => { img.remove(); if (!portrait.querySelector('.char-portrait-fallback')) portrait.appendChild(el('span', { cls: 'char-portrait-fallback', text: actorInitials(a.name) })); });
+      portrait.appendChild(img);
+    } else {
+      portrait.appendChild(el('span', { cls: 'char-portrait-fallback', text: actorInitials(a.name) }));
+    }
+    main.appendChild(portrait);
+
+    const body = el('div', { cls: 'char-card-body' });
+    const nameRow = el('div', { cls: 'char-name-row' });
+    nameRow.appendChild(el('span', { cls: 'char-name', text: a.name }));
+    const badges = el('div', { cls: 'char-status-row' });
+    badges.appendChild(el('span', { cls: 'char-badge ' + (a.is_npc ? 'npc' : 'pc'), text: a.is_npc ? 'NPC' : 'PC' }));
+    if (me && a.user_id === me.id) badges.appendChild(el('span', { cls: 'char-badge mine', text: 'Yours' }));
+    if (a.in_party === true && isGm) badges.appendChild(el('span', { cls: 'char-badge party', text: 'Party' }));
+    body.appendChild(nameRow);
+    body.appendChild(badges);
 
     if (!isProjected(a)) {
-      const bits = [
-        `lvl ${a.level}`, a.class, a.race, a.size,
-        `HP ${a.hp_current}/${a.hp_max}`, `AC ${a.armor_class}`,
-        `STR ${a.strength} DEX ${a.dexterity} CON ${a.constitution}`,
-        `INT ${a.intelligence} WIS ${a.wisdom} CHA ${a.charisma}`,
-      ].filter(Boolean);
-      card.appendChild(el('div', { cls: 'stats', text: bits.join(' · ') }));
-      if (a.death_save_successes || a.death_save_failures) {
-        card.appendChild(el('div', {
-          cls: 'stats',
-          text: `death saves — ${a.death_save_successes} success / ${a.death_save_failures} failure`,
-        }));
+      // Level · class · ancestry — only the parts supplied to this viewer.
+      const meta = [a.level != null ? `Lvl ${a.level}` : null, a.class, a.race].filter(Boolean).join(' · ');
+      if (meta) body.appendChild(el('div', { cls: 'char-meta', text: meta }));
+
+      const vitals = el('div', { cls: 'char-vitals' });
+      if (a.hp_current != null && a.hp_max != null) {
+        const hp = el('div', { cls: 'char-vital char-health' });
+        hp.appendChild(el('span', { cls: 'char-stat-label', text: 'HP' }));
+        hp.appendChild(el('span', { cls: 'char-hp-value', text: `${a.hp_current}/${a.hp_max}` }));
+        vitals.appendChild(hp);
       }
-      // hp_current may be negative and is never clamped: the server stores the
-      // number and does not interpret it. "Dead" is a display state, decided
-      // here, and it stays purely cosmetic — nothing is enforced.
-      if (a.hp_current <= 0) {
-        card.appendChild(el('div', { cls: 'stats', text: '☠ down — the GM adjudicates what that means' }));
+      if (a.armor_class != null) {
+        const ac = el('div', { cls: 'char-vital char-armour' });
+        ac.appendChild(el('span', { cls: 'char-stat-label', text: 'AC' }));
+        ac.appendChild(el('span', { cls: 'char-ac-value', text: String(a.armor_class) }));
+        vitals.appendChild(ac);
       }
-      const bar = hpBar(a);
-      if (bar) card.appendChild(bar);
+      if (vitals.childElementCount) body.appendChild(vitals);
+      if (a.hp_max > 0 && a.hp_current != null) {
+        const bar = el('div', { cls: 'char-hp-bar' });
+        const fill = el('div', { cls: 'char-hp-fill' + (a.hp_current <= 0 ? ' low' : '') });
+        fill.style.width = Math.max(0, Math.min(100, (a.hp_current / a.hp_max) * 100)) + '%';
+        bar.setAttribute('aria-hidden', 'true');
+        bar.appendChild(fill); body.appendChild(bar);
+      }
+      // Temp HP shown separately when nonzero.
+      if (a.hp_temp) body.appendChild(el('div', { cls: 'char-hp-temp', text: `+${a.hp_temp} temp HP` }));
+      if (a.hp_current <= 0) body.appendChild(el('div', { cls: 'char-down', text: 'Down' }));
     } else {
-      card.appendChild(el('div', { cls: 'muted', text: `${a.size} — the GM has not shared its statistics` }));
+      body.appendChild(el('div', { cls: 'char-meta', text: [a.size, 'Statistics unavailable'].filter(Boolean).join(' · ') }));
     }
+    main.appendChild(body);
+    card.appendChild(main);
 
-    const row = el('div', { cls: 'row' });
-    row.appendChild(button('open sheet', () => selectActor(a)));
-
-    const mayWrite = isGm || (me && a.user_id === me.id);
-
-    // M6 framing. Offered whenever there is a picture AND the caller may write
-    // the character — the same tier as img_url itself, because a player who can
-    // set their portrait and then cannot stop it cropping their head off has
-    // half a feature. Deliberately NOT gated on isProjected: a projected NPC is
-    // read-only for a player anyway, and mayWrite is already false for them.
-    if (mayWrite && a.img_url) {
-      row.appendChild(button('frame picture', () => openFrame(a)));
-    }
-
+    // ── Action strip: quick HP + confirmed deletion (owner/GM only) ─────────
     if (mayWrite && !isProjected(a)) {
-      const dmg = el('input');
-      dmg.type = 'number';
-      dmg.value = '1';
-      dmg.style.maxWidth = '70px';
-      row.appendChild(dmg);
-      row.appendChild(button('damage', () => adjustHp(a, -Math.abs(Number(dmg.value) || 0))));
-      row.appendChild(button('heal', () => adjustHp(a, Math.abs(Number(dmg.value) || 0))));
-      row.appendChild(button('delete', () => deleteActor(a)));
+      const stateKey = `${campaign ? campaign.id : ''}:${a.id}`;
+      if (!characterHpPanels.has(stateKey)) characterHpPanels.set(stateKey, { open: false, amount: '1' });
+      const hpState = characterHpPanels.get(stateKey);
+      const actions = el('div', { cls: 'char-card-actions' });
+      const hpToggle = el('button', { cls: 'btn small secondary char-hp-toggle', text: 'Adjust HP' }); hpToggle.type = 'button';
+      hpToggle.setAttribute('aria-expanded', String(hpState.open));
+      actions.appendChild(hpToggle);
+      if (isGm) {
+        const partyToggle = button(a.in_party === true ? 'In party' : 'Add to party', async () => {
+          partyToggle.disabled = true;
+          let error = card.querySelector('.char-party-error');
+          if (error) error.remove();
+          try {
+            const result = await api('PATCH', `/api/campaigns/${campaign.id}/actors/${a.id}`, { in_party: a.in_party !== true });
+            if (result.status !== 200) throw new Error((result.data && result.data.error) || 'Could not update party membership.');
+            await refresh();
+          } catch (err) {
+            error = el('p', { cls: 'char-party-error', text: err.message || 'Could not update party membership.' });
+            error.setAttribute('role', 'alert'); card.appendChild(error);
+          } finally { partyToggle.disabled = false; }
+        });
+        partyToggle.type = 'button'; partyToggle.className = 'btn small secondary char-party-toggle';
+        partyToggle.setAttribute('aria-pressed', String(a.in_party === true));
+        partyToggle.setAttribute('aria-label', `${a.in_party === true ? 'Remove' : 'Add'} ${a.name} ${a.in_party === true ? 'from' : 'to'} party`);
+        actions.appendChild(partyToggle);
+      }
+
+      const delBtn = iconBtn(`Delete ${a.name}`, 'delete', () => deleteActor(a));
+      delBtn.className = 'btn small danger char-trash';
+      delBtn.querySelector('svg').setAttribute('aria-hidden', 'true');
+      actions.appendChild(delBtn);
+      card.appendChild(actions);
+
+      // Inline quick-HP panel. Toggling or using it must NOT open the sheet, so
+      // it lives outside .char-card-main and stops propagation.
+      const hpPanel = el('div', { cls: 'char-hp-panel' }); hpPanel.hidden = !hpState.open;
+      const amt = el('input'); amt.type = 'number'; amt.value = hpState.amount; amt.min = '0'; amt.setAttribute('aria-label', 'HP amount');
+      amt.addEventListener('input', () => { hpState.amount = amt.value; });
+      const dmgBtn = el('button', { cls: 'btn small secondary', text: 'Damage' }); dmgBtn.type = 'button';
+      const healBtn = el('button', { cls: 'btn small secondary', text: 'Heal' }); healBtn.type = 'button';
+      dmgBtn.addEventListener('click', (e) => { e.stopPropagation(); hpState.amount = amt.value; adjustHp(a, -Math.abs(Number(amt.value) || 0)); });
+      healBtn.addEventListener('click', (e) => { e.stopPropagation(); hpState.amount = amt.value; adjustHp(a, Math.abs(Number(amt.value) || 0)); });
+      hpPanel.appendChild(amt); hpPanel.appendChild(dmgBtn); hpPanel.appendChild(healBtn);
+      hpToggle.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const open = hpPanel.hidden;
+        hpState.open = open;
+        hpPanel.hidden = !open; hpToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+      });
+      card.appendChild(hpPanel);
     }
-    card.appendChild(row);
+
     list.appendChild(card);
   }
 }
@@ -231,46 +400,115 @@ async function loadAssets() {
   renderAssets();
 }
 
+const assetCategories = { portrait: 'Portraits', token: 'Token art', item: 'Item art', map: 'Maps', avatar: 'Avatars', cover: 'Campaign covers' };
+const assetFilter = { q: '', kind: '' };
+function assetName(a) {
+  try { return decodeURIComponent(new URL(a.url).pathname.split('/').filter(Boolean).pop() || '') || 'Untitled image'; }
+  catch { return 'Untitled image'; }
+}
+function wireAssetTools(box) {
+  if (box.parentNode.querySelector('.image-toolbar')) return;
+  const toolbar = el('div', { cls: 'image-toolbar item-toolbar' });
+  const row = el('div', { cls: 'item-toolbar-row' });
+  const searchWrap = el('div', { cls: 'item-search' });
+  function toolbarIcon(paths) {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    for (const [k, v] of Object.entries({ viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', 'stroke-width': '2', 'stroke-linecap': 'round', 'aria-hidden': 'true' })) svg.setAttribute(k, v);
+    const path = document.createElementNS(svg.namespaceURI, 'path'); path.setAttribute('d', paths); svg.appendChild(path); return svg;
+  }
+  searchWrap.appendChild(toolbarIcon('M19 11a8 8 0 1 1-16 0a8 8 0 1 1 16 0M17 17l4 4'));
+  const search = el('input'); search.type = 'search'; search.placeholder = 'Search images…';
+  search.setAttribute('aria-label', 'Search images by filename or category');
+  search.addEventListener('input', () => { assetFilter.q = search.value; renderAssets(); });
+  const filters = el('div', { cls: 'image-filters item-filters' }); filters.hidden = true;
+  filters.id = 'imageCategoryFilters';
+  const toggle = el('button', { cls: 'item-filter-toggle' }); toggle.type = 'button';
+  toggle.setAttribute('aria-controls', filters.id); toggle.setAttribute('aria-expanded', 'false');
+  toggle.append(toolbarIcon('M3 5h18M6 12h12M10 19h4'), el('span', { text: 'Filter' }));
+  const badge = el('span', { cls: 'item-filter-count', text: '0' }); badge.hidden = true; toggle.appendChild(badge);
+  toggle.addEventListener('click', () => { filters.hidden = !filters.hidden; toggle.classList.toggle('open', !filters.hidden); toggle.setAttribute('aria-expanded', String(!filters.hidden)); });
+  searchWrap.appendChild(search); row.append(searchWrap, toggle);
+  const chips = el('div', { cls: 'image-filter-chips item-filter' });
+  chips.setAttribute('role', 'group'); chips.setAttribute('aria-label', 'Image categories');
+  for (const [kind, label] of [['', 'All images'], ...Object.entries(assetCategories)]) {
+    const chip = button(label, () => { assetFilter.kind = kind; renderAssets(); });
+    chip.type = 'button'; chip.className = 'item-chip'; chip.dataset.kind = kind;
+    chips.appendChild(chip);
+  }
+  filters.appendChild(chips);
+  const count = el('p', { cls: 'muted image-count' }); count.setAttribute('role', 'status');
+  toolbar.append(row, filters, count); box.before(toolbar);
+  const kind = document.getElementById('assetKind');
+  const common = window.VTTCommon;
+  if (kind && common && common.initDropdown) {
+    const dd = el('div', { cls: 'vtt-dd' }); dd.dataset.portal = 'body';
+    const value = el('input'); value.type = 'hidden'; value.value = kind.value;
+    const trigger = el('button', { cls: 'vtt-dd-btn' }); trigger.type = 'button';
+    trigger.setAttribute('aria-label', 'Category for new image'); trigger.setAttribute('aria-haspopup', 'listbox'); trigger.setAttribute('aria-expanded', 'false');
+    const list = el('ul', { cls: 'vtt-dd-list' }); list.hidden = true; list.tabIndex = -1; list.setAttribute('role', 'listbox'); list.setAttribute('aria-label', 'Image category');
+    dd.append(value, trigger, list); kind.after(dd);
+    common.initDropdown(dd, [...kind.options].map(o => ({ value: o.value, label: o.textContent })));
+    value.addEventListener('change', () => { kind.value = value.value; });
+    kind.hidden = true;
+  }
+}
+function previewAsset(a, invoker) {
+  const dialog = el('dialog', { cls: 'image-preview-dialog' });
+  dialog.setAttribute('aria-label', 'Image preview: ' + assetName(a));
+  const close = button('Close preview', () => {
+    if (window.VTTCommon && window.VTTCommon.closeDialog) window.VTTCommon.closeDialog(dialog);
+    else dialog.close();
+  });
+  close.className = 'btn small secondary'; close.type = 'button';
+  const img = el('img'); img.src = a.url; img.alt = assetName(a); img.referrerPolicy = 'no-referrer';
+  const name = el('p', { text: assetName(a) });
+  dialog.append(close, img, name); document.body.appendChild(dialog);
+  dialog.addEventListener('close', () => { dialog.remove(); invoker.focus(); }, { once: true });
+  if (window.VTTCommon && window.VTTCommon.openDialog) window.VTTCommon.openDialog(dialog, { invoker });
+  else dialog.showModal();
+}
 function renderAssets() {
   const box = document.getElementById('assetList');
   if (!box) return;
+  wireAssetTools(box);
+  const toolbar = box.parentNode.querySelector('.image-toolbar');
+  for (const chip of toolbar.querySelectorAll('[data-kind]')) {
+    chip.setAttribute('aria-pressed', String(chip.dataset.kind === assetFilter.kind));
+    chip.classList.toggle('active', chip.dataset.kind === assetFilter.kind);
+  }
+  const filterToggle = toolbar.querySelector('.item-filter-toggle');
+  filterToggle.classList.toggle('has-filters', !!assetFilter.kind);
+  const badge = filterToggle.querySelector('.item-filter-count'); badge.hidden = !assetFilter.kind; badge.textContent = assetFilter.kind ? '1' : '0';
+  const shown = assets.filter(a => (!assetFilter.kind || a.kind === assetFilter.kind) &&
+    (assetName(a) + ' ' + (assetCategories[a.kind] || a.kind)).toLowerCase().includes(assetFilter.q.trim().toLowerCase()));
+  toolbar.querySelector('.image-count').textContent = `${shown.length} of ${assets.length} images` + (assetFilter.kind ? ` · ${assetCategories[assetFilter.kind]}` : '');
   box.textContent = '';
-  if (!assets.length) {
-    box.appendChild(el('p', { cls: 'muted', text: 'no images yet' }));
+  if (!shown.length) {
+    box.appendChild(el('p', { cls: 'muted', text: assets.length ? 'No images match. Try another category or search.' : 'No images yet. Add an image to start your collection.' }));
     return;
   }
-  for (const a of assets) {
+  for (const a of shown) {
     const card = el('div', { cls: 'asset' + (a.source === 'external' ? ' external' : '') });
-
-    const img = document.createElement('img');
-    img.src = a.url;
-    img.alt = '';
-    // A pasted link is fetched from a third party by every viewer. Suppressing
-    // the referrer does not hide the viewer's address — nothing can, short of
-    // proxying — but it does stop this application's URLs being handed to that
-    // host along with the request.
+    const preview = button('', () => previewAsset(a, preview)); preview.type = 'button'; preview.className = 'image-thumb';
+    preview.setAttribute('aria-label', 'Preview ' + assetName(a));
+    const img = document.createElement('img'); img.src = a.url; img.alt = ''; img.loading = 'lazy';
     if (a.source === 'external') img.referrerPolicy = 'no-referrer';
-    card.appendChild(img);
-
-    card.appendChild(el('div', { cls: 'k', text: a.kind }));
-    card.appendChild(el('div', {
-      cls: 'k',
-      text: a.source === 'external' ? 'external link' : 'hosted',
-    }));
-
-    const copy = button('copy url', async () => {
-      try {
-        await navigator.clipboard.writeText(a.url);
-        document.getElementById('assetMsg').textContent = 'url copied';
-      } catch {
-        // Clipboard access can be refused; showing the value is a usable
-        // fallback and better than a silent no-op.
-        document.getElementById('assetMsg').textContent = a.url;
-      }
+    img.addEventListener('error', () => { img.hidden = true; preview.textContent = 'Preview unavailable'; }, { once: true });
+    preview.appendChild(img); card.appendChild(preview);
+    card.appendChild(el('div', { cls: 'image-name', text: assetName(a) }));
+    card.appendChild(el('div', { cls: 'k', text: assetCategories[a.kind] || a.kind }));
+    card.appendChild(el('div', { cls: 'k', text: a.source === 'external' ? 'external link' : 'hosted' }));
+    const actions = el('div', { cls: 'image-actions' });
+    const copy = button('Copy URL', async () => {
+      try { await navigator.clipboard.writeText(a.url); document.getElementById('assetMsg').textContent = 'Image URL copied'; }
+      catch { document.getElementById('assetMsg').textContent = a.url; }
     });
-    card.appendChild(copy);
-    card.appendChild(button('delete', () => deleteAsset(a)));
-    box.appendChild(card);
+    copy.type = 'button'; copy.className = 'btn small secondary'; actions.appendChild(copy);
+    if ((me && a.user_id === me.id) || (isGm && a.campaign_id)) {
+      const trash = iconBtn('Delete ' + assetName(a), 'delete', () => deleteAsset(a));
+      trash.className = 'btn small danger image-trash'; actions.appendChild(trash);
+    }
+    card.appendChild(actions); box.appendChild(card);
   }
 }
 
@@ -358,7 +596,13 @@ async function addAssetLink() {
   await loadAssets();
 }
 
-async function deleteAsset(a) {
+function deleteAsset(a) {
+  const message = 'Delete this image? Characters, items or maps using its URL may lose their image.';
+  if (window.VTTGame && window.VTTGame.confirm) {
+    window.VTTGame.confirm('Delete image?', message, true, () => performAssetDelete(a));
+  } else if (window.confirm(message)) performAssetDelete(a);
+}
+async function performAssetDelete(a) {
   const r = await api('DELETE', `/api/assets/${a.id}`);
   show('DELETE asset', r);
   if (r.status !== 200) {
@@ -392,32 +636,10 @@ async function deleteAsset(a) {
 // fraction of the unscaled frame. That is what makes an offset of 0.25 mean "a
 // quarter of the square" at any zoom and any token footprint.
 
-// Character portrait framing (M6). The stage/drag/zoom logic now lives in the
-// reusable VTTFrameTool; here we just open it for a character and PATCH the
-// three columns on save. The values are copied onto every token placed from
-// this character (server-side), so the crop set here is what the canvas draws.
-function openFrame(a) {
-  if (!window.VTTFrameTool) return;
-  window.VTTFrameTool.open({
-    imageUrl: a.img_url,
-    offsetX: Number(a.img_offset_x) || 0,
-    offsetY: Number(a.img_offset_y) || 0,
-    scale: Number(a.img_scale) > 0 ? Number(a.img_scale) : 1,
-    title: 'Frame the picture',
-    note: 'Drag to move · scroll to zoom. This is the crop tokens will use.',
-    onSave: async (vals) => {
-      const r = await api('PATCH', `/api/campaigns/${campaign.id}/actors/${a.id}`, {
-        img_offset_x: vals.offsetX, img_offset_y: vals.offsetY, img_scale: vals.scale,
-      });
-      show('PATCH framing', r);
-      if (r.status !== 200) return { error: (r.data && r.data.error) || 'save failed' };
-      // Framing is COPIED onto a token when it is placed, so tokens already on a
-      // board keep the framing they were given.
-      await refresh();
-      return { ok: true };
-    },
-  });
-}
+// Character portrait framing (M6) is now integrated into the sheet's portrait
+// picker (see renderSheet → VTTImagePicker.attach with frame/onChoose), so the
+// standalone roster "frame picture" button and its openFrame handler were
+// removed: the crop belongs with the portrait, edited in one place.
 
 // initFraming kept as a no-op seam: the harness and game.js both call it, and the
 // stage wiring it used to do now lives inside VTTFrameTool.
@@ -443,9 +665,12 @@ let spells = [];
 let spellbook = [];
 
 async function loadSpells() {
-  const level = document.getElementById('spFilter').value;
-  const q = level === '' ? '' : `?level=${encodeURIComponent(level)}`;
-  const r = await api('GET', `/api/campaigns/${campaign.id}/spells${q}`);
+  // The whole catalogue, always. Filtering by level/school and searching by name
+  // happen CLIENT-side (see spellVisible), so the learn picker and the card grid
+  // can draw from the same complete array without the library's view narrowing
+  // what a character is allowed to learn. (The old ?level= server filter is gone
+  // for that reason — it would have coupled the two.)
+  const r = await api('GET', `/api/campaigns/${campaign.id}/spells`);
   // Shape, not status code — a refusal has no spells array.
   spells = r.data && Array.isArray(r.data.spells) ? r.data.spells : [];
   renderSpells();
@@ -454,36 +679,192 @@ async function loadSpells() {
 
 const levelLabel = (n) => (n === 0 ? 'cantrip' : `level ${n}`);
 
+// The spell school of a catalogue row, normalised to a string ('' = none).
+function spellSchool(sp) {
+  const p = sp && sp.properties && typeof sp.properties === 'object' ? sp.properties : {};
+  return p.school != null ? String(p.school) : '';
+}
+
+// Search + filter state for the spell grid. Mirrors itemFilter. `level` is a
+// STRING so that '' (All) and '0' (Cantrip) are distinguishable — treating 0 as
+// falsy is exactly the bug the item filter avoids.
+const spellFilter = { q: '', level: '', school: '' };
+let spellFiltersWired = false;
+
+// A spell is visible when it matches the name search AND the level chip AND the
+// school chip. Level 0 (Cantrip) is an active filter like any other.
+function spellVisible(sp) {
+  if (spellFilter.q) {
+    if (!String(sp.name || '').toLowerCase().includes(spellFilter.q)) return false;
+  }
+  if (spellFilter.level !== '' && String(sp.level) !== spellFilter.level) return false;
+  if (spellFilter.school !== '' && spellSchool(sp) !== spellFilter.school) return false;
+  return true;
+}
+
+// The distinct school values present in the catalogue that are NOT one of the
+// known eight — surfaced as extra filter chips and editor options so a legacy or
+// imported value stays selectable rather than being silently dropped.
+function customSchoolValues() {
+  const SS = window.VTTSpellSheet || {};
+  const known = new Set(SS.SCHOOLS || []);
+  const out = [];
+  const seen = new Set();
+  for (const sp of spells) {
+    const s = spellSchool(sp);
+    if (s && !known.has(s) && !seen.has(s)) { seen.add(s); out.push(s); }
+  }
+  return out;
+}
+
+function wireSpellFilters() {
+  if (spellFiltersWired) return;
+  const SS = window.VTTSpellSheet || {};
+  const search = document.getElementById('spellSearch');
+  const levelBox = document.getElementById('spellFilterLevel');
+  const schoolBox = document.getElementById('spellFilterSchool');
+  const toggle = document.getElementById('spellFilterToggle');
+  const panel = document.getElementById('spellFilterPanel');
+  const countBadge = document.getElementById('spellFilterCount');
+  if (!search || !levelBox || !schoolBox) return;   // not a spell-bearing page
+  spellFiltersWired = true;
+
+  search.addEventListener('input', () => { spellFilter.q = search.value.trim().toLowerCase(); renderSpells(); });
+
+  // Count only the chip groups (level, school); search is not a filter chip.
+  // Guard on '' rather than falsiness so a Cantrip (level '0') filter counts.
+  function refreshFilterBadge() {
+    const n = (spellFilter.level !== '' ? 1 : 0) + (spellFilter.school !== '' ? 1 : 0);
+    if (countBadge) { countBadge.textContent = String(n); countBadge.hidden = n === 0; }
+    if (toggle) toggle.classList.toggle('has-filters', n > 0);
+  }
+
+  if (toggle && panel) {
+    toggle.addEventListener('click', () => {
+      const open = panel.hasAttribute('hidden');
+      if (open) panel.removeAttribute('hidden'); else panel.setAttribute('hidden', '');
+      toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+      toggle.classList.toggle('open', open);
+    });
+  }
+
+  // One active chip per group; clicking the active chip clears it.
+  function chipGroup(box, options, key) {
+    box.textContent = '';
+    const mk = (value, label, color) => {
+      const chip = el('button', { cls: 'spell-chip', text: label });
+      chip.type = 'button';
+      if (color) chip.style.setProperty('--chip-color', color);
+      if (spellFilter[key] === value) chip.classList.add('active');
+      chip.addEventListener('click', () => {
+        spellFilter[key] = (spellFilter[key] === value) ? '' : value;
+        rebuildChips();
+        refreshFilterBadge();
+        renderSpells();
+      });
+      box.appendChild(chip);
+    };
+    mk('', 'All');
+    for (const o of options) mk(o.value, o.label, o.color);
+  }
+
+  // School chips are rebuilt each time because the custom-value set depends on
+  // the loaded catalogue; level chips are fixed.
+  function rebuildChips() {
+    const LEVELS = SS.LEVELS || [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
+    const levelOpts = LEVELS.map((n) => ({
+      value: String(n),
+      label: (SS.levelLabel ? SS.levelLabel(n) : (n === 0 ? 'Cantrip' : 'Level ' + n)),
+    }));
+    chipGroup(levelBox, levelOpts, 'level');
+
+    const SCHOOLS = SS.SCHOOLS || [];
+    const labels = SS.SCHOOL_LABELS || {};
+    const colors = SS.SCHOOL_COLOR || {};
+    const neutral = SS.NEUTRAL_ACCENT || 'var(--border)';
+    const schoolOpts = SCHOOLS.map((s) => ({ value: s, label: labels[s] || s, color: colors[s] || neutral }))
+      .concat(customSchoolValues().map((s) => ({ value: s, label: s, color: neutral })));
+    chipGroup(schoolBox, schoolOpts, 'school');
+  }
+
+  rebuildChips();
+  refreshFilterBadge();
+}
+
 function renderSpells() {
+  wireSpellFilters();
+  const SS = window.VTTSpellSheet || {};
   const list = document.getElementById('spellList');
+  if (!list) return;
   list.textContent = '';
+
+  // Empty catalogue and no-matches are different states with different remedies:
+  // an empty catalogue just needs a spell authored; a no-match needs the search
+  // or filters cleared.
   if (!spells.length) {
-    list.appendChild(el('p', { cls: 'muted', text: 'no spells in the catalogue' }));
+    list.appendChild(el('p', { cls: 'muted spell-empty', text: 'No spells yet.' }));
     return;
   }
-  for (const sp of spells) {
-    const card = el('div', { cls: 'card' });
-    const head = el('div');
-    head.appendChild(el('b', { text: sp.name }));
-    head.appendChild(el('span', { cls: 'tag', text: levelLabel(sp.level) }));
-    card.appendChild(head);
-    if (sp.description) card.appendChild(el('div', { cls: 'muted', text: sp.description }));
+  const shown = spells.filter(spellVisible);
+  if (!shown.length) {
+    const empty = el('div', { cls: 'muted spell-empty' });
+    empty.appendChild(el('div', { text: 'No spells match your search or filters.' }));
+    const clear = el('button', { cls: 'btn small secondary', text: 'Clear search and filters' });
+    clear.type = 'button';
+    clear.addEventListener('click', () => {
+      spellFilter.q = ''; spellFilter.level = ''; spellFilter.school = '';
+      const s = document.getElementById('spellSearch'); if (s) s.value = '';
+      spellFiltersWired = false;                       // force chip + badge rebuild
+      const panel = document.getElementById('spellFilterPanel');
+      const toggle = document.getElementById('spellFilterToggle');
+      if (panel) panel.setAttribute('hidden', '');
+      if (toggle) { toggle.classList.remove('open', 'has-filters'); toggle.setAttribute('aria-expanded', 'false'); }
+      renderSpells();
+    });
+    empty.appendChild(clear);
+    list.appendChild(empty);
+    return;
+  }
 
-    // properties is a free blob; render its keys rather than assuming a shape,
-    // because the server stores whatever the GM put there.
-    const props = sp.properties && typeof sp.properties === 'object' ? sp.properties : {};
-    const keys = Object.keys(props);
-    if (keys.length) {
-      card.appendChild(el('div', {
-        cls: 'muted',
-        text: keys.map((k) => `${k}: ${props[k]}`).join(' · '),
-      }));
+  const schoolColor = SS.schoolColor || (() => 'var(--border)');
+  const schoolLabelOf = SS.schoolLabel || ((v) => v);
+  const badgeLabel = (n) => (SS.levelLabel ? SS.levelLabel(n) : (Number(n) === 0 ? 'Cantrip' : 'Level ' + n));
+
+  for (const sp of shown) {
+    const school = spellSchool(sp);
+    const accent = schoolColor(school);
+
+    const card = el('div', { cls: 'spell-card' });
+    card.style.setProperty('--card-accent', accent);
+
+    const body = el('div', { cls: 'spell-card-body' });
+    const badge = el('span', { cls: 'spell-card-badge', text: badgeLabel(sp.level) });
+    badge.style.background = accent;
+    body.appendChild(badge);
+    body.appendChild(el('div', { cls: 'spell-card-name', text: sp.name }));
+    if (school) {
+      const sl = el('div', { cls: 'spell-card-school', text: schoolLabelOf(school) });
+      sl.style.color = accent;
+      body.appendChild(sl);
     }
+    if (sp.description) body.appendChild(el('div', { cls: 'spell-card-desc', text: sp.description }));
+    card.appendChild(body);
 
-    if (isGm) {
-      const row = el('div', { cls: 'row' });
-      row.appendChild(button('delete', () => deleteSpell(sp)));
-      card.appendChild(row);
+    // Everyone can open the read view (players by clicking the card; the GM gets
+    // an explicit icon so the card's edit/delete clicks aren't ambiguous).
+    function openView() { if (SS.openPreview) SS.openPreview(sp); }
+
+    if (!isGm) {
+      card.classList.add('clickable');
+      card.tabIndex = 0; card.setAttribute('role', 'button');
+      card.addEventListener('click', openView);
+      card.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openView(); } });
+    } else {
+      const actions = el('div', { cls: 'spell-card-actions' });
+      actions.appendChild(iconBtn('View', 'preview', openView));
+      actions.appendChild(iconBtn('Edit', 'edit', () => editSpell(sp)));
+      actions.appendChild(iconBtn('Delete', 'delete', () => deleteSpell(sp)));
+      card.appendChild(actions);
     }
     list.appendChild(card);
   }
@@ -505,130 +886,330 @@ function renderSpellChoices() {
     sel.appendChild(o);
   }
   if ([...sel.options].some((o) => o.value === previous)) sel.value = previous;
+  syncSpellbookControls();
 }
 
-async function createSpell() {
-  const name = str('spName');
-  if (!name) { show('POST spell', { status: 0, data: { error: 'a spell needs a name' } }); return; }
-  const body = { name, level: Number(document.getElementById('spLevel').value) };
-  const desc = str('spDesc');
-  if (desc) body.description = desc;
-  const r = await api('POST', `/api/campaigns/${campaign.id}/spells`, body);
-  show('POST spell', r);
-  if (r.status === 201) {
-    document.getElementById('spName').value = '';
-    document.getElementById('spDesc').value = '';
-    await loadSpells();
+// The spell editor serves BOTH create and edit from one field set, exactly like
+// the item editor. `selectedSpell === null` is the create state.
+let selectedSpell = null;
+
+function renderSpellEditor() {
+  if (!isGm) return;
+  const panel = document.getElementById('spellEditor');
+  if (!panel || !window.VTTSpellSheet) return;
+  const dialog = document.getElementById('spellDialog');
+  const spell = selectedSpell ? spells.find((s) => s.id === selectedSpell) : null;
+
+  const who = document.getElementById('spellWho');
+  if (who) who.textContent = spell ? 'Edit spell' : 'New spell';
+
+  let editorDirty = false;
+  // Guard EVERY close route (X, Escape, backdrop, Cancel) through the themed
+  // discard confirm when there are unsaved edits — the same hook the item editor
+  // installs. On the standalone actors.html there is no #spellDialog, so this is
+  // skipped and the inline editor simply stays put.
+  if (dialog) {
+    dialog._vttCloseGuard = function () {
+      if (!editorDirty) return true;
+      if (window.VTTGame && typeof window.VTTGame.confirm === 'function') {
+        window.VTTGame.confirm(
+          'Discard changes?',
+          'This spell has unsaved changes. If you leave now they will be lost.',
+          true,
+          function () {
+            editorDirty = false;
+            if (window.VTTCommon && window.VTTCommon.closeDialog) window.VTTCommon.closeDialog(dialog, { force: true });
+            else if (dialog.close) dialog.close();
+          }
+        );
+        return false;
+      }
+      return true;
+    };
+  }
+  function closeEditor() {
+    if (dialog && window.VTTCommon && window.VTTCommon.closeDialog) window.VTTCommon.closeDialog(dialog);
+    else if (dialog && dialog.close) dialog.close();
+  }
+
+  window.VTTSpellSheet.render(panel, {
+    spell,
+    // Seed the school dropdown with any custom values already in the catalogue,
+    // so a legacy value stays selectable.
+    schoolValues: customSchoolValues(),
+    onDirtyChange: (d) => { editorDirty = d; },
+    requestClose: closeEditor,
+    onSave: async (patch, isNew) => {
+      const r = isNew
+        ? await api('POST', `/api/campaigns/${campaign.id}/spells`, patch)
+        : await api('PATCH', `/api/campaigns/${campaign.id}/spells/${spell.id}`, patch);
+      show(isNew ? 'POST spell' : 'PATCH spell', r);
+      return r;
+    },
+    onDone: async (r) => {
+      // Stay on the spell just created so details can be filled in without
+      // hunting for it again.
+      if (r.data && r.data.spell) selectedSpell = r.data.spell.id;
+      await loadSpells();
+      renderSpellEditor();
+    },
+  });
+}
+
+function newSpell() {
+  selectedSpell = null;
+  renderSpellEditor();
+  openSpellDialog();
+}
+
+function editSpell(sp) {
+  selectedSpell = sp.id;
+  renderSpellEditor();
+  openSpellDialog();
+}
+
+// On game.html the editor lives inside <dialog id="spellDialog">; on the
+// standalone actors.html it is an inline fieldset with no dialog. Guarded so
+// both work, exactly like openItemDialog.
+function openSpellDialog() {
+  const d = document.getElementById('spellDialog');
+  if (d && window.VTTCommon && typeof window.VTTCommon.openDialog === 'function') {
+    window.VTTCommon.openDialog(d, { invoker: document.getElementById('newSpell') });
   }
 }
 
-async function deleteSpell(sp) {
+async function performSpellDelete(sp) {
   const r = await api('DELETE', `/api/campaigns/${campaign.id}/spells/${sp.id}`);
   show('DELETE spell', r);
   // The response names its blast radius, exactly as the item and scene deletes
   // do, so the log says what was emptied rather than just "ok".
   if (r.status === 200) {
     log(`spell deleted — removed from ${r.data.deleted.spellbook_entries} spellbook(s)`);
+    if (selectedSpell === sp.id) selectedSpell = null;
     await loadSpells();
     await loadSpellbook();
   }
 }
 
-// ---- the spellbook ---------------------------------------------------------
-
-async function loadSpellbook() {
-  const who = document.getElementById('sbWho');
-  const list = document.getElementById('sbList');
-  if (!selectedActor) {
-    spellbook = [];
-    who.textContent = 'select a character above';
-    list.textContent = '';
-    renderSpellChoices();
+function deleteSpell(sp) {
+  // Deleting a catalogue spell cascades to every spellbook that learned it. Say
+  // so before it happens — the themed confirm on game.html, a window.confirm
+  // fallback on the standalone harness.
+  const title = `Delete ${sp.name}?`;
+  const body = 'This removes the spell from the catalogue and from every character’s spellbook that has learned it. This cannot be undone.';
+  if (window.VTTGame && typeof window.VTTGame.confirm === 'function') {
+    window.VTTGame.confirm(title, body, true, () => { performSpellDelete(sp); });
     return;
   }
-  const r = await api('GET',
-    `/api/campaigns/${campaign.id}/actors/${selectedActor}/spells`);
-  if (!r.data || !Array.isArray(r.data.spells)) {
-    // A player reading an NPC's spellbook gets a 404 — the same gate that
-    // guards a bag. Say so plainly rather than rendering an empty list, which
-    // would read as "the lich knows no spells".
-    spellbook = [];
-    list.textContent = '';
-    list.appendChild(el('p', { cls: 'muted', text: 'that spellbook is not yours to read' }));
-    renderSpellChoices();
-    return;
-  }
-  spellbook = r.data.spells;
-  const a = actors.find((x) => x.id === selectedActor);
-  who.textContent = a ? a.name : selectedActor;
-  renderSpellbook();
-  renderSpellChoices();
+  if (typeof window.confirm === 'function' && !window.confirm(`${title}\n\n${body}`)) return;
+  performSpellDelete(sp);
 }
 
-function renderSpellbook() {
-  const list = document.getElementById('sbList');
-  list.textContent = '';
-  if (!spellbook.length) {
-    list.appendChild(el('p', { cls: 'muted', text: 'knows no spells' }));
-    return;
+// ---- the spellbook ---------------------------------------------------------
+
+let spellbookActorId = null;
+let spellbookRequest = 0;
+let spellbookBusy = false;
+let spellbookLoading = false;
+let spellbookAvailable = false;
+
+function mayWriteSpellbook() {
+  const actor = actors.find((a) => a.id === selectedActor);
+  return !!actor && (isGm || (!actor.is_npc && me && actor.user_id === me.id));
+}
+
+// Keep the native select as the value/options source for the existing harness;
+// the live game uses the same custom dropdown as the inventory item picker.
+function syncBookDropdown(select, disabled) {
+  if (!select) return;
+  select.disabled = disabled;
+  const common = window.VTTCommon;
+  if (!common || typeof common.initDropdown !== 'function') return;
+  if (!select._bookDropdown) {
+    const dd = el('div', { cls: 'vtt-dd spellbook-dd' });
+    const value = el('input'); value.type = 'hidden'; value.value = select.value;
+    const trigger = el('button', { cls: 'vtt-dd-btn' }); trigger.type = 'button';
+    trigger.id = select.id + '-button';
+    trigger.setAttribute('aria-haspopup', 'listbox'); trigger.setAttribute('aria-expanded', 'false');
+    trigger.setAttribute('aria-label', select.id === 'sbSpell' ? 'Spell to learn' : 'Spell source');
+    const list = el('ul', { cls: 'vtt-dd-list' });
+    list.setAttribute('role', 'listbox'); list.setAttribute('tabindex', '-1'); list.hidden = true;
+    list.setAttribute('aria-label', select.id === 'sbSpell' ? 'Spells to learn' : 'Spell sources');
+    dd.appendChild(value); dd.appendChild(trigger); dd.appendChild(list);
+    select.after(dd);
+    const controller = common.initDropdown(dd, [...select.options].map((o) => ({ value: o.value, label: o.textContent })));
+    if (!controller || !controller.setOptions) { dd.remove(); return; }
+    select.hidden = true;
+    const label = select.parentNode.querySelector('label'); if (label) label.htmlFor = trigger.id;
+    value.addEventListener('change', () => { select.value = value.value; select.dispatchEvent(new Event('change', { bubbles: true })); });
+    select.addEventListener('change', () => controller.set(select.value));
+    select._bookDropdown = { controller, trigger };
   }
-  // Grouped by level, which is the only ordering a spell list is ever read in.
-  const byLevel = new Map();
-  for (const e of spellbook) {
-    const lv = e.spell.level;
-    if (!byLevel.has(lv)) byLevel.set(lv, []);
-    byLevel.get(lv).push(e);
+  const { controller, trigger } = select._bookDropdown;
+  controller.setOptions(select.options.length ? [...select.options].map((o) => ({ value: o.value, label: o.textContent })) : [{ value: '', label: 'No spells available to learn' }]);
+  controller.set(select.value);
+  trigger.disabled = disabled;
+}
+
+function syncSpellbookControls() {
+  const block = document.getElementById('sheetSpellbookBlock');
+  const writable = mayWriteSpellbook();
+  const ready = writable && spellbookAvailable && spellbookActorId === selectedActor && !spellbookLoading && !spellbookBusy;
+  if (block) {
+    const row = block.querySelector('.spellbook-learn-row'); if (row) row.hidden = !writable;
   }
-  for (const lv of [...byLevel.keys()].sort((x, y) => x - y)) {
-    list.appendChild(el('div', { cls: 'muted', text: levelLabel(lv) }));
-    for (const e of byLevel.get(lv)) {
-      const card = el('div', { cls: 'card' });
-      const head = el('div');
-      head.appendChild(el('b', { text: e.spell.name }));
-      if (e.prepared) head.appendChild(el('span', { cls: 'tag mine', text: 'prepared' }));
-      if (e.source) head.appendChild(el('span', { cls: 'tag', text: e.source }));
-      card.appendChild(head);
-      if (e.spell.description) {
-        card.appendChild(el('div', { cls: 'muted', text: e.spell.description }));
-      }
-      const row = el('div', { cls: 'row' });
-      row.appendChild(button(e.prepared ? 'unprepare' : 'prepare',
-        () => patchSpellbook(e, { prepared: !e.prepared })));
-      row.appendChild(button('forget', () => forgetSpell(e)));
-      card.appendChild(row);
-      list.appendChild(card);
+  const select = document.getElementById('sbSpell');
+  syncBookDropdown(select, !ready || !select.options.length);
+  syncBookDropdown(document.getElementById('sbSource'), !ready);
+  const learn = document.getElementById('learnSpell');
+  if (learn) { learn.hidden = !writable; learn.disabled = !ready || !select || !select.value; }
+  document.querySelectorAll('#sbList button, #sbList summary').forEach((button) => {
+    if (button.classList.contains('inv-item-name')) return;
+    if (button.tagName === 'BUTTON') button.disabled = !ready;
+  });
+}
+
+function spellbookError(message) {
+  const box = document.querySelector('#sheetSpellbookBlock .spellbook-error');
+  if (box) { box.textContent = message || ''; box.hidden = !message; }
+}
+
+async function loadSpellbook() {
+  const who = document.getElementById('sbWho'), list = document.getElementById('sbList');
+  const actorId = selectedActor;
+  const request = ++spellbookRequest;
+  const changed = spellbookActorId !== actorId;
+  spellbookLoading = true; spellbookAvailable = false;
+  if (changed || !actorId) { spellbook = []; spellbookActorId = actorId; spellbookError(''); renderSpellbook(); renderSpellChoices(); }
+  syncSpellbookControls();
+  if (!actorId) {
+    spellbookLoading = false;
+    who.textContent = 'select a character above';
+    list.textContent = ''; syncSpellbookControls(); return;
+  }
+  const actor = actors.find((a) => a.id === actorId);
+  who.textContent = actor ? actor.name : actorId;
+  try {
+    const result = await api('GET', `/api/campaigns/${campaign.id}/actors/${actorId}/spells`);
+    if (request !== spellbookRequest || selectedActor !== actorId) return;
+    spellbookLoading = false;
+    if (result.status !== 200 || !result.data || !Array.isArray(result.data.spells)) {
+      spellbook = []; renderSpellbook();
+      list.textContent = '';
+      list.appendChild(el('p', { cls: 'muted', text: result.status === 403 || result.status === 404 ? 'Spellbook unavailable.' : 'Could not load the spellbook. Reopen the sheet to retry.' }));
+      return;
+    }
+    spellbook = result.data.spells; spellbookAvailable = true;
+    renderSpellbook();
+  } catch (err) {
+    if (request === spellbookRequest && selectedActor === actorId) {
+      spellbookLoading = false; spellbook = []; renderSpellbook(); spellbookError('Could not load the spellbook. Reopen the sheet to retry.');
+    }
+  } finally {
+    if (request === spellbookRequest && selectedActor === actorId) {
+      spellbookLoading = false; renderSpellChoices(); syncSpellbookControls();
     }
   }
 }
 
-async function learnSpell() {
-  if (!selectedActor) {
-    show('learn', { status: 0, data: { error: 'select a character first' } });
+function renderSpellbook() {
+  const list = document.getElementById('sbList'); list.textContent = '';
+  const actorId = selectedActor;
+  const writable = mayWriteSpellbook();
+  const summary = document.querySelector('#sheetSpellbookBlock .spellbook-summary');
+  if (summary) summary.textContent = spellbook.length ? `${spellbook.length} learned · ${spellbook.filter((e) => e.prepared).length} prepared` : '';
+  if (!spellbook.length) {
+    list.appendChild(el('p', { cls: 'muted', text: spellbookLoading ? 'Loading spells…' : 'No spells learned yet.' }));
     return;
   }
+  const SS = window.VTTSpellSheet || {};
+  const byLevel = new Map();
+  for (const entry of spellbook) {
+    const level = entry.spell.level;
+    if (!byLevel.has(level)) byLevel.set(level, []);
+    byLevel.get(level).push(entry);
+  }
+  for (const level of [...byLevel.keys()].sort((a, b) => a - b)) {
+    list.appendChild(el('h4', { cls: 'spellbook-level', text: levelLabel(level) }));
+    for (const entry of byLevel.get(level).sort((a, b) => a.spell.name.localeCompare(b.spell.name))) {
+      const spell = entry.spell;
+      const card = el('div', { cls: 'card inv-entry spellbook-entry' });
+      card.tabIndex = 0;
+      card.setAttribute('role', 'group');
+      card.setAttribute('aria-label', `Spell: ${spell.name}`);
+      card.addEventListener('click', (event) => {
+        if (event.target.closest('button, input, select, textarea, a')) return;
+        if (SS.openPreview) SS.openPreview(spell);
+      });
+      card.addEventListener('keydown', (event) => {
+        if (event.target === card && (event.key === 'Enter' || event.key === ' ')) {
+          event.preventDefault();
+          if (SS.openPreview) SS.openPreview(spell);
+        }
+      });
+      const row = el('div', { cls: 'inv-entry-row' });
+      const identity = el('div', { cls: 'spellbook-identity' });
+      const name = button(spell.name, () => { if (SS.openPreview) SS.openPreview(spell); });
+      name.type = 'button'; name.className = 'btn small inv-item-name';
+      name.setAttribute('aria-label', `View ${spell.name}`); identity.appendChild(name);
+      const school = spell.properties && typeof spell.properties.school === 'string' ? spell.properties.school : '';
+      if (school) {
+        const label = el('span', { cls: 'spellbook-school', text: SS.schoolLabel ? SS.schoolLabel(school) : school });
+        if (SS.schoolColor) label.style.color = SS.schoolColor(school);
+        identity.appendChild(label);
+      }
+      if (entry.source) identity.appendChild(el('span', { cls: 'spellbook-source', text: ({ class: 'Class', race: 'Ancestry', item: 'Item', other: 'Other' })[entry.source] || entry.source }));
+      row.appendChild(identity);
+      if (writable) {
+        const prepared = button('Prepared', () => patchSpellbook(entry, { prepared: !entry.prepared }, actorId));
+        prepared.type = 'button'; prepared.className = 'btn small secondary inv-toggle';
+        prepared.setAttribute('aria-pressed', String(!!entry.prepared));
+        prepared.setAttribute('aria-label', `Prepared: ${spell.name}`); row.appendChild(prepared);
+        const forget = iconBtn(`Forget ${spell.name}`, 'delete', () => forgetSpell(entry, actorId));
+        forget.className = 'btn small danger inv-trash';
+        forget.querySelector('svg').setAttribute('aria-hidden', 'true');
+        row.appendChild(forget);
+      } else if (entry.prepared) row.appendChild(el('span', { cls: 'tag mine', text: 'Prepared' }));
+      card.appendChild(row);
+      if (spell.description) card.appendChild(el('p', { cls: 'spellbook-snippet', text: spell.description }));
+      list.appendChild(card);
+    }
+  }
+  syncSpellbookControls();
+}
+
+async function mutateSpellbook(method, suffix, body, actorId) {
+  if (spellbookBusy || actorId !== selectedActor || !mayWriteSpellbook() || !spellbookAvailable || spellbookLoading) return;
+  spellbookBusy = true; spellbookError(''); syncSpellbookControls();
+  try {
+    const result = await api(method, `/api/campaigns/${campaign.id}/actors/${actorId}/spells${suffix}`, body);
+    show(`${method} spellbook`, result);
+    if (result.status !== (method === 'POST' ? 201 : 200)) throw new Error((result.data && result.data.error) || 'Could not update the spellbook. Try again.');
+    if (selectedActor === actorId) await loadSpellbook();
+  } catch (err) {
+    if (selectedActor === actorId) spellbookError(err.message || 'Could not update the spellbook. Try again.');
+  } finally { spellbookBusy = false; syncSpellbookControls(); }
+}
+
+async function learnSpell() {
   const spellId = document.getElementById('sbSpell').value;
-  if (!spellId) { show('learn', { status: 0, data: { error: 'no spell selected' } }); return; }
+  if (!spellId) { spellbookError('Choose a spell to learn.'); return; }
   const body = { spell_id: spellId };
-  const src = document.getElementById('sbSource').value;
-  if (src) body.source = src;
-  const r = await api('POST',
-    `/api/campaigns/${campaign.id}/actors/${selectedActor}/spells`, body);
-  show('POST spellbook', r);
-  if (r.status === 201) await loadSpellbook();
+  const source = document.getElementById('sbSource').value;
+  if (source) body.source = source;
+  await mutateSpellbook('POST', '', body, selectedActor);
 }
 
-async function patchSpellbook(entry, patch) {
-  const r = await api('PATCH',
-    `/api/campaigns/${campaign.id}/actors/${selectedActor}/spells/${entry.spell_id}`, patch);
-  show('PATCH spellbook', r);
-  if (r.status === 200) await loadSpellbook();
+async function patchSpellbook(entry, patch, actorId = selectedActor) {
+  await mutateSpellbook('PATCH', `/${entry.spell_id}`, patch, actorId);
 }
 
-async function forgetSpell(entry) {
-  const r = await api('DELETE',
-    `/api/campaigns/${campaign.id}/actors/${selectedActor}/spells/${entry.spell_id}`);
-  show('DELETE spellbook', r);
-  if (r.status === 200) await loadSpellbook();
+function forgetSpell(entry, actorId = selectedActor) {
+  const title = `Forget ${entry.spell.name}?`;
+  const body = 'Remove this spell from this character’s spellbook? The catalogue spell and other characters’ spellbooks stay unchanged.';
+  const accept = () => mutateSpellbook('DELETE', `/${entry.spell_id}`, undefined, actorId);
+  if (window.VTTGame && window.VTTGame.confirm) window.VTTGame.confirm(title, body, true, accept);
+  else if (window.confirm(`${title}\n\n${body}`)) accept();
 }
 
 // Filter/search state for the item grid.
@@ -720,16 +1301,27 @@ function renderItems() {
   wireItemFilters();
   const IS = window.VTTItemSheet || {};
   const list = document.getElementById('itemList');
-  const picker = document.getElementById('invItem');
   list.textContent = '';
-  if (picker) picker.textContent = '';
 
-  // The inventory picker (separate control) always lists everything.
-  if (picker) {
-    for (const i of items) {
-      const known = i.identified === true;
-      const opt = el('option', { text: known ? i.name : `Unidentified ${i.type}` });
-      opt.value = i.id; picker.appendChild(opt);
+  // The inventory picker (a themed vtt-dd) always lists everything. Its popup is
+  // the app's custom list; the hidden #invItem input carries the chosen id, which
+  // addToBag reads. Init once, then just swap the option set.
+  const dd = document.getElementById('invItemDd');
+  if (dd && window.VTTCommon && window.VTTCommon.initDropdown) {
+    const opts = items.map((i) => ({
+      value: i.id,
+      label: i.identified === true ? i.name : `Unidentified ${i.type}`,
+    }));
+    if (invItemDd && invItemDd.setOptions) {
+      invItemDd.setOptions(opts);
+    } else {
+      invItemDd = window.VTTCommon.initDropdown(dd, opts);
+    }
+    // A native <select> defaults to its first option's value; preserve that so
+    // "Add to bag" without an explicit pick still targets the first item.
+    const hid = document.getElementById('invItem');
+    if (hid && !opts.some((o) => o.value === hid.value) && invItemDd && invItemDd.set) {
+      invItemDd.set(opts.length ? opts[0].value : '');
     }
   }
 
@@ -843,6 +1435,11 @@ function iconBtn(title, kind, onClick) {
 function renderInventory(rows) {
   const list = document.getElementById('invList');
   list.textContent = '';
+  const actorId = selectedActor;
+  const actor = actors.find((a) => a.id === actorId);
+  const mayWrite = !!actor && (isGm || (!actor.is_npc && me && actor.user_id === me.id));
+  const add = document.getElementById('addToBag');
+  if (add) add.hidden = !mayWrite;
   if (!rows || !rows.length) {
     list.appendChild(el('p', { cls: 'muted', text: 'bag is empty' }));
     return;
@@ -850,30 +1447,93 @@ function renderInventory(rows) {
   for (const r of rows) {
     const known = r.item.identified === true;
     const label = known ? r.item.name : `Unidentified ${r.item.type}`;
-    const card = el('div', { cls: 'card' });
-
-    const head = el('div');
-    head.appendChild(el('b', { text: `${label} ×${r.quantity}` }));
-    if (r.equipped) head.appendChild(el('span', { cls: 'tag', text: 'equipped' }));
-    if (r.attuned) head.appendChild(el('span', { cls: 'tag mine', text: 'attuned' }));
-    if (!known) head.appendChild(el('span', { cls: 'tag secret', text: 'unidentified' }));
-    card.appendChild(head);
-
-    const row = el('div', { cls: 'row' });
-    const qty = el('input');
-    qty.type = 'number';
-    qty.min = '1';
-    qty.value = String(r.quantity);
-    qty.style.maxWidth = '70px';
-    row.appendChild(qty);
-    row.appendChild(button('set qty', () => patchInv(r, { quantity: Number(qty.value) })));
-    row.appendChild(button(r.equipped ? 'unequip' : 'equip',
-      () => patchInv(r, { equipped: !r.equipped })));
-    row.appendChild(button(r.attuned ? 'un-attune' : 'attune',
-      () => patchInv(r, { attuned: !r.attuned })));
-    row.appendChild(button('drop', () => dropInv(r)));
-    card.appendChild(row);
-    list.appendChild(card);
+    const card = el('div', { cls: 'card inv-entry' });
+    const row = el('div', { cls: 'inv-entry-row' });
+    const name = button(label, () => {
+      if (window.VTTItemSheet && window.VTTItemSheet.openPreview) {
+        window.VTTItemSheet.openPreview(previewProjection(r.item));
+      }
+    });
+    name.type = 'button';
+    name.className = 'btn small inv-item-name';
+    name.setAttribute('aria-label', `View ${label}`);
+    row.appendChild(name);
+    const error = el('p', { cls: 'inv-error' });
+    error.setAttribute('role', 'alert');
+    error.hidden = true;
+    let busy = false;
+    async function mutate(method, patch) {
+      if (busy || !mayWrite) return;
+      busy = true;
+      error.hidden = true;
+      const controls = [...row.querySelectorAll('button, input')];
+      controls.forEach((n) => { n.disabled = true; });
+      try {
+        const result = await api(method,
+          `/api/campaigns/${campaign.id}/actors/${actorId}/inventory/${r.id}`, patch);
+        show(`${method} inventory`, result);
+        if (result.status !== 200) {
+          throw new Error((result.data && result.data.error) || 'Could not update this item. Try again.');
+        }
+        if (selectedActor === actorId) await loadBag();
+      } catch (err) {
+        error.textContent = err.message || 'Could not update this item. Try again.';
+        error.hidden = false;
+      } finally {
+        busy = false;
+        controls.forEach((n) => { n.disabled = false; });
+      }
+    }
+    if (mayWrite) {
+      const quantity = el('div', { cls: 'inv-quantity' });
+      const qtyLabel = el('label', { cls: 'inv-qty-label', text: 'Qty' });
+      const qty = el('input', { cls: 'inv-qty' });
+      qty.type = 'number'; qty.min = '1'; qty.max = '9999'; qty.step = '1'; qty.required = true;
+      qty.value = String(r.quantity);
+      qty.setAttribute('aria-label', `Quantity of ${label}`);
+      qtyLabel.appendChild(qty);
+      quantity.appendChild(qtyLabel);
+      const save = button('✓', () => saveQuantity());
+      save.type = 'button'; save.className = 'btn small secondary inv-qty-save';
+      save.setAttribute('aria-label', `Save quantity of ${label}`);
+      save.title = 'Save quantity'; save.hidden = true;
+      function saveQuantity() {
+        if (qty.value === String(r.quantity)) return;
+        if (!qty.reportValidity()) return;
+        mutate('PATCH', { quantity: Number(qty.value) });
+      }
+      qty.addEventListener('input', () => { save.hidden = qty.value === String(r.quantity); });
+      qty.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); saveQuantity(); }
+        if (e.key === 'Escape') {
+          e.preventDefault(); e.stopPropagation(); qty.value = String(r.quantity); save.hidden = true;
+        }
+      });
+      quantity.appendChild(save);
+      row.appendChild(quantity);
+      for (const [key, title] of [['equipped', 'Equipped'], ['attuned', 'Attuned']]) {
+        const toggle = button(title, () => mutate('PATCH', { [key]: !r[key] }));
+        toggle.type = 'button'; toggle.className = 'btn small secondary inv-toggle';
+        toggle.setAttribute('aria-pressed', String(!!r[key]));
+        toggle.setAttribute('aria-label', `${title}: ${label}`);
+        row.appendChild(toggle);
+      }
+      const remove = iconBtn(`Remove ${label} from bag`, 'delete', () => {
+        const title = `Remove ${label}?`;
+        const body = `Remove the entire stack (${r.quantity}) from this character’s bag? The catalogue item stays available. This does not place an item on the map.`;
+        if (window.VTTGame && window.VTTGame.confirm) {
+          window.VTTGame.confirm(title, body, true, () => mutate('DELETE'));
+        } else if (window.confirm(`${title}\n\n${body}`)) mutate('DELETE');
+      });
+      remove.className = 'btn small danger inv-trash';
+      remove.querySelector('svg').setAttribute('aria-hidden', 'true');
+      row.appendChild(remove);
+    } else {
+      row.appendChild(el('span', { cls: 'inv-read-qty', text: `Qty ${r.quantity}` }));
+      if (r.equipped) row.appendChild(el('span', { cls: 'tag', text: 'Equipped' }));
+      if (r.attuned) row.appendChild(el('span', { cls: 'tag mine', text: 'Attuned' }));
+    }
+    card.appendChild(row); card.appendChild(error); list.appendChild(card);
   }
 }
 
@@ -904,30 +1564,24 @@ async function loadCampaign(idArg) {
 
   if (isGm) await loadMembers();
   if (isGm) renderItemEditor();
+  if (isGm) renderSpellEditor();
   await refresh();
   connectSocket();
 }
 
-// Populate the "controlled by" picker. The server refuses a user_id that is not
-// an active member, so offering anything else would only produce 400s.
+// Active members, for the creation modal's "Controlled by" dropdown. Stored in a
+// module variable rather than injected into a <select> now that creation is a
+// themed modal. Active members only: the server refuses a user_id that is not an
+// active member (assigning a character to a banned user would hand them write
+// access to a campaign they cannot otherwise reach), so offering one would only
+// manufacture 400s.
+let memberOptions = [];
 async function loadMembers() {
   const r = await api('GET', `/api/campaigns/${campaign.id}/members`);
-  const sel = document.getElementById('acOwner');
-  sel.textContent = '';
-  const none = el('option', { text: 'nobody (GM runs it)' });
-  none.value = '';
-  sel.appendChild(none);
-  if (r.status !== 200) return;
-  // Active members only. The server refuses a user_id that is not an active
-  // member, so listing a kicked or banned one would only manufacture 400s — and
-  // that refusal exists for a real reason: assigning a character to a banned
-  // user would hand them write access to a row inside a campaign they cannot
-  // otherwise reach.
-  for (const m of (r.data.members || []).filter((x) => x.status === 'active')) {
-    const o = el('option', { text: m.username + (m.is_gm ? ' (GM)' : '') });
-    o.value = m.user_id || m.id;
-    sel.appendChild(o);
-  }
+  if (r.status !== 200) { memberOptions = []; return; }
+  memberOptions = (r.data.members || [])
+    .filter((x) => x.status === 'active')
+    .map((m) => ({ id: m.user_id || m.id, label: m.username + (m.is_gm ? ' (GM)' : '') }));
 }
 
 async function refresh() {
@@ -942,51 +1596,107 @@ async function refresh() {
   renderItems();
   await loadSpells();
   await loadAssets();
-  if (selectedActor) { renderSheet(); await loadBag(); await loadSpellbook(); }
+  // A background refresh must NOT clobber an in-progress sheet edit. Re-render
+  // the sheet only when it is not dirty; the bag and spellbook are read-only
+  // views and always refresh.
+  if (selectedActor) {
+    if (!sheetDirty) renderSheet();
+    await loadBag(); await loadSpellbook();
+  }
   if (isGm && document.getElementById('itemEditor').childElementCount === 0) renderItemEditor();
+  { const sp = document.getElementById('spellEditor'); if (isGm && sp && sp.childElementCount === 0) renderSpellEditor(); }
+  { const ae = document.getElementById('actorEditor'); if (ae && ae.childElementCount <= 1) renderActorEditor(); }
 
-  if (!isGm) {
-    const mine = actors.filter((x) => me && x.user_id === me.id).length;
-    document.getElementById('actorCap').textContent = `${mine}/3 characters`;
+  // Character cap, shown to everyone: a player sees their per-player cap, the GM
+  // the campaign-wide count.
+  const capEl = document.getElementById('actorCap');
+  if (capEl) {
+    if (isGm) capEl.textContent = `${actors.length} character(s) in this campaign`;
+    else {
+      const mine = actors.filter((x) => me && x.user_id === me.id).length;
+      capEl.textContent = `${mine}/3 characters · The GM chooses which characters appear in the party.`;
+    }
   }
 }
 
-async function createActor() {
-  if (!campaign) return;
-  // Only fields this role may actually write are sent. A player's body carries
-  // no ability scores at all, so the server's silent-ignore path is never taken
-  // through the UI — see the create/PATCH asymmetry noted in PROJECT_STATE.
-  const body = {
-    name: str('acName'),
-    img_url: str('acImg'),
-    hp_current: num('acHp'),
-  };
-  if (isGm) {
-    Object.assign(body, {
-      hp_max: num('acHpMax'),
-      size: str('acSize'),
-      armor_class: num('acAc'),
-      level: num('acLevel'),
-      speed: num('acSpeed'),
-      strength: num('acStr'),
-      dexterity: num('acDex'),
-      constitution: num('acCon'),
-      intelligence: num('acInt'),
-      wisdom: num('acWis'),
-      charisma: num('acCha'),
-      is_npc: document.getElementById('acIsNpc').value === 'true',
-      user_id: str('acOwner') || null,
-    });
-  }
-  // Nothing is added for a player. Since 2026-08-02 the server REFUSES a
-  // GM-owned field at create rather than discarding it, so sending `size` or
-  // `hp_max` here would earn a 403 instead of being quietly dropped — which is
-  // the point of the change.
+// Character creation now lives in the themed #actorDialog, driven by
+// VTTActorSheet. The form sends only the caller's tier of fields (the server
+// forces user_id/is_npc for a player and refuses GM fields), and portrait +
+// framing ride along in the SAME create request.
+function renderActorEditor() {
+  const panel = document.getElementById('actorEditor');
+  if (!panel || !window.VTTActorSheet) return;
+  const dialog = document.getElementById('actorDialog');
 
-  const r = await api('POST', `/api/campaigns/${campaign.id}/actors`, body);
-  show('POST actor', r);
-  if (r.status === 409) log('CAP: ' + (r.data.error || 'refused'));
-  await refresh();
+  let editorDirty = false;
+  if (dialog) {
+    dialog._vttCloseGuard = function () {
+      if (!editorDirty) return true;
+      if (window.VTTGame && typeof window.VTTGame.confirm === 'function') {
+        window.VTTGame.confirm(
+          'Discard new character?',
+          'This character has not been created yet. If you leave now your entries will be lost.',
+          true,
+          function () {
+            editorDirty = false;
+            if (window.VTTCommon && window.VTTCommon.closeDialog) window.VTTCommon.closeDialog(dialog, { force: true });
+            else if (dialog.close) dialog.close();
+          }
+        );
+        return false;
+      }
+      return true;
+    };
+  }
+  function closeEditor() {
+    if (dialog && window.VTTCommon && window.VTTCommon.closeDialog) window.VTTCommon.closeDialog(dialog);
+    else if (dialog && dialog.close) dialog.close();
+  }
+
+  window.VTTActorSheet.render(panel, {
+    isGm,
+    members: memberOptions,
+    onDirtyChange: (d) => { editorDirty = d; },
+    requestClose: closeEditor,
+    // Opening/cancelling image selection must not discard the draft — the picker
+    // only calls back with a chosen url + frame, and VTTActorSheet keeps them in
+    // its own draft until Create.
+    onPickImage: (current, cb, curFrame) => {
+      if (!window.VTTImagePicker) return;
+      window.VTTImagePicker.open({
+        campaignId: campaign ? campaign.id : null,
+        kind: 'portrait',
+        current,
+        frame: curFrame,
+        onChoose: (url, frame) => cb(url, frame),
+      });
+    },
+    onSave: async (body) => {
+      const r = await api('POST', `/api/campaigns/${campaign.id}/actors`, body);
+      show('POST actor', r);
+      if (r.status === 409) log('CAP: ' + (r.data.error || 'refused'));
+      return r;
+    },
+    onDone: async (data) => {
+      editorDirty = false;
+      closeEditor();
+      await refresh();
+      // Open the new character's sheet.
+      if (data && data.actor) selectActor(data.actor);
+    },
+  });
+}
+
+function newActor() {
+  renderActorEditor();
+  openActorDialog();
+}
+
+function openActorDialog() {
+  const d = document.getElementById('actorDialog');
+  if (d && window.VTTCommon && typeof window.VTTCommon.openDialog === 'function') {
+    window.VTTCommon.openDialog(d, { invoker: document.getElementById('newActor') });
+  }
 }
 
 async function adjustHp(a, delta) {
@@ -997,11 +1707,12 @@ async function adjustHp(a, delta) {
   await refresh();
 }
 
-async function deleteActor(a) {
-  if (!window.confirm(`Delete ${a.name}? Tokens of this character stay on their maps as unlinked markers.`)) return;
+async function performActorDelete(a) {
   const r = await api('DELETE', `/api/campaigns/${campaign.id}/actors/${a.id}`);
   show('DELETE actor', r);
-  if (r.status === 200) log(`${a.name} deleted — ${r.data.tokens_unlinked} token(s) unlinked, not destroyed`);
+  if (r.status === 200) {
+    log(`${a.name} deleted — ${r.data.tokens_unlinked} token(s) unlinked, ${r.data.spellbook_entries} spellbook entr(ies) removed`);
+  }
   if (selectedActor === a.id) {
     selectedActor = null;
     document.getElementById('invWho').textContent = 'select a character above';
@@ -1010,6 +1721,20 @@ async function deleteActor(a) {
     loadSpellbook();
   }
   await refresh();
+}
+
+function deleteActor(a) {
+  // Deleting a character removes its inventory and spellbook entries and leaves
+  // any placed tokens on their maps as UNLINKED markers (the FK is SET NULL, not
+  // CASCADE). Name that blast radius before it happens.
+  const title = `Delete ${a.name}?`;
+  const body = 'This removes the character along with its inventory and spellbook entries. Any tokens of it stay on their maps as unlinked markers. This cannot be undone.';
+  if (window.VTTGame && typeof window.VTTGame.confirm === 'function') {
+    window.VTTGame.confirm(title, body, true, () => { performActorDelete(a); });
+    return;
+  }
+  if (typeof window.confirm === 'function' && !window.confirm(`${title}\n\n${body}`)) return;
+  performActorDelete(a);
 }
 
 // The item editor serves BOTH create and edit from one field set, so a field can
@@ -1118,7 +1843,7 @@ async function toggleIdentified(i) {
   await refresh();
 }
 
-async function deleteItem(i) {
+async function performItemDelete(i) {
   const r = await api('DELETE', `/api/campaigns/${campaign.id}/items/${i.id}`);
   show('DELETE item', r);
   if (r.status === 200) log(`item deleted — removed from ${r.data.inventory_rows_removed} bag(s)`);
@@ -1127,14 +1852,61 @@ async function deleteItem(i) {
   if (isGm) renderItemEditor();
 }
 
+function deleteItem(i) {
+  // Deleting a catalogue item cascades to every character's inventory that holds
+  // it. Warn before it happens — the themed confirm on game.html, a window.confirm
+  // fallback on the standalone harness. Mirrors deleteSpell.
+  const title = `Delete ${i.name}?`;
+  const body = 'This removes the item from the catalogue and from every character’s inventory that has it. This cannot be undone.';
+  if (window.VTTGame && typeof window.VTTGame.confirm === 'function') {
+    window.VTTGame.confirm(title, body, true, () => { performItemDelete(i); });
+    return;
+  }
+  if (typeof window.confirm === 'function' && !window.confirm(`${title}\n\n${body}`)) return;
+  performItemDelete(i);
+}
+
+// True while the open sheet has unsaved edits — consulted before a background
+// refresh/socket update re-renders it, so a dirty draft is never silently
+// overwritten.
+let sheetDirty = false;
+
 function selectActor(a) {
+  // Switching characters replaces the sheet draft. If the current one is dirty,
+  // confirm through the themed prompt before discarding it.
+  if (sheetDirty && selectedActor && selectedActor !== a.id) {
+    if (window.VTTGame && typeof window.VTTGame.confirm === 'function') {
+      window.VTTGame.confirm(
+        'Discard changes?',
+        'The character sheet you are editing has unsaved changes. Switching characters now will lose them.',
+        true,
+        () => { sheetDirty = false; selectActor(a); }
+      );
+      return;
+    }
+    if (typeof window.confirm === 'function' && !window.confirm('Discard unsaved sheet changes and switch characters?')) return;
+    sheetDirty = false;
+  }
+
   selectedActor = a.id;
   document.getElementById('invWho').textContent = a.name;
-  document.getElementById('sheetWho').textContent = a.name;
+  const who = document.getElementById('sheetWho'); if (who) who.textContent = a.name;
+  sheetDirty = false;
   renderActors();
   renderSheet();
+  openSheetDialog();
   loadBag();
   loadSpellbook();
+}
+
+// On game.html the sheet lives inside <dialog id="sheetDialog">, which must be
+// opened explicitly. On the standalone actors.html the sheet is an inline panel
+// with no dialog, so this is a guarded no-op there.
+function openSheetDialog() {
+  const d = document.getElementById('sheetDialog');
+  if (d && window.VTTCommon && typeof window.VTTCommon.openDialog === 'function') {
+    window.VTTCommon.openDialog(d, { invoker: document.getElementById('actorList') });
+  }
 }
 
 // The sheet is rendered from the row already in `actors`, which is whatever this
@@ -1143,40 +1915,115 @@ function selectActor(a) {
 // "what may I see", decided on the server.
 function renderSheet() {
   const panel = document.getElementById('sheetPanel');
+  if (!panel) return;
+  const oldTab = panel.querySelector('.fo-tab[aria-selected="true"]');
+  const oldPage = panel.querySelector('.fo-page:not([hidden])');
+  const activeTab = oldTab && oldPage && panel.dataset.actorId === selectedActor
+    ? ['character', 'features', 'inventory', 'spellbook', 'journal'].find((id) => oldPage.classList.contains('fo-page-' + id)) : 'character';
+  // Park the live block before any sheet clear, including no-selection/projected views.
+  const bookBlock = document.getElementById('sheetSpellbookBlock');
+  if (bookBlock) { bookBlock.hidden = true; panel.parentNode.appendChild(bookBlock); }
+  panel.dataset.actorId = selectedActor || '';
   const a = actors.find((x) => x.id === selectedActor);
   if (!a) {
     panel.textContent = '';
     panel.appendChild(el('p', { cls: 'muted', text: 'select a character above' }));
     return;
   }
+
+  const dialog = document.getElementById('sheetDialog');
+  // Rescue the inventory block out of #sheetPanel before VTTSheet.render wipes
+  // the panel — otherwise the relocated block would be destroyed on re-render.
+  // It is re-inserted into the Inventory tab via onInventoryMount below. Parked
+  // on the dialog's card-inner (or the dialog) so it survives the wipe.
+  {
+    const invBlock = document.getElementById('sheetInvBlock');
+    if (invBlock && dialog) {
+      const parkTo = dialog.querySelector('.card-inner') || dialog;
+      invBlock.hidden = true;            // hidden while parked (e.g. projected NPC)
+      parkTo.appendChild(invBlock);
+    }
+  }
+  if (dialog) {
+    dialog._vttCloseGuard = function () {
+      if (!sheetDirty) return true;
+      if (window.VTTGame && typeof window.VTTGame.confirm === 'function') {
+        window.VTTGame.confirm(
+          'Discard changes?',
+          'This character sheet has unsaved changes. If you leave now they will be lost.',
+          true,
+          function () {
+            sheetDirty = false;
+            if (window.VTTCommon && window.VTTCommon.closeDialog) window.VTTCommon.closeDialog(dialog, { force: true });
+            else if (dialog.close) dialog.close();
+          }
+        );
+        return false;
+      }
+      return true;
+    };
+  }
+
+  const mayWriteActor = isGm || (me && a.user_id === me.id);
   window.VTTSheet.render(panel, {
     actor: a,
     isGm,
     me,
+    onDirtyChange: (d) => { sheetDirty = d; },
+    // The Inventory tab hands us its mount; move the existing inventory block
+    // (subhead + add-to-bag row + #invList, with their ids and one-time bindings
+    // intact) into it. Moving — not recreating — preserves the actors.js wiring.
+    // On the standalone harness there is no such block, so this is a no-op.
+    activeTab,
+    onSpellbookMount: (mount) => {
+      const src = document.getElementById('sheetSpellbookBlock');
+      if (src && mount) { src.hidden = false; mount.appendChild(src); syncSpellbookControls(); }
+    },
+    onInventoryMount: (mount) => {
+      const src = document.getElementById('sheetInvBlock');
+      if (src && mount) { src.hidden = false; mount.appendChild(src); }
+    },
+    requestClose: () => {
+      if (dialog && window.VTTCommon && window.VTTCommon.closeDialog) window.VTTCommon.closeDialog(dialog);
+      else if (dialog && dialog.close) dialog.close();
+    },
+    // The portrait's hover-pencil calls this. It opens the shared image picker
+    // (same grid modal as the dashboard/items). A chosen URL is handed back to
+    // the sheet's hidden #sheet-img_url field (marking the draft dirty so Save
+    // appears); framing is applied to the crop columns and PATCHed immediately,
+    // exactly as the old attach() flow did — the crop lives with the portrait.
+    onPickPortrait: (current, setUrl) => {
+      if (!window.VTTImagePicker || !window.VTTImagePicker.open || !mayWriteActor) return;
+      window.VTTImagePicker.open({
+        campaignId: campaign ? campaign.id : null,
+        kind: 'portrait',
+        current,
+        frame: {
+          offsetX: Number(a.img_offset_x) || 0,
+          offsetY: Number(a.img_offset_y) || 0,
+          scale: Number(a.img_scale) > 0 ? Number(a.img_scale) : 1,
+        },
+        frameTitle: 'Frame the portrait',
+        frameNote: 'Drag to move · scroll to zoom. This is the crop tokens will use.',
+        onChoose: async (url, framing) => {
+          setUrl(url || '');
+          if (framing) {
+            const r = await api('PATCH', `/api/campaigns/${campaign.id}/actors/${a.id}`, {
+              img_offset_x: framing.offsetX, img_offset_y: framing.offsetY, img_scale: framing.scale,
+            });
+            show('PATCH framing', r);
+            if (r.status === 200) await refresh();
+          }
+        },
+      });
+    },
     onSave: async (patch) => {
       const r = await api('PATCH', `/api/campaigns/${campaign.id}/actors/${a.id}`, patch);
       show('PATCH actor', r);
-      if (r.status === 200) await refresh();
+      if (r.status === 200) { sheetDirty = false; await refresh(); }
       return r;
     },
   });
-
-  // The sheet's portrait field is rendered from a field list by sheet.js, so
-  // the element does not exist until this point and the picker has to be
-  // attached AFTER every render rather than once at load.
-  //
-  // attach() is idempotent — it marks the input and refuses a second button —
-  // which is what makes calling it on every render safe rather than accumulating
-  // one button per re-render.
-  if (window.VTTImagePicker) {
-    window.VTTImagePicker.attach('sheet-img_url', {
-      campaignId: () => (campaign ? campaign.id : null),
-      // A character's own picture is a portrait; framing then places it inside
-      // the token square. Two separate steps, deliberately: the image belongs to
-      // the character, the crop belongs to the square.
-      kind: 'portrait',
-    });
-  }
 }
 
 async function loadBag() {
@@ -1233,7 +2080,7 @@ function connectSocket() {
   // {id, campaign_id, user_id, name, img_url, is_npc, size} — and for an NPC
   // with no visible token, nothing arrives at all. Reading the two logs side by
   // side is more convincing than any assertion.
-  for (const ev of ['actor:updated', 'actor:deleted', 'item:created', 'item:updated', 'item:deleted']) {
+  for (const ev of ['actor:updated', 'actor:deleted', 'party:changed', 'item:created', 'item:updated', 'item:deleted']) {
     socket.on(ev, (d) => {
       log(`${ev}  ${JSON.stringify(d)}`);
       refresh();
@@ -1272,7 +2119,7 @@ function connectSocket() {
 // Seam: the harness "load" button is gone on the game page; guarded. All other
 // bindings below use ids that survive into game.html.
 { const _lc = document.getElementById('loadCampaign'); if (_lc) _lc.addEventListener('click', () => loadCampaign()); }
-document.getElementById('createActor').addEventListener('click', createActor);
+{ const _na = document.getElementById('newActor'); if (_na) _na.addEventListener('click', newActor); }
 document.getElementById('newItem').addEventListener('click', newItem);
 document.getElementById('addToBag').addEventListener('click', addToBag);
 document.getElementById('clearLog').addEventListener('click', () => { logEl.textContent = ''; });
@@ -1281,22 +2128,13 @@ document.getElementById('clearLog').addEventListener('click', () => { logEl.text
 // windows can be opened from the same link.
 initFraming();
 
-// M6: fill the new-character image field from the library. The character sheet
-// has its own img_url field rendered by sheet.js from a field list, so it is
-// attached lazily below rather than here — the element does not exist until a
-// sheet is opened.
-if (window.VTTImagePicker) {
-  window.VTTImagePicker.attach('acImg', {
-    campaignId: () => (campaign ? campaign.id : null),
-    kind: 'portrait',
-  });
-}
-
 document.getElementById('assetUpload').addEventListener('click', uploadAsset);
 document.getElementById('assetLink').addEventListener('click', addAssetLink);
-document.getElementById('createSpell').addEventListener('click', createSpell);
-document.getElementById('learnSpell').addEventListener('click', learnSpell);
-document.getElementById('spFilter').addEventListener('change', loadSpells);
+// The inline "add spell" form and the server-side level <select> are gone —
+// authoring is now the modal editor, filtering is client-side. Bindings guarded
+// so a page without these elements (should not happen now) doesn't throw.
+{ const _ns = document.getElementById('newSpell'); if (_ns) _ns.addEventListener('click', newSpell); }
+{ const _ls = document.getElementById('learnSpell'); if (_ls) _ls.addEventListener('click', learnSpell); }
 
 const preset = new URLSearchParams(window.location.search).get('campaign');
 { const _ci = document.getElementById('campaignId'); if (_ci && preset) _ci.value = preset; }

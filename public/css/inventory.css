@@ -1,0 +1,16 @@
+/* Inventory actions share the application's btn palette and interaction states. */
+:is(#invList, #sbList) .inv-entry { padding: 10px 12px; }
+:is(#invList, #sbList) .inv-entry-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+:is(#invList, #sbList) .inv-item-name { flex: 1 1 150px; justify-content: flex-start; text-align: left; white-space: normal; overflow-wrap: anywhere; min-width: 0; font-weight: 600; color: var(--text); }
+:is(#invList, #sbList) .inv-item-name:hover { color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+:is(#invList, #sbList) .inv-quantity { display: flex; align-items: center; gap: 5px; }
+:is(#invList, #sbList) .inv-qty-label { display: flex; align-items: center; gap: 6px; font-size: 0.76rem; color: var(--text-muted); }
+:is(#invList, #sbList) input.inv-qty { width: 64px; min-width: 64px; height: 34px; min-height: 34px; box-sizing: border-box; font: inherit; text-align: center; padding: 4px 6px; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 2px; }
+:is(#invList, #sbList) .inv-toggle[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+:is(#invList, #sbList) .inv-toggle[aria-pressed="true"]::before { content: '✓'; }
+:is(#invList, #sbList) .inv-error { color: var(--danger); margin: 8px 0 0; font-size: 0.82rem; }
+:is(#invList, #sbList) [hidden] { display: none !important; }
+@media (pointer: coarse) { :is(#invList, #sbList) .btn, :is(#invList, #sbList) input.inv-qty { min-height: 44px; } }
+
+:is(#invList, #sbList) .inv-trash { margin-left: auto; min-width: 34px; padding: 6px 8px; }
+:is(#invList, #sbList) .inv-trash svg { width: 18px; height: 18px; display: block; }

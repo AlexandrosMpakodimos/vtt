@@ -110,6 +110,9 @@
 
   // ── Tabs (spec §2): the dashboard's APG tablist, now in common.js ──────────
   function initTabs() {
+    var libraryTab = $('tabLibrary');
+    if (libraryTab) { libraryTab.hidden = !isGm; libraryTab.disabled = !isGm; }
+    if (!isGm && $('panelLibrary')) $('panelLibrary').hidden = true;
     C.initTabs('sideTabs', onTab);
     initLibrarySubtabs();
   }
@@ -424,7 +427,7 @@
   }
 
   function anyDialogOpen() {
-    var ids = ['sheetDialog', 'itemDialog', 'scenesDialog', 'alignDialog', 'confirmDialog'];
+    var ids = ['sheetDialog', 'itemDialog', 'spellDialog', 'actorDialog', 'scenesDialog', 'alignDialog', 'confirmDialog'];
     for (var i = 0; i < ids.length; i++) { if (isDialogOpen($(ids[i]))) return true; }
     // The framing modal is a plain overlay, not a <dialog>; actors.js owns its
     // own Esc, so treat it as "handled above" too.

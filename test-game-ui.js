@@ -44,7 +44,7 @@ const USER = { id: 'u-self', username: 'selene', avatar_url: null };
 // on the page; here it is faked below, so it is not eval'd as a classic script).
 const SCRIPTS = [
   'theme.js', 'common.js', 'imagepicker.js', 'closednotice.js',
-  'scene.js', 'combat.js', 'actors.js', 'sheet.js', 'itemsheet.js', 'align.js', 'game.js',
+  'scene.js', 'combat.js', 'actors.js', 'sheet.js', 'itemsheet.js', 'spellsheet.js', 'actorsheet.js', 'align.js', 'game.js',
 ];
 
 // A URL-dispatching fake API. Records every call; returns canned game state.
@@ -182,7 +182,7 @@ const SHELL = [
   'stripZone', 'btnEncounter',
   'sideBar', 'sideTabs', 'tabChat', 'tabChars', 'tabLibrary', 'panelChat', 'panelChars', 'panelLibrary',
   'railZone', 'railToken', 'railFog', 'railAlign', 'railScenes', 'railEncounter', 'tokenPop',
-  'sheetDialog', 'itemDialog', 'scenesDialog', 'alignDialog', 'drawer', 'gameGate',
+  'sheetDialog', 'itemDialog', 'spellDialog', 'actorDialog', 'scenesDialog', 'alignDialog', 'drawer', 'gameGate',
 ];
 
 (async () => {
@@ -192,9 +192,19 @@ const SHELL = [
       idsIn('public/scene.html'), idsIn('public/combat.html'),
       idsIn('public/actors.html'), idsIn('public/align.html'),
     )));
-    // 156 — the item filters moved behind a toggle: +#itemFilterToggle,
-    // +#itemFilterPanel, +#itemFilterCount (present in actors.html and game.html).
-    t('harness id union is 156', union.length === 156, 'got ' + union.length);
+    // 153 — the Characters section was redesigned to mirror Items/Spells: the
+    // inline creation form was removed (-#acName, -#acImg, -#acHp, -#acSize,
+    // -#acHpMax, -#acAc, -#acLevel, -#acSpeed, -#acStr, -#acDex, -#acCon,
+    // -#acInt, -#acWis, -#acCha, -#acIsNpc, -#acOwner, -#createActor = -17) and a
+    // roster toolbar + creation-form host were added (+#newActor, +#charSearch,
+    // +#charFilterToggle, +#charFilterCount, +#charFilterPanel, +#charFilterType,
+    // +#charFilterControl, +#actorEditor = +8), for a net -9 from the earlier
+    // 160. The inventory item picker was then themed from a native <select> into
+    // a vtt-dd (+#invItemDd, +#invItem-btn = +2), giving 153. (#actorDialog /
+    // #actorHeadTitle are game.html-only, like the other editor dialogs, so they
+    // are in SHELL, not the harness union.)
+    // Shared spellbook block adds one static id to the union.
+    t('harness id union is 155', union.length === 155, 'got ' + union.length);
 
     const expected = new Set(union.filter((id) => DEAD.indexOf(id) === -1));
     SHELL.forEach((id) => expected.add(id));
@@ -371,6 +381,12 @@ const SHELL = [
     await wait(120);
     t('PLAYER: page evaluates without throwing', pl.threw.length === 0, pl.threw.join(' | '));
     t('PLAYER: body.is-gm NOT set', !pl.document.body.classList.contains('is-gm'));
+    t('PLAYER: Library tab hidden and disabled', pl.document.getElementById('tabLibrary').hidden && pl.document.getElementById('tabLibrary').disabled);
+    pl.document.getElementById('tabLibrary').click();
+    t('PLAYER: Library panel stays hidden', pl.document.getElementById('panelLibrary').hidden);
+    pl.document.getElementById('tabChars').dispatchEvent(new pl.window.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    t('PLAYER: arrow navigation skips Library', pl.document.getElementById('tabChat').getAttribute('aria-selected') === 'true');
+
 
     // Player sees exactly the two-icon rail; GM-only rail items are hidden via
     // CSS (.gm-only { display:none } until body.is-gm). Assert the class is
@@ -462,7 +478,7 @@ const SHELL = [
     // The boot bodies were parameterised (no unconditional input read remains in
     // the loader path on the game page).
     t('scene.js boot(id) exists', /function boot\(id\)\s*\{[\s\S]{0,80}campaignId\s*=\s*id/.test(sceneJs));
-    t('combat.js boot(campaignId) exists', /function boot\(campaignId\)\s*\{\s*return loadCampaign\(campaignId\)/.test(combatJs));
+    t('combat.js boot awaits user before loading campaign', /async function boot\(campaignId\)\s*\{\s*await whoami\(\);\s*return loadCampaign\(campaignId\)/.test(combatJs));
     t('actors.js boot(campaignId) exists', /function boot\(campaignId\)\s*\{\s*return loadCampaign\(campaignId\)/.test(actorsJs));
     t('align.js boot(campaignId, scene) exists', /function boot\(campaignId,\s*scene\)/.test(alignJs));
   }

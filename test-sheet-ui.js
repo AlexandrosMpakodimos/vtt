@@ -46,8 +46,12 @@ window.HTMLElement.prototype.scrollIntoView = window.HTMLElement.prototype.scrol
 window.eval(fs.readFileSync('public/js/common.js', 'utf8'));
 window.eval(fs.readFileSync('public/js/sheet.js', 'utf8'));
 window.eval(fs.readFileSync('public/js/itemsheet.js', 'utf8'));
+window.eval(fs.readFileSync('public/js/spellsheet.js', 'utf8'));
+window.eval(fs.readFileSync('public/js/actorsheet.js', 'utf8'));
 const Sheet = window.VTTSheet;
 const ItemSheet = window.VTTItemSheet;
+const SpellSheet = window.VTTSpellSheet;
+const ActorSheet = window.VTTActorSheet;
 
 let pass = 0, fail = 0;
 function check(name, cond, detail = '') {
@@ -92,14 +96,21 @@ function mount() {
 }
 function field(container, key) { return container.querySelector('#sheet-' + key); }
 function itemField(container, key) { return container.querySelector('#item-' + key); }
+function spellField(container, key) { return container.querySelector('#spell-' + key); }
 function saveButton(container) {
-  // Prefer the primary footer action; fall back to text match. (Disclosure
-  // titles can contain the substring "save", so an exact/primary match avoids
-  // grabbing e.g. a "Charges & saves" toggle.)
-  const primary = container.querySelector('.ie-footer .btn.primary, button.primary');
+  // Prefer the footer's primary action. The folio has TWO .btn.primary buttons
+  // ("Edit sheet" in the edit bar and "Save changes" in the footer), and a bare
+  // `button.primary` selector returns the first in DOM order (Edit sheet), so
+  // scope to the footer first.
+  const footerPrimary = container.querySelector('.ie-footer .btn.primary, .fo-footer .btn.primary');
+  if (footerPrimary) return footerPrimary;
+  const primary = container.querySelector('button.primary');
   if (primary) return primary;
   return [...container.querySelectorAll('button')].find((b) => /^(save changes|create item|save|create)$/i.test(b.textContent.trim()));
 }
+// The folio has no edit mode — every control is always live. Kept as a no-op so
+// existing call sites read naturally.
+function enterEdit(/* container */) { /* no edit mode; controls are always live */ }
 async function clickSave(container) {
   const b = saveButton(container);
   b.dispatchEvent(new window.Event('click'));
@@ -137,7 +148,8 @@ async function clickSave(container) {
   //                              beside Strength would be a worse interface AND
   //                              a false claim that the sheet is where they
   //                              live.
-  const NOT_SHEET_FIELDS = ['is_npc', 'user_id', 'img_offset_x', 'img_offset_y', 'img_scale'];
+  // in_party is managed by the GM from the roster cards.
+  const NOT_SHEET_FIELDS = ['is_npc', 'in_party', 'user_id', 'img_offset_x', 'img_offset_y', 'img_scale'];
   const missing = GW.filter((k) => !onSheet.has(k) && !NOT_SHEET_FIELDS.includes(k));
   check('no writable column is missing from the sheet', missing.length === 0, missing.join(', '));
 
@@ -166,12 +178,12 @@ async function clickSave(container) {
   Sheet.render(c, { actor: baseActor(), isGm: false, me: PLAYER, onSave: async () => ({ status: 200 }) });
   check('a player may edit their own current HP', field(c, 'hp_current').disabled === false);
   check('a player may edit notes', field(c, 'notes').disabled === false);
-  check('a player may NOT edit strength', field(c, 'strength').disabled === true);
-  check('a player may NOT edit max HP', field(c, 'hp_max').disabled === true);
-  check('a player may NOT edit level', field(c, 'level').disabled === true);
+  check('a player may edit their own strength', field(c, 'strength').disabled === false);
+  check('a player may edit their own max HP', field(c, 'hp_max').disabled === false);
+  check('a player may edit their own level', field(c, 'level').disabled === false);
   // Shown-but-disabled rather than hidden: a player should be able to READ their
   // own armour class. Hiding it would make the sheet lie about the character.
-  check('GM-only fields are rendered, not hidden', field(c, 'armor_class') !== null);
+  check('a player may edit their own AC', field(c, 'armor_class').disabled === false);
   check('and their value is visible', field(c, 'armor_class').value === '15');
 
   c = mount();
@@ -189,7 +201,122 @@ async function clickSave(container) {
   c = mount();
   Sheet.render(c, { actor: projectedActor(), isGm: false, me: PLAYER, onSave: async () => ({ status: 200 }) });
   check('a projected NPC renders as a projection, not a page of blanks', field(c, 'hp_max') === null);
-  check('and says so plainly', /has not shared/.test(c.textContent));
+  check('and says so plainly', /Statistics unavailable/.test(c.textContent));
+  check('...and a projected NPC has NO ability blocks', c.querySelectorAll('.fo-ability').length === 0);
+  check('...and offers no Edit action', ![...c.querySelectorAll('button')].some((b) => /Edit sheet/.test(b.textContent)));
+
+  // ======================================================================
+  // 2.5 the folio: inline editing, tabbed, footer-on-change, Cancel reverts
+  // ======================================================================
+  c = mount();
+  Sheet.render(c, { actor: baseActor(), isGm: true, me: GM, onSave: async () => ({ status: 200 }) });
+  check('the folio renders (two-column root)', !!c.querySelector('.fo-root'));
+  check('every field is a live control from the start', field(c, 'strength') !== null && field(c, 'hp_current') !== null);
+  check('all six ability blocks are present and expanded', c.querySelectorAll('.fo-ability').length === 6);
+  check('skills are nested (18 skill rows total)', c.querySelectorAll('.fo-skill-row').length === 18);
+  check('Stats / Features / Inventory / Spellbook / Backstory tabs exist',
+    [...c.querySelectorAll('.fo-tab')].map((t) => t.textContent).join(',') === 'Stats,Features,Inventory,Spellbook,Backstory');
+  check('there is NO separate Edit sheet action', ![...c.querySelectorAll('button')].some((b) => /Edit sheet/.test(b.textContent)));
+  check('the Save/Cancel footer is hidden until the first change', c.querySelector('.fo-footer').hidden === true);
+
+  // Changing any field reveals the footer.
+  field(c, 'hp_current').value = '9';
+  field(c, 'hp_current').dispatchEvent(new window.Event('input'));
+  check('changing a field reveals the Save/Cancel footer', c.querySelector('.fo-footer').hidden === false);
+  check('...and marks the folio dirty', c.classList.contains('fo-dirty'));
+
+  // Currency moved to the Inventory tab; the Backstory tab is narrative-only.
+  check('the currency strip lives on the Inventory page',
+    !!c.querySelector('.fo-page-inventory .fo-currency') && !c.querySelector('.fo-page-journal .fo-currency'));
+  check('the Inventory page exposes a mount for the bag UI', !!c.querySelector('.fo-page-inventory .fo-inv-mount'));
+  check('the size field is a themed vtt-dd (not a native select)',
+    !!c.querySelector('#sheet-size') && c.querySelector('#sheet-size').type === 'hidden' && !!c.querySelector('#sheet-size').closest('.vtt-dd'));
+  check('the Advanced data section is gone from the Backstory tab',
+    !c.querySelector('.fo-advanced') && ![...c.querySelectorAll('summary')].some((s) => /Advanced/.test(s.textContent)));
+  check('...but the data node is still built (unknown keys still round-trip)', !!c.querySelector('#sheet-data'));
+
+  // Tab switching must NOT save/discard — a pending edit survives a tab change.
+  field(c, 'personality_traits').value = 'Bold and reckless';
+  field(c, 'personality_traits').dispatchEvent(new window.Event('input'));
+  check('Spellbook has a mount for its live controls', !!c.querySelector('.fo-page-spellbook .fo-spellbook-mount'));
+  const bookTab = [...c.querySelectorAll('.fo-tab')].find((t) => t.textContent === 'Spellbook');
+  bookTab.click();
+  check('Spellbook tab opens its page', !c.querySelector('.fo-page-spellbook').hidden);
+  check('Spellbook tab preserves dirty HP', field(c, 'hp_current').value === '9' && !c.querySelector('.fo-footer').hidden);
+  const featTab = [...c.querySelectorAll('.fo-tab')].find((t) => t.textContent === 'Features');
+  featTab.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  const charTab = [...c.querySelectorAll('.fo-tab')].find((t) => t.textContent === 'Stats');
+  charTab.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  check('a pending edit survives a tab switch', field(c, 'personality_traits').value === 'Bold and reckless');
+  check('...and the footer stays visible after switching tabs', c.querySelector('.fo-footer').hidden === false);
+
+  // Cancel reverts every field to its loaded value and hides the footer.
+  const cancelBtn = [...c.querySelectorAll('.fo-footer button')].find((b) => /^Cancel$/.test(b.textContent));
+  cancelBtn.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  check('Cancel reverts an edited number to its loaded value', field(c, 'hp_current').value === String(baseActor().hp_current));
+  check('...reverts an edited narrative field too', field(c, 'personality_traits').value === '');
+  check('...and hides the footer again', c.querySelector('.fo-footer').hidden === true);
+  check('...and clears the dirty state', !c.classList.contains('fo-dirty'));
+
+  // A failed save keeps the sheet open with the footer + edits intact.
+  {
+    const fc = mount();
+    Sheet.render(fc, { actor: baseActor(), isGm: true, me: GM, onSave: async () => ({ status: 403, data: { error: 'only the GM may change: strength' } }) });
+    field(fc, 'strength').value = '18';
+    field(fc, 'strength').dispatchEvent(new window.Event('input'));
+    await clickSave(fc);
+    check('a failed save keeps the footer showing', fc.querySelector('.fo-footer').hidden === false);
+    check('...and the edited value is retained', field(fc, 'strength').value === '18');
+    check('...and the error is surfaced', /only the GM may change/.test(fc.textContent));
+  }
+
+  // A successful save hides the footer and rebaselines (Cancel afterwards is a
+  // no-op — nothing to revert).
+  {
+    const sc2 = mount();
+    Sheet.render(sc2, { actor: baseActor(), isGm: true, me: GM, onSave: async () => ({ status: 200 }) });
+    field(sc2, 'hp_current').value = '7';
+    field(sc2, 'hp_current').dispatchEvent(new window.Event('input'));
+    await clickSave(sc2);
+    check('a successful save hides the footer', sc2.querySelector('.fo-footer').hidden === true);
+    check('...and clears the dirty state', !sc2.classList.contains('fo-dirty'));
+  }
+
+  // The portrait is edited through a hover-pencil button that opens the shared
+  // picker via ctx.onPickPortrait — NOT a visible URL field or "choose…" button.
+  {
+    const pc2 = mount();
+    let pickedCurrent = null; let handOff = null;
+    Sheet.render(pc2, {
+      actor: baseActor({ img_url: 'old.png' }), isGm: true, me: GM,
+      onPickPortrait: (current, setUrl) => { pickedCurrent = current; handOff = setUrl; },
+      onSave: async () => ({ status: 200 }),
+    });
+    const pbtn = pc2.querySelector('.fo-portrait-btn');
+    check('the portrait is an edit button with a pencil overlay',
+      !!pbtn && !!pc2.querySelector('.fo-portrait-overlay'));
+    check('there is no visible raw URL text field', pc2.querySelector('#sheet-img_url').type === 'hidden');
+    check('there is no "choose…" button in the identity column',
+      ![...pc2.querySelectorAll('button')].some((b) => /choose/i.test(b.textContent)));
+    pbtn.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    check('clicking the portrait opens the picker with the current url', pickedCurrent === 'old.png');
+    check('...and the footer is not yet shown (nothing changed)', pc2.querySelector('.fo-footer').hidden === true);
+    // The picker hands back a chosen URL.
+    handOff('new.png');
+    check('a chosen url lands in the hidden field', pc2.querySelector('#sheet-img_url').value === 'new.png');
+    check('...and reveals the footer (the draft is now dirty)', pc2.querySelector('.fo-footer').hidden === false);
+    await clickSave(pc2);
+  }
+
+  // A read-only viewer (another player's PC) gets the composed sheet with NO
+  // editable control and no footer.
+  {
+    const rc2 = mount();
+    Sheet.render(rc2, { actor: baseActor({ user_id: 'someone-else' }), isGm: false, me: PLAYER, onSave: async () => ({ status: 200 }) });
+    check('a read-only viewer still sees the composed folio', !!rc2.querySelector('.fo-root') && rc2.querySelectorAll('.fo-ability').length === 6);
+    check('...with every control disabled', [...rc2.querySelectorAll('.fo-slot input, .fo-slot select, .fo-slot textarea')].every((n) => n.disabled));
+    check('...and no Save/Cancel footer', rc2.querySelector('.fo-footer') === null);
+  }
 
   // ======================================================================
   // 3. only dirty fields are sent
@@ -236,8 +363,19 @@ async function clickSave(container) {
   field(c, 'hp_current').value = '2';
   await clickSave(c);
   check('a player\'s save never carries a GM-only field',
-    sent && !Object.keys(sent).some((k) => ['strength', 'hp_max', 'level', 'armor_class', 'speed', 'size', 'class', 'race'].includes(k)),
+    sent && !Object.keys(sent).some((k) => ['user_id', 'is_npc', 'in_party'].includes(k)),
     JSON.stringify(sent));
+
+  sent = null;
+  c = mount();
+  Sheet.render(c, { actor: baseActor(), isGm: false, me: PLAYER, onSave: async (p) => { sent = p; return { status: 200 }; } });
+  const statChanges = { hp_max: 42, armor_class: 18, level: 5, speed: 40, strength: 17, dexterity: 16, constitution: 15, intelligence: 14, wisdom: 13, charisma: 12 };
+  for (const [key, value] of Object.entries(statChanges)) {
+    check('owner can edit ' + key, field(c, key).disabled === false);
+    field(c, key).value = String(value);
+  }
+  await clickSave(c);
+  check('owner stat edits reach the save callback as numbers', sent && Object.entries(statChanges).every(([key, value]) => baseActor()[key] === value ? !(key in sent) : sent[key] === value));
 
   // ======================================================================
   // 4. `data` is ONE column — reassembly must be lossless
@@ -447,6 +585,149 @@ async function clickSave(container) {
   check('read view does not leak the real name anywhere in its DOM', !/Flame Tongue/.test(rc.innerHTML));
 
   // ======================================================================
+  // 5.5 the spell editor (VTTSpellSheet) — single-flow, no image, no identified
+  // ======================================================================
+  const baseSpell = {
+    id: 's-1', campaign_id: 'c-1', name: 'Magic Missile', level: 1,
+    description: 'Three darts of force.',
+    // school owned by a field; homebrew is an UNKNOWN key that must survive.
+    properties: { school: 'evocation', casting_time: '1 action', homebrew: true },
+    created_at: 1, updated_at: 1,
+  };
+
+  let spellSent = null; let spellNew = null;
+  c = mount();
+  SpellSheet.render(c, { spell: null, onSave: async (p, n) => { spellSent = p; spellNew = n; return { status: 201, data: { spell: { id: 'x' } } }; } });
+  await clickSave(c);
+  check('creating a spell with no name is refused client-side', spellSent === null);
+  check('...and the missing-name error is shown', /name is required/i.test(c.textContent));
+
+  spellField(c, 'name').value = 'Shield';
+  spellField(c, 'name').dispatchEvent(new window.Event('input'));
+  await clickSave(c);
+  check('a new spell is sent as a create', spellNew === true);
+  check('...carrying the filled-in name', spellSent && spellSent.name === 'Shield', JSON.stringify(spellSent));
+  check('...and level defaults to 0 (Cantrip) as a number', spellSent && spellSent.level === 0 && typeof spellSent.level === 'number', JSON.stringify(spellSent));
+  check('a brand-new spell sends no empty properties object', spellSent && !('properties' in spellSent), JSON.stringify(spellSent));
+
+  // Level dropdown is a real vtt-dd driven by common.js — setting the hidden
+  // input + firing change is how a click resolves.
+  {
+    const cc = mount();
+    let sent = null;
+    SpellSheet.render(cc, { spell: null, onSave: async (p) => { sent = p; return { status: 201, data: { spell: { id: 'y' } } }; } });
+    spellField(cc, 'name').value = 'Fireball';
+    spellField(cc, 'name').dispatchEvent(new window.Event('input'));
+    const lvl = spellField(cc, 'level');
+    check('the level control is a hidden input inside a vtt-dd', lvl && lvl.type === 'hidden' && lvl.closest('.vtt-dd'));
+    lvl.value = '3';
+    lvl.dispatchEvent(new window.Event('change'));
+    await clickSave(cc);
+    check('the chosen level is sent as an integer', sent && sent.level === 3, JSON.stringify(sent));
+  }
+
+  // Editing: only changed fields go, and UNKNOWN properties survive untouched.
+  spellSent = null;
+  c = mount();
+  SpellSheet.render(c, { spell: baseSpell, schoolValues: [], onSave: async (p, n) => { spellSent = p; spellNew = n; return { status: 200 }; } });
+  check('an unchanged spell has its save button disabled', saveButton(c).disabled === true);
+  spellField(c, 'description').value = 'Now three glowing darts.';
+  spellField(c, 'description').dispatchEvent(new window.Event('input'));
+  await clickSave(c);
+  check('an edit is sent as a PATCH (not a create)', spellNew === false);
+  check('only the changed field is in the patch', spellSent && spellSent.description === 'Now three glowing darts.', JSON.stringify(spellSent));
+  check('...and the name is not resent when unchanged', spellSent && !('name' in spellSent), JSON.stringify(spellSent));
+
+  // Changing a detail field carries the WHOLE reassembled properties object,
+  // and the unknown `homebrew` key rides along untouched.
+  spellSent = null;
+  c = mount();
+  SpellSheet.render(c, { spell: baseSpell, schoolValues: [], onSave: async (p) => { spellSent = p; return { status: 200 }; } });
+  spellField(c, 'range').value = '120 feet';
+  spellField(c, 'range').dispatchEvent(new window.Event('input'));
+  await clickSave(c);
+  check('editing a detail field sends the whole properties object', spellSent && spellSent.properties, JSON.stringify(spellSent));
+  check('...the new detail value is present', spellSent.properties.range === '120 feet');
+  check('...the untouched school is preserved', spellSent.properties.school === 'evocation');
+  check('...and the UNKNOWN homebrew key survives the round-trip', spellSent.properties.homebrew === true, JSON.stringify(spellSent.properties));
+
+  // A custom (non-standard) school value is preserved and offered, not dropped.
+  {
+    const cc = mount();
+    let sent = null;
+    const customSpell = { id: 's-c', campaign_id: 'c-1', name: 'Chaos Bolt', level: 2, description: '', properties: { school: 'chronomancy' }, created_at: 1, updated_at: 1 };
+    SpellSheet.render(cc, { spell: customSpell, schoolValues: ['chronomancy'], onSave: async (p) => { sent = p; return { status: 200 }; } });
+    const schoolDd = spellField(cc, 'school').closest('.vtt-dd');
+    check('a custom school is shown as the selected value', schoolDd.querySelector('.vtt-dd-btn').textContent === 'chronomancy', schoolDd.querySelector('.vtt-dd-btn').textContent);
+    // Editing only the name must NOT drag properties into the patch (nothing in
+    // properties changed), so the custom school can't be clobbered.
+    spellField(cc, 'name').value = 'Chaos Bolt II';
+    spellField(cc, 'name').dispatchEvent(new window.Event('input'));
+    await clickSave(cc);
+    check('a name-only edit does not resend (and cannot rewrite) properties',
+      sent && sent.name === 'Chaos Bolt II' && !('properties' in sent), JSON.stringify(sent));
+    // Editing a detail DOES send properties — and the custom school rides along.
+    sent = null;
+    spellField(cc, 'duration').value = 'instantaneous';
+    spellField(cc, 'duration').dispatchEvent(new window.Event('input'));
+    await clickSave(cc);
+    check('editing a detail preserves the custom school in the sent properties',
+      sent && sent.properties && sent.properties.school === 'chronomancy' && sent.properties.duration === 'instantaneous',
+      JSON.stringify(sent && sent.properties));
+  }
+
+  // A failed save keeps the draft open with an actionable error, and does not
+  // resubmit while in flight.
+  {
+    const cc = mount();
+    let calls = 0;
+    SpellSheet.render(cc, { spell: null, onSave: async (p) => { calls += 1; return { status: 400, data: { error: 'level must be between 0 and 9' } }; } });
+    spellField(cc, 'name').value = 'Bad';
+    spellField(cc, 'name').dispatchEvent(new window.Event('input'));
+    await clickSave(cc);
+    check('a server error is surfaced to the user', /between 0 and 9/.test(cc.textContent));
+    check('the draft stays open after a failed save (name field still present)', spellField(cc, 'name') !== null);
+    check('the save is not swallowed — exactly one attempt was made', calls === 1, String(calls));
+  }
+
+  // The themed discard guard: a clean editor closes freely; a dirty one vetoes
+  // and routes through the confirm. (Here we exercise VTTSpellSheet's dirty
+  // signalling via ctx.onDirtyChange, which actors.js feeds into _vttCloseGuard.)
+  {
+    const cc = mount();
+    let dirty = false;
+    SpellSheet.render(cc, { spell: baseSpell, schoolValues: [], onDirtyChange: (d) => { dirty = d; }, onSave: async () => ({ status: 200 }) });
+    check('a freshly-rendered editor is not dirty', dirty === false);
+    spellField(cc, 'description').value = 'changed';
+    spellField(cc, 'description').dispatchEvent(new window.Event('input'));
+    check('editing a field marks the editor dirty (drives the close guard)', dirty === true);
+  }
+
+  // Cancel routes through ctx.requestClose (which actors.js wires to the guarded
+  // close), rather than closing the dialog directly.
+  {
+    const cc = mount();
+    let closeRequested = false;
+    SpellSheet.render(cc, { spell: null, requestClose: () => { closeRequested = true; }, onSave: async () => ({ status: 200 }) });
+    const cancel = [...cc.querySelectorAll('button')].find((b) => /^cancel$/i.test(b.textContent.trim()));
+    cancel.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    check('Cancel asks the host to close (through the guard), not the dialog', closeRequested === true);
+  }
+
+  // The read view is complete and free of any learn/prepare controls (it is not
+  // the spellbook).
+  {
+    const rcS = mount();
+    SpellSheet.renderRead(rcS, baseSpell);
+    check('read view shows the spell name', /Magic Missile/.test(rcS.textContent));
+    check('read view shows the level badge', /Level 1/.test(rcS.textContent));
+    check('read view shows the school label', /Evocation/.test(rcS.textContent));
+    check('read view shows the full description', /Three darts/.test(rcS.textContent));
+    check('read view carries NO learn/prepare/forget controls',
+      ![...rcS.querySelectorAll('button')].some((b) => /learn|prepare|forget/i.test(b.textContent)));
+  }
+
+  // ======================================================================
   // 6. the JSONB byte budgets, which the server enforces at 8192
   // ======================================================================
   const worstData = {};
@@ -469,6 +750,130 @@ async function clickSave(container) {
   const propBytes = Buffer.byteLength(JSON.stringify(worstProps), 'utf8');
   check('a completely full item fits inside the 8192-byte properties cap',
     propBytes < 8192, `${propBytes} bytes`);
+
+  // ======================================================================
+  // 7. the character creation form (VTTActorSheet) — tiered payloads
+  // ======================================================================
+  // A GM's create body may carry the privileged fields; a player's must not,
+  // because the server FORCES user_id/is_npc and REFUSES any other GM field.
+  let gmBody = null;
+  let gc = mount();
+  ActorSheet.render(gc, {
+    isGm: true,
+    members: [{ id: 'u-9', label: 'Bob' }],
+    onSave: async (body) => { gmBody = body; return { status: 201, data: { actor: { id: 'x' } } }; },
+  });
+  check('a GM create with no name is refused client-side', (() => {
+    gmBody = null; saveButton(gc).dispatchEvent(new window.Event('click')); return gmBody === null;
+  })());
+  check('...and the missing-name error is shown', /name is required/i.test(gc.textContent));
+  gc.querySelector('#actor-name').value = 'Villain';
+  gc.querySelector('#actor-name').dispatchEvent(new window.Event('input'));
+  await clickSave(gc);
+  check('a GM create sends the name', gmBody && gmBody.name === 'Villain', JSON.stringify(gmBody));
+  check('...current HP as an integer', gmBody && gmBody.hp_current === 10 && typeof gmBody.hp_current === 'number');
+  check('...is_npc (GM-only) is present', gmBody && 'is_npc' in gmBody);
+  check('...user_id (GM-only) is present', gmBody && 'user_id' in gmBody);
+  check('...size (GM-only) is present', gmBody && 'size' in gmBody, JSON.stringify(gmBody));
+  check('...and the GM form exposes a Statistics disclosure', /Statistics/.test(gc.textContent));
+
+  let plBody = null;
+  const pc = mount();
+  ActorSheet.render(pc, {
+    isGm: false,
+    onSave: async (body) => { plBody = body; return { status: 201, data: { actor: { id: 'y' } } }; },
+  });
+  pc.querySelector('#actor-name').value = 'Aria';
+  pc.querySelector('#actor-name').dispatchEvent(new window.Event('input'));
+  await clickSave(pc);
+  check('a player create sends the name', plBody && plBody.name === 'Aria', JSON.stringify(plBody));
+  check('...and current HP', plBody && typeof plBody.hp_current === 'number');
+  check('...but NO is_npc (the server forces it)', plBody && !('is_npc' in plBody), JSON.stringify(plBody));
+  check('...NO user_id (the server forces it to self)', plBody && !('user_id' in plBody));
+  check('...NO size or any other GM capability', plBody
+    && !('size' in plBody) && !('hp_max' in plBody) && !('level' in plBody) && !('armor_class' in plBody)
+    && !('strength' in plBody), JSON.stringify(plBody));
+  check('the player form does NOT expose a Statistics disclosure', !/Statistics/.test(pc.textContent));
+
+  // A failed create keeps the draft (name field still present) and surfaces the
+  // error — e.g. the 409 cap refusal.
+  {
+    const fc = mount();
+    let calls = 0;
+    ActorSheet.render(fc, {
+      isGm: false,
+      onSave: async () => { calls += 1; return { status: 409, data: { error: 'you may hold at most 3 characters in a campaign' } }; },
+    });
+    fc.querySelector('#actor-name').value = 'Fourth';
+    fc.querySelector('#actor-name').dispatchEvent(new window.Event('input'));
+    await clickSave(fc);
+    check('a cap refusal is surfaced to the user', /at most 3 characters/.test(fc.textContent));
+    check('...the draft stays open (name field still present)', fc.querySelector('#actor-name') !== null);
+    check('...and exactly one create attempt was made', calls === 1, String(calls));
+  }
+
+  // Portrait + framing ride along in the create body when a portrait was chosen.
+  {
+    const ic = mount();
+    let body = null;
+    ActorSheet.render(ic, {
+      isGm: false,
+      onPickImage: (cur, cb) => cb('https://example.com/p.png', { offsetX: 0.2, offsetY: -0.1, scale: 1.5 }),
+      onSave: async (b) => { body = b; return { status: 201, data: { actor: { id: 'z' } } }; },
+    });
+    ic.querySelector('#actor-name').value = 'Framed';
+    ic.querySelector('#actor-name').dispatchEvent(new window.Event('input'));
+    ic.querySelector('.ae-portrait').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    await clickSave(ic);
+    check('a chosen portrait is sent on create', body && body.img_url === 'https://example.com/p.png', JSON.stringify(body));
+    check('...with its framing, in the SAME create request', body
+      && body.img_offset_x === 0.2 && body.img_offset_y === -0.1 && body.img_scale === 1.5, JSON.stringify(body));
+  }
+
+  // ======================================================================
+  // 8. the character sheet dirty/close-guard signalling
+  // ======================================================================
+  // The restyled VTTSheet signals dirtiness through onDirtyChange, which
+  // actors.js feeds into the dialog _vttCloseGuard. A fresh sheet is clean; an
+  // edit marks it dirty; a successful save clears it again.
+  {
+    const sc = mount();
+    let dirty = false;
+    Sheet.render(sc, {
+      actor: baseActor(), isGm: true, me: GM,
+      onDirtyChange: (d) => { dirty = d; },
+      onSave: async () => ({ status: 200 }),
+    });
+    check('a freshly-rendered sheet is not dirty', dirty === false);
+    const nameField = field(sc, 'name');
+    nameField.value = 'Aria the Bold';
+    nameField.dispatchEvent(new window.Event('input'));
+    check('editing a field marks the sheet dirty (drives the close guard)', dirty === true);
+    await clickSave(sc);
+    check('a successful save clears the dirty flag', dirty === false);
+  }
+
+  // Sheet Cancel reverts in-progress edits and clears dirty — it does NOT close
+  // the sheet (that is the dialog X's job, guarded by _vttCloseGuard).
+  {
+    const sc = mount();
+    let dirtyState = null;
+    let closeRequested = false;
+    Sheet.render(sc, {
+      actor: baseActor(), isGm: true, me: GM,
+      onDirtyChange: (d) => { dirtyState = d; },
+      requestClose: () => { closeRequested = true; },
+      onSave: async () => ({ status: 200 }),
+    });
+    field(sc, 'hp_current').value = '3';
+    field(sc, 'hp_current').dispatchEvent(new window.Event('input'));
+    check('editing marks the sheet dirty', dirtyState === true);
+    const cancel = [...sc.querySelectorAll('.fo-footer button')].find((b) => /^cancel$/i.test(b.textContent.trim()));
+    cancel.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    check('sheet Cancel reverts the edit', field(sc, 'hp_current').value === String(baseActor().hp_current));
+    check('...clears the dirty state (close-guard stops prompting)', dirtyState === false);
+    check('...and does NOT close the sheet', closeRequested === false);
+  }
 
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);

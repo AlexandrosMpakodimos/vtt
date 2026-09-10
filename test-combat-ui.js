@@ -138,10 +138,14 @@ window.VTTDice = {
   colorsetFor: () => ({}),
 };
 
+// Exercise the production presence markup, absent from the developer harness.
+const gameDom = new JSDOM(fs.readFileSync('public/game.html', 'utf8'));
+document.body.appendChild(document.importNode(gameDom.window.document.getElementById('presence'), true));
+
 // ---- load ------------------------------------------------------------------
 let loadError = null;
 try {
-  window.eval(fs.readFileSync('public/js/common.js', 'utf8') + '\n' + fs.readFileSync('public/js/combat.js', 'utf8'));
+  window.eval(fs.readFileSync('public/js/common.js', 'utf8') + '\n' + fs.readFileSync('public/js/combat.js', 'utf8').replace(/\}\)\(\);\s*$/, 'Object.assign(window, { renderPresence, renderMessage, whisperTargets, renderWhisperTargets }); window.testPlayerSpeakers = async () => { const previousMe = me; const previousGm = isGm; me = { id: "U2" }; isGm = false; await loadSpeakable(); me = previousMe; isGm = previousGm; };\n})();'));
 } catch (err) {
   loadError = err;
 }
@@ -217,12 +221,50 @@ console.log('\n--- the entry points run without throwing ---');
   const spkBtn = document.getElementById('speakAsBtn');
   const clickSpk = (elm) => elm.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
   clickSpk(spkBtn);   // open → renders items
-  const spkOpts = [...document.querySelectorAll('#speakAsDD .vtt-dd-opt')].map((li) => li.textContent);
-  clickSpk(spkBtn);   // close
-  t('the picker offers "yourself" first', spkOpts[0] === 'yourself', spkOpts.join(' | '));
+  const spkOpts = [...document.querySelectorAll('body > .vtt-dd-list .vtt-dd-opt')].map((li) => li.textContent);
+  const floatedList = document.querySelector('body > .vtt-dd-list');
+  t('speaker list escapes sidebar containing block', floatedList && !floatedList.hidden);
+  const goblinOption = [...floatedList.children].find(li => li.textContent.includes('Goblin'));
+  clickSpk(goblinOption);
+  t('clicking character updates selected speaker', document.getElementById('speakAs').value === 'A2');
+  t('speaker menu returns home after selection', document.querySelector('#speakAsDD .vtt-dd-list').hidden);
+  clickSpk(spkBtn);
+  clickSpk(document.querySelector('body > .vtt-dd-list .vtt-dd-opt'));
+  t('role option clears character selection', document.getElementById('speakAs').value === '');
+  t('the picker offers the GM role first', spkOpts[0] === 'GM', spkOpts.join(' | '));
   t('a GM is offered every character including NPCs',
     spkOpts.some((o) => o.includes('Goblin (NPC)')), spkOpts.join(' | '));
   t('and a player character', spkOpts.some((o) => o === 'Aria'), spkOpts.join(' | '));
+
+  const presenceHead = document.getElementById('presenceHead');
+  t('players start expanded', presenceHead.getAttribute('aria-expanded') === 'true' && !document.getElementById('presenceList').hidden);
+  clickSpk(presenceHead);
+  window.renderPresence();
+  t('presence refresh preserves explicit collapse', document.getElementById('presenceList').hidden);
+  clickSpk(presenceHead);
+  t('players can be reopened', !document.getElementById('presenceList').hidden);
+
+  window.renderMessage({ speaker_name: 'Alex', speaker_role: 'gm', speaker_as: 'Goblin', content: 'Hello' });
+  t('GM character identity appears beside username', document.querySelector('#chat .msg:last-child .who').textContent === 'Alex (Goblin): ');
+  window.renderMessage({ speaker_name: 'Alex', speaker_role: 'gm', content: 'Hello' });
+  t('default GM identity', document.querySelector('#chat .msg:last-child .who').textContent === 'Alex (GM): ');
+  window.renderMessage({ speaker_name: 'Maria', speaker_role: 'player', content: 'Hello' });
+  t('default Player identity', document.querySelector('#chat .msg:last-child .who').textContent === 'Maria (Player): ');
+  const check = document.querySelector('.whisper-option input');
+  check.checked = true;
+  check.dispatchEvent(new window.Event('change', { bubbles: true }));
+  t('themed recipient checkbox drives whisper payload', window.whisperTargets()[0] === sel.options[0].value);
+  window.renderWhisperTargets();
+  t('recipient refresh retains selection', document.querySelector('.whisper-option input').checked);
+  clickSpk(document.querySelector('.whisper-options button'));
+  t('Everyone clears private recipients', window.whisperTargets() === undefined);
+
+  await window.testPlayerSpeakers();
+  clickSpk(spkBtn);
+  const playerOptions = [...document.querySelectorAll('body > .vtt-dd-list .vtt-dd-opt')];
+  t('player sees role reset and owned character only', playerOptions.map(o => o.textContent).join('|') === 'Player|Aria');
+  clickSpk(playerOptions[1]);
+  t('player can choose their character', document.getElementById('speakAs').value === 'A1');
 
   console.log('\n--- the colour palette shows what is claimed ---');
   const pal = document.getElementById('palette');
@@ -275,6 +317,14 @@ console.log('\n--- the entry points run without throwing ---');
   if (poolRow) {
     t('the pool row is visible while the pool is non-empty', poolRow.hidden === false);
   }
+
+  const rightClick = (node) => node.dispatchEvent(new window.MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+  t('right click suppresses browser menu on a die', rightClick(byDie(6)) === false);
+  t('right click removes exactly one from stack', /1d6/.test(document.getElementById('trayPool').textContent));
+  rightClick([...document.querySelectorAll('.pool-tag')].find(tg => /1d6/.test(tg.textContent)));
+  rightClick(byDie(6));
+  t('last die disappears and empty decrement is harmless', !/d6/.test(document.getElementById('trayPool').textContent));
+  click(byDie(6)); click(byDie(6));
 
   // A per-type ✕ removes that whole type.
   const d6tagX = [...document.querySelectorAll('#trayPool .pool-tag')]

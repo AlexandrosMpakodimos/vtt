@@ -118,7 +118,7 @@ let members = [];
 // socket events). Everyone in `members` is shown in the accordion; those in this
 // set get the "connected" indicator.
 let onlineUsers = new Set();
-let presenceExpanded = false;
+let presenceExpanded = true;
 let socket = null;
 let dice3d = null;        // window.VTTDice once the ES module has loaded
 let dice3dOn = true;
@@ -595,8 +595,8 @@ function renderMessage(m) {
   // existed — they read as a plain name rather than being asserted to be
   // something they never recorded.
   let tag = '';
-  if (m.speaker_role === 'gm') tag = ' (DM)';
-  else if (m.speaker_as) tag = ` (${m.speaker_as})`;
+  if (m.speaker_as) tag = ` (${m.speaker_as})`;
+  else if (m.speaker_role === 'gm') tag = ' (GM)';
   else if (m.speaker_role === 'player') tag = ' (Player)';
   const who = el('span', { cls: 'who', text: `${m.speaker_name || 'someone'}${tag}: ` });
   // Same colour identity in the log as on the dice, but rendered in the variant
@@ -739,6 +739,52 @@ function renderWhisperTargets() {
     if (chosen.has(m.id)) o.selected = true;
     sel.appendChild(o);
   }
+  // Keep the native selection as the shared API for chat and dice; expose
+  // themed checkboxes so multiple recipients need no modifier-key gestures.
+  sel.hidden = true;
+  let picker = sel.parentElement.querySelector('.whisper-picker');
+  if (!picker) {
+    picker = document.createElement('details');
+    picker.className = 'whisper-picker';
+    const summary = document.createElement('summary');
+    summary.className = 'vtt-dd-btn';
+    summary.setAttribute('aria-label', 'Message recipients');
+    picker.appendChild(summary);
+    const choices = el('div', { cls: 'whisper-options' });
+    picker.appendChild(choices);
+    sel.after(picker);
+    document.addEventListener('click', (e) => { if (!picker.contains(e.target)) picker.open = false; });
+    picker.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { picker.open = false; summary.focus(); }
+    });
+  }
+  const summary = picker.querySelector('summary');
+  const choices = picker.querySelector('.whisper-options');
+  const refreshLabel = () => {
+    const selected = [...sel.selectedOptions];
+    summary.textContent = selected.length ? `Whisper · ${selected.map(o => o.textContent).join(', ')}` : 'Everyone';
+    summary.title = summary.textContent;
+    picker.classList.toggle('is-private', selected.length > 0);
+  };
+  choices.textContent = '';
+  const reset = el('button', { cls: 'btn small secondary', text: 'Everyone — clear whispers' });
+  reset.type = 'button';
+  reset.addEventListener('click', () => {
+    for (const o of sel.options) o.selected = false;
+    for (const input of choices.querySelectorAll('input')) input.checked = false;
+    refreshLabel();
+  });
+  choices.appendChild(reset);
+  for (const o of sel.options) {
+    const label = el('label', { cls: 'whisper-option' });
+    const check = document.createElement('input');
+    check.type = 'checkbox'; check.checked = o.selected;
+    check.addEventListener('change', () => { o.selected = check.checked; refreshLabel(); });
+    label.append(check, document.createTextNode(o.textContent));
+    choices.appendChild(label);
+  }
+  if (!sel.options.length) choices.appendChild(el('span', { cls: 'muted', text: 'No other players yet.' }));
+  refreshLabel();
 }
 
 // Who is which colour. Without this the dice are pretty but unreadable — a
@@ -885,8 +931,7 @@ async function claimColor(hex) {
 }
 
 // The players accordion above the chat log: every member with their colour, and
-// a "connected" indicator for those currently at the table. Collapsed by default
-// to a one-line summary; expanded, it lists the players and shares vertical space
+// a "connected" indicator for those currently at the table. Expanded by default; it lists the players and shares vertical space
 // with the chat log proportionally to how many there are (capped so the log is
 // never crowded out). Built with createElement (no innerHTML — CSP).
 function renderPresence() {
@@ -927,6 +972,8 @@ function renderPresence() {
   for (const m of sorted) {
     const isOn = onlineUsers.has(m.id);
     const row = el('div', { cls: 'presence-row' + (isOn ? '' : ' offline') });
+    row.setAttribute('role', 'listitem');
+    row.setAttribute('aria-label', `${m.name}, ${isOn ? 'connected' : 'offline'}`);
     const dot = el('span', { cls: 'presence-color' });
     dot.style.background = colorForTheme(m.color);
     row.appendChild(dot);
@@ -981,7 +1028,8 @@ let speakAsDD = null;
 function renderSpeakAs() {
   const dd = document.getElementById('speakAsDD');
   if (!dd) return;
-  const options = [{ value: '', label: 'yourself' }];
+  dd.dataset.portal = 'body';
+  const options = [{ value: '', label: isGm ? 'GM' : 'Player' }];
   for (const a of speakable) {
     options.push({ value: a.id, label: a.name + (a.is_npc ? ' (NPC)' : '') });
   }
@@ -1001,7 +1049,7 @@ function renderSpeakAs() {
   // a column: a local default, remembered per campaign, with no server state and
   // no exactly-one invariant to enforce.
   const remembered = localGet(`vtt.speakAs.${campaign.id}`) || '';
-  if (speakAsDD && options.some((o) => o.value === remembered)) speakAsDD.set(remembered);
+  if (speakAsDD) speakAsDD.set(options.some((o) => o.value === remembered) ? remembered : '');
 }
 
 function localGet(k) { try { return window.localStorage.getItem(k); } catch { return null; } }
@@ -1190,9 +1238,13 @@ function connectSocket() {
   // filter here would be a second copy of a disclosure rule.
   socket.on('actor:updated', (d) => {
     log(`actor:updated  ${JSON.stringify(d)}`);
+    loadSpeakable();
     if (!combat) return;
     loadScene().then(loadCombat);
   });
+
+  socket.on('actor:deleted', () => loadSpeakable());
+  socket.on('party:changed', () => loadSpeakable());
 
   socket.on('member:updated', (d) => {
     log(`member:updated  ${JSON.stringify(d)}`);
@@ -1378,6 +1430,8 @@ function renderPool() {
     // Descending by sides: 1d20 before 2d6, how it is said out loud.
     for (const [sides, count] of [...pool.entries()].sort((a, b) => b[0] - a[0])) {
       const tag = el('span', { cls: 'pool-tag' });
+      tag.title = 'Right-click to remove one die';
+      tag.addEventListener('contextmenu', (e) => { e.preventDefault(); removeOneDie(sides); });
       tag.setAttribute('role', 'listitem');
       tag.appendChild(el('span', { text: `${count}d${sides}` }));
       // The remove control is its own labelled button, distinct from the tag —
@@ -1396,7 +1450,19 @@ function renderPool() {
   syncDieButtons();
 }
 
+function removeOneDie(sides) {
+  const count = pool.get(sides) || 0;
+  if (count <= 1) pool.delete(sides);
+  else pool.set(sides, count - 1);
+  renderPool();
+}
+
 for (const b of document.querySelectorAll('.quick')) {
+  b.title = `Add d${b.dataset.sides}; right-click to remove one`;
+  b.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    removeOneDie(Number(b.dataset.sides));
+  });
   b.addEventListener('click', () => {
     const sides = Number(b.dataset.sides);
     pool.set(sides, (pool.get(sides) || 0) + 1);
@@ -1530,7 +1596,7 @@ const preset = new URLSearchParams(window.location.search).get('campaign');
   whoami().then(() => { if (preset && _hasInput) loadCampaign(); }); }
 
 // The game shell's entry point: the encounter/chat/dice loader, parameterised.
-function boot(campaignId) { return loadCampaign(campaignId); }
+async function boot(campaignId) { await whoami(); return loadCampaign(campaignId); }
 window.VTTCombat = { boot, toggleEncounter };
 
 

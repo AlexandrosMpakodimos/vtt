@@ -638,7 +638,7 @@
     #diceLegend, #palette, #paletteMsg, #trayPool { font-size: 0.82rem; }
     #trayPool.pool { border: 1px dashed var(--border); border-radius: 2px; padding: 0.35rem 0.5rem; min-height: 40px; }
     .dice-bar .quick { min-width: 40px; }
-    #actorList, #itemList, #assetList, #spellList, #sbList, #tokens, #scene-list { display: grid; gap: 0.4rem; }
+    #actorList, #itemList, #assetList, #sbList, #tokens, #scene-list { display: grid; gap: 0.4rem; }
     #sceneSel, #speakAs, #whisperTo, #diceColor { }
 
     /* ── Sidebar toggle (in the bar) ────────────────────────────────────────── */
@@ -656,14 +656,17 @@
     .card-inner { padding: 1.4rem; position: relative; max-height: 88vh; overflow-y: auto; width: min(46rem, 94vw); }
     #alignDialog .card-inner { width: auto; }
     #itemDialog .card-inner { width: min(760px, 94vw); }
+    #spellDialog .card-inner { width: min(620px, 94vw); }
+    #actorDialog .card-inner { width: min(620px, 94vw); }
+    #sheetDialog .card-inner { width: min(1120px, 96vw); }
     /* Circular close X for the item editor, matching the .cp-close style used on
        the dashboard game-card modals. */
-    #itemDialog .card-close {
+    #itemDialog .card-close, #spellDialog .card-close, #actorDialog .card-close, #sheetDialog .card-close {
       width: 2rem; height: 2rem; display: flex; align-items: center; justify-content: center;
       border-radius: 50%; border: none; background: rgba(0,0,0,0.45); color: #fff; font-size: 1rem; line-height: 1;
     }
-    #itemDialog .card-close:hover { background: rgba(0,0,0,0.65); color: #fff; border: none; }
-    #itemDialog .card-close:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+    #itemDialog .card-close:hover, #spellDialog .card-close:hover, #actorDialog .card-close:hover, #sheetDialog .card-close:hover { background: rgba(0,0,0,0.65); color: #fff; border: none; }
+    #itemDialog .card-close:focus-visible, #spellDialog .card-close:focus-visible, #actorDialog .card-close:focus-visible, #sheetDialog .card-close:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
     .dialog-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: 0.4rem; }
     .card-inner h2 { font-size: 1.2rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--accent); overflow-wrap: anywhere; }
     .card-inner h2 + .rule { height: 2px; width: 3rem; background: var(--rule); margin: 0.3rem 0 1rem; }
@@ -1112,6 +1115,8 @@
        full text contrast, and the meta/timestamp muted and small. No bubbles —
        this is a compact log, and coloured names are the lighter, clearer choice. */
     .msg { padding: 3px 0; border-bottom: 1px dotted color-mix(in srgb, var(--border) 45%, transparent); line-height: 1.4; color: var(--chat-text); }
+    #chat, #chat * { user-select: text; -webkit-user-select: text; }
+    #chat .msg { overflow-wrap: anywhere; }
     .msg .who { font-weight: 700; }
     .msg .who[data-color] { /* colour set inline, per theme variant */ }
     .msg.whisper { background: color-mix(in srgb, var(--accent) 8%, transparent); border-radius: 3px; padding-left: 5px; padding-right: 5px; }
@@ -1230,6 +1235,26 @@
     .settings-msg { font-size: 0.78rem; min-height: 1rem; }
     .settings-legend-label { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); margin: 0.7rem 0 0.35rem; }
     .chat-settings .legend { display: flex; flex-wrap: wrap; gap: 0.3rem 0.6rem; }
+
+
+    /* Chat: conversation log and a compact, themed composer. */
+    .chat-topbar-title { font-family: var(--font-display, Georgia, serif); font-size: 1.1rem; text-transform: none; letter-spacing: .02em; }
+    .chat-composer { padding: .65rem; border: 1px solid var(--border); background: var(--surface-raised); border-radius: 4px; gap: .65rem; }
+    .chat-composer-top { order: -1; }
+    .chat-field-label { font-size: .7rem; color: var(--text-muted); }
+    .chat-composer .vtt-dd-btn { width: 100%; min-width: 0; overflow: hidden; text-overflow: ellipsis; display: block; }
+    .whisper-picker { position: relative; min-width: 0; }
+    .whisper-picker summary { cursor: pointer; list-style: none; position: relative; padding-right: 1.8rem; box-sizing: border-box; }
+    .whisper-picker summary::-webkit-details-marker { display: none; }
+    .whisper-picker.is-private summary { color: var(--accent); border-color: var(--accent); }
+    .whisper-options { position: absolute; bottom: calc(100% + .4rem); right: 0; width: min(17rem, 65vw); max-height: min(15rem, 40vh); overflow-y: auto; z-index: 201; padding: .4rem; border: 1px solid var(--accent); border-radius: 4px; background: var(--surface-raised); box-shadow: 0 12px 30px #0006; }
+    .whisper-option { display: flex; align-items: center; gap: .55rem; padding: .55rem; border-radius: 2px; cursor: pointer; overflow-wrap: anywhere; }
+    .whisper-option:hover, .whisper-option:focus-within { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+    .chat-composer-top .whisper-option { flex-direction: row; font-size: .85rem; white-space: normal; color: var(--text); }
+    .whisper-option input { width: 1rem; height: 1rem; margin: 0; accent-color: var(--accent); flex: none; }
+    .presence-row:nth-child(even) { background: color-mix(in srgb, var(--text) 3%, transparent); }
+    .presence-head:hover { color: var(--accent); }
+    .presence-head:focus-visible, .whisper-picker summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 
     /* z-index:25 places the 3D dice ABOVE the map/token/fog canvas layers (which
        top out at 20: dragging tokens 10, fog 15, zoom-hud and marquee 20) but
@@ -1419,13 +1444,37 @@
     .ie-row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
     .ie-cell { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
     .ie-cell.wide { grid-column: 1 / -1; }
-    .item-editor select, .item-editor input:not([type=checkbox]), .item-editor textarea {
+    .item-editor select, .item-editor input:not([type=checkbox]), .item-editor textarea,
+    .spell-editor select, .spell-editor input:not([type=checkbox]), .spell-editor textarea,
+    .actor-editor select, .actor-editor input:not([type=checkbox]), .actor-editor textarea,
+    .actor-sheet select, .actor-sheet input:not([type=checkbox]), .actor-sheet textarea {
       font: inherit; font-size: 15px; padding: 9px 11px; min-height: 42px; border-radius: 8px;
       border: 1px solid var(--border); background: var(--surface-raised); color: var(--text); width: 100%; }
-    .item-editor textarea { min-height: auto; line-height: 1.45; resize: vertical; }
+    .item-editor textarea, .spell-editor textarea, .actor-editor textarea, .actor-sheet textarea { min-height: auto; line-height: 1.45; resize: vertical; }
     .item-editor input:focus, .item-editor select:focus, .item-editor textarea:focus,
+    .spell-editor input:focus, .spell-editor select:focus, .spell-editor textarea:focus,
+    .actor-editor input:focus, .actor-editor select:focus, .actor-editor textarea:focus,
+    .actor-sheet input:focus, .actor-sheet select:focus, .actor-sheet textarea:focus,
     .ie-name:focus { outline: 2px solid var(--focus); outline-offset: 1px; border-color: var(--accent); }
-    .item-editor input[aria-invalid="true"], .item-editor textarea[aria-invalid="true"] { border-color: var(--danger); }
+    .item-editor input[aria-invalid="true"], .item-editor textarea[aria-invalid="true"],
+    .spell-editor input[aria-invalid="true"], .spell-editor textarea[aria-invalid="true"],
+    .actor-editor input[aria-invalid="true"], .actor-editor textarea[aria-invalid="true"],
+    .actor-sheet input[aria-invalid="true"], .actor-sheet textarea[aria-invalid="true"] { border-color: var(--danger); }
+
+    /* Actor-sheet & actor-editor checkboxes (proficiency ticks) reuse the item
+       editor's custom tick-box. */
+    .actor-editor input[type=checkbox], .actor-sheet input[type=checkbox] {
+      appearance: none; -webkit-appearance: none; -moz-appearance: none;
+      flex: none; width: 20px; height: 20px; margin: 0; padding: 0;
+      border: 1px solid var(--border); border-radius: 5px; background: var(--surface-raised);
+      cursor: pointer; position: relative; transition: background 0.12s, border-color 0.12s;
+    }
+    .actor-sheet input[type=checkbox]:checked, .actor-editor input[type=checkbox]:checked { background: var(--accent); border-color: var(--accent); }
+    .actor-sheet input[type=checkbox]:checked::after, .actor-editor input[type=checkbox]:checked::after {
+      content: ""; position: absolute; left: 6px; top: 2px; width: 5px; height: 10px;
+      border: solid var(--on-accent); border-width: 0 2px 2px 0; transform: rotate(45deg);
+    }
+    .actor-sheet input[type=checkbox]:focus-visible, .actor-editor input[type=checkbox]:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
     .ie-field-err { color: var(--danger); font-size: 13px; min-height: 0; }
     .ie-field-err:not(:empty) { min-height: 18px; margin-top: 2px; }
     .ie-help { font-size: 13px; color: var(--text-muted); line-height: 1.4; }
@@ -1576,7 +1625,9 @@
     /* ── Library panel redesign ──────────────────────────────────────────────
        Three sub-tabs (Items / Spells / Images), each a clean section with a
        tidy form and a card/thumbnail grid, replacing one long stacked scroll. */
-    .lib-panel { display: flex; flex-direction: column; }
+    .lib-panel { display: flex; flex-direction: column; scrollbar-gutter: stable; }
+    .lib-panel > * { flex-shrink: 0; }
+    @supports not (scrollbar-gutter: stable) { .lib-panel { overflow-y: scroll; } }
     /* Segmented sub-tab control. */
     .lib-subtabs {
       display: flex; gap: 0.25rem; padding: 0.25rem; margin-bottom: 0.9rem;
@@ -1713,7 +1764,449 @@
     .item-icon-delete:hover { color: var(--danger); }
     .item-icon-reveal:hover { color: var(--accent); }
 
+
+    /* Images library: artwork-led cards, category chips and compact creation. */
+    .image-add { margin-bottom: .8rem; }
+    .image-add > summary { width: fit-content; cursor: pointer; list-style: none; }
+    .image-add > summary::-webkit-details-marker { display: none; }
+    .image-add[open] > summary { margin-bottom: .8rem; }
+    .image-toolbar .item-search, .item-search, .spell-search { min-width: 0; }
+    .image-toolbar input { box-sizing: border-box; }
+    .image-add-body { padding: .75rem; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+    .image-shared-category { width: 100%; }
+    .image-category-hint { font-size: .75rem; line-height: 1.5; margin: .45rem 0 .8rem; }
+    .image-source-row { display: flex; align-items: flex-end; gap: .5rem; }
+    .image-source-row .lib-field { flex: 1; min-width: 0; }
+    .image-source-row input { box-sizing: border-box; max-width: 100%; }
+    .image-source-row .btn { flex: none; min-height: 38px; }
+    .image-source-divider { display: flex; align-items: center; gap: .6rem; color: var(--text-muted); font-size: .75rem; margin: .7rem 0; }
+    .image-source-divider::before, .image-source-divider::after { content: ''; height: 1px; background: var(--border); flex: 1; }
+    .image-count { font-size: .75rem; margin: 0; }
+    #assetList.lib-grid-img { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .65rem; }
+    #assetList .asset { border-radius: 4px; }
+    #assetList .asset .image-thumb { display: grid; place-items: center; width: 100%; height: 118px; padding: 0; margin: 0; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; cursor: zoom-in; background: var(--surface-raised); color: var(--text-muted); }
+    #assetList .asset .image-thumb img { height: 118px; width: 100%; object-fit: contain; }
+    #assetList .image-name { padding: .5rem .5rem .2rem; font-size: .8rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #assetList .asset .k { padding: .1rem .5rem; }
+    #assetList .image-actions { display: flex; justify-content: space-between; gap: .3rem; padding: .5rem; margin-top: auto; }
+    #assetList .image-actions .btn { margin: 0; min-height: 32px; padding: .3rem .45rem; font-size: .7rem; }
+    .image-trash svg { width: 15px; height: 15px; }
+    #assetMsg { user-select: text; -webkit-user-select: text; overflow-wrap: anywhere; }
+    .image-preview-dialog { max-width: min(900px, 92vw); max-height: 90vh; padding: 1rem; background: var(--surface); color: var(--text); border: 1px solid var(--accent); border-radius: 6px; }
+    .image-preview-dialog img { display: block; max-width: 100%; max-height: 70vh; object-fit: contain; margin-top: .8rem; }
+    .image-preview-dialog p { overflow-wrap: anywhere; }
+    .image-preview-dialog::backdrop { background: #000a; }
+
     @media (max-width: 380px) { .item-grid { grid-template-columns: repeat(2, 1fr); } }
+
+    /* ── Spells: toolbar + text-card grid, cloned from the item styling ─────
+       Spells have no art, so cards are text-forward: a level badge, name, an
+       optional school label, and a three-line description snippet. Colour comes
+       from the spell school (badge fill + a left border accent), always paired
+       with a readable text label so colour is supplementary. */
+    .spell-toolbar { display: flex; flex-direction: column; gap: 0.55rem; margin-bottom: 0.9rem; }
+    .spell-toolbar-row { display: flex; gap: 0.5rem; align-items: stretch; }
+    .spell-search { position: relative; display: flex; align-items: center; flex: 1 1 auto; }
+    .spell-search svg { position: absolute; left: 0.6rem; width: 15px; height: 15px; color: var(--text-muted); pointer-events: none; }
+    .spell-search input {
+      width: 100%; font: inherit; font-size: 0.9rem; padding: 0.5rem 0.6rem 0.5rem 2rem; min-height: 38px;
+      border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text);
+    }
+    .spell-search input:focus { outline: 2px solid var(--focus); outline-offset: 1px; border-color: var(--accent); }
+    .spell-filter-toggle {
+      flex: none; display: inline-flex; align-items: center; gap: 0.35rem; font: inherit; font-size: 0.85rem;
+      padding: 0 0.7rem; min-height: 38px; border-radius: 8px; cursor: pointer;
+      border: 1px solid var(--border); background: var(--surface); color: var(--text);
+    }
+    .spell-filter-toggle svg { width: 15px; height: 15px; }
+    .spell-filter-toggle:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+    .spell-filter-toggle.open, .spell-filter-toggle.has-filters { border-color: var(--accent); color: var(--accent); }
+    .spell-filter-count {
+      display: inline-grid; place-items: center; min-width: 1.1rem; height: 1.1rem; padding: 0 0.25rem;
+      border-radius: 999px; background: var(--accent); color: var(--on-accent); font-size: 0.7rem; font-weight: 700;
+    }
+    .spell-filters { display: flex; flex-direction: column; gap: 0.4rem;
+      padding: 0.6rem; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
+    .spell-filter { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+    .spell-chip {
+      --chip-color: var(--text-muted);
+      font: inherit; font-size: 0.76rem; padding: 0.25rem 0.6rem; border-radius: 999px; cursor: pointer;
+      border: 1px solid var(--border); background: var(--surface); color: var(--text-muted); transition: all 0.12s;
+    }
+    .spell-chip:hover { color: var(--text); border-color: color-mix(in srgb, var(--chip-color) 45%, var(--border)); }
+    .spell-chip.active {
+      color: var(--chip-color); border-color: color-mix(in srgb, var(--chip-color) 60%, var(--border));
+      background: color-mix(in srgb, var(--chip-color) 14%, transparent); font-weight: 600;
+    }
+
+    .spell-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 0.7rem; }
+    .spell-empty { grid-column: 1 / -1; padding: 1.75rem; text-align: center; }
+    .spell-empty .btn { margin-top: 0.6rem; }
+    .spell-card {
+      --card-accent: var(--border);
+      display: flex; flex-direction: column; background: var(--surface);
+      border: 1px solid var(--border); border-left: 3px solid var(--card-accent);
+      border-radius: 10px; overflow: hidden; position: relative; transition: transform 0.1s, border-color 0.12s, box-shadow 0.12s;
+    }
+    .spell-card.clickable { cursor: pointer; }
+    .spell-card.clickable:hover, .spell-card.clickable:focus-visible {
+      transform: translateY(-2px); outline: none;
+      box-shadow: 0 6px 18px -8px color-mix(in srgb, var(--card-accent) 60%, black);
+    }
+    .spell-card-body { padding: 0.55rem 0.65rem; display: flex; flex-direction: column; gap: 0.3rem; flex: 1 1 auto; }
+    .spell-card-badge {
+      align-self: flex-start; font-size: 0.68rem; font-weight: 700; letter-spacing: 0.02em;
+      padding: 0.12rem 0.5rem; border-radius: 999px; color: #fff; white-space: nowrap;
+      background: var(--card-accent);
+    }
+    .spell-card-name { font-size: 0.9rem; font-weight: 600; line-height: 1.25; }
+    .spell-card-school { font-size: 0.72rem; font-weight: 600; }
+    .spell-card-desc {
+      font-size: 0.76rem; color: var(--text-muted); line-height: 1.35;
+      display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+    }
+    .spell-card-actions { display: flex; gap: 1px; border-top: 1px solid var(--border); background: var(--border); }
+    .spell-card-actions .item-icon-btn { flex: 1; }
+
+
+    /* Images library: artwork-led cards, category chips and compact creation. */
+    .image-add { margin-bottom: .8rem; }
+    .image-add > summary { width: fit-content; cursor: pointer; list-style: none; }
+    .image-add > summary::-webkit-details-marker { display: none; }
+    .image-add[open] > summary { margin-bottom: .8rem; }
+    .image-toolbar .item-search, .item-search, .spell-search { min-width: 0; }
+    .image-toolbar input { box-sizing: border-box; }
+    .image-add-body { padding: .75rem; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+    .image-shared-category { width: 100%; }
+    .image-category-hint { font-size: .75rem; line-height: 1.5; margin: .45rem 0 .8rem; }
+    .image-source-row { display: flex; align-items: flex-end; gap: .5rem; }
+    .image-source-row .lib-field { flex: 1; min-width: 0; }
+    .image-source-row input { box-sizing: border-box; max-width: 100%; }
+    .image-source-row .btn { flex: none; min-height: 38px; }
+    .image-source-divider { display: flex; align-items: center; gap: .6rem; color: var(--text-muted); font-size: .75rem; margin: .7rem 0; }
+    .image-source-divider::before, .image-source-divider::after { content: ''; height: 1px; background: var(--border); flex: 1; }
+    .image-count { font-size: .75rem; margin: 0; }
+    #assetList.lib-grid-img { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .65rem; }
+    #assetList .asset { border-radius: 4px; }
+    #assetList .asset .image-thumb { display: grid; place-items: center; width: 100%; height: 118px; padding: 0; margin: 0; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; cursor: zoom-in; background: var(--surface-raised); color: var(--text-muted); }
+    #assetList .asset .image-thumb img { height: 118px; width: 100%; object-fit: contain; }
+    #assetList .image-name { padding: .5rem .5rem .2rem; font-size: .8rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #assetList .asset .k { padding: .1rem .5rem; }
+    #assetList .image-actions { display: flex; justify-content: space-between; gap: .3rem; padding: .5rem; margin-top: auto; }
+    #assetList .image-actions .btn { margin: 0; min-height: 32px; padding: .3rem .45rem; font-size: .7rem; }
+    .image-trash svg { width: 15px; height: 15px; }
+    #assetMsg { user-select: text; -webkit-user-select: text; overflow-wrap: anywhere; }
+    .image-preview-dialog { max-width: min(900px, 92vw); max-height: 90vh; padding: 1rem; background: var(--surface); color: var(--text); border: 1px solid var(--accent); border-radius: 6px; }
+    .image-preview-dialog img { display: block; max-width: 100%; max-height: 70vh; object-fit: contain; margin-top: .8rem; }
+    .image-preview-dialog p { overflow-wrap: anywhere; }
+    .image-preview-dialog::backdrop { background: #000a; }
+
+    @media (max-width: 380px) { .spell-grid { grid-template-columns: 1fr; } }
+
+    /* Spell editor identity row: name + level dropdown side by side. */
+    .spell-editor label, .spell-editor .ie-lab { font-size: 13px; color: var(--text-muted); font-weight: 600; }
+    .se-identity { display: flex; }
+    .se-identity .ie-id-main { width: 100%; }
+
+    /* Spell read view — level-forward, no art. */
+    .spell-read { display: flex; flex-direction: column; gap: 14px; }
+    .sr-title { display: flex; align-items: center; gap: 12px; }
+    .sr-badge {
+      --sr-accent: var(--border);
+      flex: none; font-size: 0.72rem; font-weight: 700; padding: 0.2rem 0.6rem; border-radius: 999px;
+      color: #fff; background: var(--sr-accent); white-space: nowrap;
+    }
+    .sr-names { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+    .sr-name { margin: 0; font-size: 1.15rem; line-height: 1.2; }
+    .sr-school { font-size: 0.8rem; font-weight: 600; }
+    .sr-meta { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+    .sr-meta-cell { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+    .sr-meta-key { font-size: 0.68rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.03em; }
+    .sr-meta-val { font-size: 0.9rem; }
+    .sr-prose { margin: 0; font-size: 0.9rem; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+    /* ── Characters roster: toolbar (cloned from items) + portrait cards ───── */
+    .char-cap { font-size: 0.76rem; margin: -0.2rem 0 0.7rem; }
+    .char-toolbar { display: flex; flex-direction: column; gap: 0.55rem; margin-bottom: 0.9rem; }
+    .char-toolbar-row { display: flex; gap: 0.5rem; align-items: stretch; }
+    .char-search { position: relative; display: flex; align-items: center; flex: 1 1 auto; }
+    .char-search svg { position: absolute; left: 0.6rem; width: 15px; height: 15px; color: var(--text-muted); pointer-events: none; }
+    .char-search input {
+      width: 100%; font: inherit; font-size: 0.9rem; padding: 0.5rem 0.6rem 0.5rem 2rem; min-height: 38px;
+      border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); }
+    .char-search input:focus { outline: 2px solid var(--focus); outline-offset: 1px; border-color: var(--accent); }
+    .char-filter-toggle {
+      flex: none; display: inline-flex; align-items: center; gap: 0.35rem; font: inherit; font-size: 0.85rem;
+      padding: 0 0.7rem; min-height: 38px; border-radius: 8px; cursor: pointer;
+      border: 1px solid var(--border); background: var(--surface); color: var(--text); }
+    .char-filter-toggle svg { width: 15px; height: 15px; }
+    .char-filter-toggle:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+    .char-filter-toggle.open, .char-filter-toggle.has-filters { border-color: var(--accent); color: var(--accent); }
+    .char-filter-count {
+      display: inline-grid; place-items: center; min-width: 1.1rem; height: 1.1rem; padding: 0 0.25rem;
+      border-radius: 999px; background: var(--accent); color: var(--on-accent); font-size: 0.7rem; font-weight: 700; }
+    .char-filters { display: flex; flex-direction: column; gap: 0.4rem;
+      padding: 0.6rem; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
+    .char-filter { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+    .char-chip {
+      font: inherit; font-size: 0.76rem; padding: 0.25rem 0.6rem; border-radius: 999px; cursor: pointer;
+      border: 1px solid var(--border); background: var(--surface); color: var(--text-muted); transition: all 0.12s; }
+    .char-chip:hover { color: var(--text); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+    .char-chip.active {
+      color: var(--accent); border-color: color-mix(in srgb, var(--accent) 60%, var(--border));
+      background: color-mix(in srgb, var(--accent) 14%, transparent); font-weight: 600; }
+
+    /* One column in the narrow sidebar. */
+    .char-grid { display: flex; flex-direction: column; gap: 0.55rem; }
+    .char-empty { padding: 1.5rem; text-align: center; }
+    .char-empty .btn { margin-top: 0.5rem; }
+    /* Character roster card styling is shared in /css/characters.css. */
+
+    /* ── Character folio: composed RPG character sheet, read-by-default ─────── */
+    /* Shared badges/utilities (reused by the roster + folio). */
+    .as-badge { font-size: 0.64rem; font-weight: 700; padding: 0.08rem 0.4rem; border-radius: 4px; border: 1px solid var(--border); color: var(--text-muted); }
+    .as-badge.pc { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 50%, var(--border)); }
+    .as-badge.npc { color: #c8892f; border-color: color-mix(in srgb, #c8892f 50%, var(--border)); }
+    .as-badge.mine { color: #4f9d5a; border-color: color-mix(in srgb, #4f9d5a 50%, var(--border)); }
+    .as-unavailable, .as-readonly { padding: 8px 0; }
+    .as-gm-tag { font-size: 0.58rem; font-weight: 700; margin-left: 0.3rem; padding: 0 0.28rem; border-radius: 3px;
+      border: 1px solid var(--border); color: var(--text-muted); vertical-align: middle; }
+    .as-counter { font-size: 0.72rem; }
+
+    .folio {
+      font-size: 15px; color: var(--text);
+      /* Editable-field fills use the SAME token as the item/spell editors
+         (--surface-raised: deep blue-grey in dark, deeper beige in light), so a
+         field reads as editable and matches the rest of the app in both themes. */
+      --fo-field-bg: var(--surface-raised);
+      --fo-field-bg-hover: color-mix(in srgb, var(--accent) 8%, var(--surface-raised));
+      --fo-field-border: var(--border);
+    }
+    .fo-root { display: grid; grid-template-columns: 220px 1fr; gap: 22px; align-items: start; }
+
+    /* Inline editing: every control is always live. At rest it is chrome-less so
+       it reads as text; hover hints it is editable; focus shows the real field. */
+    .fo-slot { position: relative; }
+    .fo-slot > input, .fo-slot > select, .fo-slot > textarea { width: 100%; }
+    .fo-slot > .ie-field-err { font-size: 0.7rem; color: var(--danger); margin-top: 2px; }
+    .fo-slot > .ie-field-err:empty { display: none; }
+
+    /* Base: writable controls carry a subtle dark-blue fill at rest so it is
+       always clear where a value can be edited; the fill deepens on hover/focus. */
+    .folio input:not([type=checkbox]), .folio select, .folio textarea {
+      font: inherit; color: var(--text); background: var(--fo-field-bg);
+      border: 1px solid var(--fo-field-border); border-radius: 6px; padding: 3px 6px; margin: 0;
+      transition: background 0.1s, border-color 0.1s; }
+    .folio textarea { line-height: 1.55; resize: vertical; min-height: 3.5em; width: 100%; white-space: pre-wrap; }
+    .folio select { cursor: pointer; }
+    /* Writable controls: clearer affordance on hover. */
+    .folio .fo-slot:not(.fo-ro) > input:not([type=checkbox]):hover,
+    .folio .fo-slot:not(.fo-ro) > select:hover,
+    .folio .fo-slot:not(.fo-ro) > textarea:hover {
+      background: var(--fo-field-bg-hover);
+      border-color: color-mix(in srgb, var(--accent) 45%, var(--fo-field-border)); }
+    /* Focus shows the real, fully-chromed field. */
+    .folio input:not([type=checkbox]):focus, .folio select:focus, .folio textarea:focus {
+      background: var(--fo-field-bg-hover); border-color: var(--accent);
+      outline: 2px solid var(--focus); outline-offset: 1px; }
+    /* GM-locked / read-only controls are plain, inert text — no blue, no chrome. */
+    .folio .fo-ro > input, .folio .fo-ro > select, .folio .fo-ro > textarea,
+    .folio input:disabled, .folio select:disabled, .folio textarea:disabled {
+      border-color: transparent; background: transparent; color: var(--text);
+      cursor: default; opacity: 1; -webkit-text-fill-color: var(--text); }
+    .fo-slot-line > input, .fo-field input { font-variant-numeric: tabular-nums; }
+    /* The size dropdown is a themed vtt-dd, but its BUTTON should look exactly
+       like the other folio input fields (deep-blue fill, same border/radius),
+       not the default grey vtt-dd button. Only the popup list keeps the shared
+       custom appearance. */
+    .folio .fo-slot-dd .vtt-dd-btn {
+      min-height: 0; height: auto; padding: 3px 26px 3px 6px; border-radius: 6px;
+      background: var(--fo-field-bg); border: 1px solid var(--fo-field-border); color: var(--text);
+      font-size: inherit; }
+    .folio .fo-slot-dd .vtt-dd-btn:hover { background: var(--fo-field-bg-hover); border-color: color-mix(in srgb, var(--accent) 45%, var(--fo-field-border)); }
+    .folio .fo-slot-dd .vtt-dd[data-open="true"] .vtt-dd-btn { border-color: var(--accent); }
+    /* No spinner arrows on any numeric field — these are recorded values, not
+       steppers. */
+    .folio input[type=number] { -moz-appearance: textfield; appearance: textfield; }
+    .folio input[type=number]::-webkit-outer-spin-button,
+    .folio input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+
+    /* Identity column. */
+    .fo-identity { display: flex; flex-direction: column; gap: 12px; }
+    .fo-portrait { position: relative; width: 100%; aspect-ratio: 1 / 1; max-width: 200px; border-radius: 12px; overflow: hidden;
+      background: var(--surface-raised); border: 1px solid var(--border); display: grid; place-items: center; }
+    /* Match the frame tool / token rendering EXACTLY so the crop set in the
+       picker is what the sheet shows: absolute-filled, cover, centre origin,
+       transform = translate(ox*100%, oy*100%) scale(scale). */
+    .fo-portrait img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; transform-origin: center; display: block; }
+    .fo-portrait-fallback { font-size: 3rem; font-weight: 700; color: var(--text-muted); }
+    /* Portrait edit button: hover/focus reveals a darkening overlay + pencil,
+       matching the item editor and dashboard avatar. */
+    .fo-portrait-btn { position: relative; display: block; width: 100%; max-width: 200px; padding: 0;
+      border: none; background: none; cursor: pointer; border-radius: 12px; }
+    .fo-portrait-btn:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
+    .fo-portrait-overlay { position: absolute; inset: 0; border-radius: 12px; display: flex; align-items: center; justify-content: center;
+      background: rgba(0,0,0,0.5); opacity: 0; transition: opacity 0.16s var(--ease); }
+    .fo-portrait-overlay::before { content: ""; width: 2rem; height: 2rem; background: #fff;
+      -webkit-mask: var(--edit-icon) center / contain no-repeat; mask: var(--edit-icon) center / contain no-repeat; }
+    .fo-portrait-btn:hover .fo-portrait-overlay, .fo-portrait-btn:focus-visible .fo-portrait-overlay { opacity: 1; }
+    /* The raw URL field is hidden — the portrait pencil is the only entry point. */
+    .fo-portrait-url { display: none !important; }
+    .fo-name > input { font-family: Georgia, 'Times New Roman', serif; font-size: 1.2rem; font-weight: 700; letter-spacing: 0.02em; line-height: 1.2; color: var(--text); }
+    .fo-badges { display: flex; gap: 6px; flex-wrap: wrap; }
+    /* Inline editing: the composed one-liner is dropped; the individual identity
+       fields always show (and read as text at rest). */
+    .fo-identity-read { display: none; }
+    .fo-identity-line { font-size: 0.85rem; color: var(--text-muted); line-height: 1.5; }
+    .fo-identity-edit { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .fo-field { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+    .fo-label { font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); font-weight: 700; }
+    .fo-recorded { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; padding-top: 10px; border-top: 1px solid var(--border); }
+    .fo-recorded input { font-size: 0.9rem; }
+
+    /* Main area. */
+    .fo-main { min-width: 0; display: flex; flex-direction: column; gap: 16px; }
+
+    /* Vitals band. */
+    .fo-vitals { display: grid; grid-template-columns: 1.6fr auto auto 1.2fr; gap: 14px; align-items: stretch;
+      padding: 12px 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-raised); }
+    .fo-hp { display: flex; flex-direction: column; gap: 4px; justify-content: center; }
+    .fo-hp-label { font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); font-weight: 700; }
+    .fo-hp-nums { display: flex; align-items: baseline; gap: 4px; }
+    .fo-hp-nums input { font-size: 1.8rem; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1; width: 4.5ch; min-width: 4.5ch; text-align: center; }
+    .fo-hp-slash { font-size: 1.4rem; color: var(--text-muted); }
+    .fo-hp-bar { height: 6px; border-radius: 3px; background: var(--surface); overflow: hidden; margin-top: 2px; }
+    .fo-hp-fill { height: 100%; background: var(--accent); }
+    .fo-hp-fill.low { background: var(--danger); }
+    .fo-temp { display: flex; align-items: baseline; gap: 6px; font-size: 0.78rem; color: var(--text-muted); }
+    .fo-temp input { font-weight: 700; color: #4f9d5a; width: 4ch; min-width: 4ch; text-align: center; }
+
+    .fo-emblem { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; min-width: 68px; text-align: center; }
+    .fo-emblem-label { font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); font-weight: 700; }
+    .fo-emblem input { font-size: 1.5rem; font-weight: 700; font-variant-numeric: tabular-nums; width: 4ch; min-width: 4ch; text-align: center; }
+    /* AC gets a shield outline; speed stays plain with a movement glyph. */
+    .fo-shield { position: relative; padding: 10px 14px 12px; }
+    .fo-shield::before { content: ""; position: absolute; inset: 0; border: 1.5px solid color-mix(in srgb, var(--accent) 55%, var(--border));
+      border-radius: 8px 8px 20px 20px / 8px 8px 26px 26px; pointer-events: none; }
+    .fo-move-icon { color: var(--accent); font-weight: 700; }
+
+    .fo-support { display: flex; flex-direction: column; gap: 6px; justify-content: center; }
+    .fo-support .fo-field { flex-direction: row; align-items: baseline; gap: 6px; justify-content: space-between; }
+    .fo-support .fo-slot { flex: 1; }
+    .fo-support input { font-weight: 600; width: 100%; text-align: right; }
+
+    /* Tabs. */
+    .fo-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); }
+    .fo-tab { font: inherit; font-size: 0.9rem; font-weight: 600; padding: 8px 14px; border: none; background: none;
+      color: var(--text-muted); cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+    .fo-tab:hover { color: var(--text); }
+    .fo-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+    .fo-tab:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+
+    /* Ability blocks: 3×2, compact, thin dividers — not six fat cards. */
+    .fo-abilities { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px 22px; }
+    .fo-ability { display: flex; flex-direction: column; gap: 4px; }
+    .fo-ability-score { text-align: center; }
+    .fo-ability-score > input { width: 100%; text-align: center; font-size: 2rem; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1; }
+    .fo-ability-abbr { text-align: center; font-size: 0.7rem; font-weight: 700; letter-spacing: 0.08em; color: var(--text-muted); text-transform: uppercase; }
+    .fo-save-row { display: flex; align-items: center; gap: 6px; padding: 4px 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+    .fo-save-label { font-size: 0.7rem; color: var(--text-muted); flex: 1; }
+    .fo-save-row .fo-slot-bonus { min-width: 4ch; }
+    .fo-skills { display: flex; flex-direction: column; }
+    .fo-skill-row { display: flex; align-items: center; gap: 6px; padding: 2px 0; font-size: 0.82rem; }
+    .fo-skill-name { flex: 1; color: var(--text); min-width: 0; }
+    .fo-slot-bonus { width: 4.5ch; flex: none; }
+    .fo-slot-bonus > input { width: 100%; text-align: right; font-variant-numeric: tabular-nums; }
+
+    /* Proficiency pip: a round themed checkbox that reads as a filled/empty dot. */
+    .fo-slot-pip { flex: none; }
+    .fo-slot-pip > input[type=checkbox] { appearance: none; -webkit-appearance: none; width: 15px; height: 15px; margin: 0;
+      border: 1px solid var(--border); border-radius: 50%; background: var(--surface-raised); cursor: pointer; position: relative; }
+    .fo-slot-pip > input[type=checkbox]:checked { background: var(--accent); border-color: var(--accent); }
+    .fo-slot-pip > input[type=checkbox]:hover { border-color: var(--accent); }
+    .fo-slot-pip > input[type=checkbox]:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+    .fo-ro.fo-slot-pip > input[type=checkbox] { cursor: default; }
+
+    /* Sections + prose (features/journal/attacks). */
+    .fo-section { margin-top: 14px; }
+    .fo-h { margin: 0 0 6px; font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--accent); font-weight: 700; }
+    .fo-slot-prose { display: block; }
+    .fo-slot-prose > textarea { width: 100%; display: block; }
+    .fo-death-row { display: flex; gap: 24px; }
+    .fo-death-cell { display: flex; flex-direction: column; gap: 2px; }
+    .fo-death-cell input { font-size: 1.3rem; font-weight: 700; font-variant-numeric: tabular-nums; width: 5ch; min-width: 5ch; text-align: center; }
+    .fo-currency { display: flex; gap: 10px; flex-wrap: wrap; }
+    .fo-coin { display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 3.5rem;
+      padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; }
+    .fo-coin-label { font-size: 0.62rem; font-weight: 700; color: var(--text-muted); letter-spacing: 0.04em; }
+    .fo-coin input { font-weight: 700; font-variant-numeric: tabular-nums; width: 5ch; min-width: 5ch; text-align: center; }
+    /* The relocated inventory block inside the Inventory tab. */
+    .fo-inv-mount { margin-top: 16px; }
+    .fo-inv-mount .subhead { font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--accent); font-weight: 700; margin-bottom: 8px; }
+    .fo-inv-mount .row { display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 8px; }
+    /* The button sits level with the ITEM/QTY inputs (not their labels): the
+       field is label-over-input, so aligning to the row's bottom puts the button
+       on the same axis as the input boxes. Match the input box height so their
+       centres line up exactly. */
+    /* The button is the same height as the ITEM/QTY inputs and sits level with
+       them (the fields are label-over-input, so align to the row bottom). */
+    .fo-inv-mount .row > .btn { align-self: flex-end; height: 34px; padding-top: 0; padding-bottom: 0; display: inline-flex; align-items: center; }
+    /* Override the global 40px field minimum so QTY and Add to bag share a centre line. */
+    .fo-inv-mount input, .fo-inv-mount .vtt-dd-btn { box-sizing: border-box; height: 34px; min-height: 34px; }
+    .fo-inv-mount .field { display: flex; flex-direction: column; gap: 3px; }
+    .fo-inv-mount .field label { font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); font-weight: 700; }
+    .fo-inv-mount input { background: var(--fo-field-bg); border: 1px solid var(--fo-field-border); color: var(--text); border-radius: 6px; padding: 6px 8px; }
+    /* The item picker is a themed vtt-dd. Its button is styled to match the
+       field's look (so the input itself is unchanged); the popup list uses the
+       app's standard custom .vtt-dd-list appearance. */
+    .fo-inv-mount .fo-inv-dd { width: 100%; }
+    .fo-inv-mount .vtt-dd-btn { width: 100%; height: 34px; box-sizing: border-box;
+      background: var(--fo-field-bg); border: 1px solid var(--fo-field-border); color: var(--text);
+      border-radius: 6px; padding: 0 28px 0 8px; text-align: left; }
+    .fo-inv-mount .vtt-dd-btn:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--fo-field-border)); }
+    .fo-advanced { margin-top: 16px; border-top: 1px solid var(--border); padding-top: 8px; }
+    .fo-advanced summary { cursor: pointer; font-size: 0.8rem; color: var(--text-muted); font-weight: 600; }
+    .fo-advanced-body { padding-top: 8px; }
+    .fo-advanced .fo-slot-prose > textarea { font-family: ui-monospace, monospace; font-size: 0.8rem; }
+
+    /* Footer (Save changes / Cancel) — a solid action bar that sticks to the
+       bottom of the dialog's scroll area and appears on the first change. It is
+       a real bar (surface fill, top border, shadow) so it never reads as a bare
+       strip, and it spans the dialog's padding via negative margins. */
+    .fo-footer {
+      display: flex; align-items: center; gap: 10px;
+      position: sticky; bottom: -1.4rem; z-index: 8;
+      margin: 16px -1.4rem -1.4rem; padding: 12px 1.4rem;
+      background: var(--surface-raised); border-top: 1px solid var(--border);
+      box-shadow: 0 -8px 20px -12px rgba(0,0,0,0.6); }
+    .fo-footer .btn { flex: none; }
+    .fo-footer .ie-footer-spacer { flex: 1 1 auto; }
+    .fo-footer .as-counter { white-space: nowrap; }
+
+    /* Responsive: identity → compact top banner; abilities 3→2→1. */
+    @media (max-width: 900px) {
+      .fo-root { grid-template-columns: 1fr; }
+      .fo-identity { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 12px; }
+      .fo-portrait { width: 96px; height: 96px; aspect-ratio: auto; }
+      .fo-recorded { flex: 1 1 100%; }
+      .fo-abilities { grid-template-columns: repeat(2, 1fr); }
+    }
+    @media (max-width: 620px) {
+      .fo-vitals { grid-template-columns: 1fr 1fr; }
+      .fo-abilities { grid-template-columns: 1fr; }
+    }
+
+    /* ── Character creation modal ──────────────────────────────────────────── */
+    .actor-editor { display: flex; flex-direction: column; gap: 16px; font-size: 15px; }
+    .actor-editor label, .actor-editor .ie-lab { font-size: 13px; color: var(--text-muted); font-weight: 600; }
+    .ae-identity { display: flex; gap: 14px; align-items: flex-start; }
+    .ae-portrait { flex: none; width: 84px; height: 84px; border-radius: 10px; overflow: hidden; padding: 0;
+      background: var(--surface-raised); border: 1px solid var(--border); display: grid; place-items: center; cursor: pointer; }
+    .ae-portrait:hover { border-color: var(--accent); }
+    .ae-portrait-img { width: 100%; height: 100%; object-fit: cover; }
+    .ae-portrait-fallback { font-size: 1.7rem; font-weight: 700; color: var(--text-muted); }
+    .ae-namewrap { flex: 1 1 auto; }
+    .ae-abilities { grid-template-columns: repeat(3, 1fr); }
 
     /* Image thumbnail grid — image-forward cards, the pick-and-choose surface. */
     .lib-grid-img { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.55rem; }
@@ -1729,6 +2222,39 @@
       margin: 0.25rem 0.4rem; margin-top: auto; padding: 0.2rem 0.4rem; font-size: 0.68rem;
     }
     .lib-grid-img > .muted { grid-column: 1 / -1; padding: 1.5rem; text-align: center; }
+
+
+    /* Images library: artwork-led cards, category chips and compact creation. */
+    .image-add { margin-bottom: .8rem; }
+    .image-add > summary { width: fit-content; cursor: pointer; list-style: none; }
+    .image-add > summary::-webkit-details-marker { display: none; }
+    .image-add[open] > summary { margin-bottom: .8rem; }
+    .image-toolbar .item-search, .item-search, .spell-search { min-width: 0; }
+    .image-toolbar input { box-sizing: border-box; }
+    .image-add-body { padding: .75rem; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+    .image-shared-category { width: 100%; }
+    .image-category-hint { font-size: .75rem; line-height: 1.5; margin: .45rem 0 .8rem; }
+    .image-source-row { display: flex; align-items: flex-end; gap: .5rem; }
+    .image-source-row .lib-field { flex: 1; min-width: 0; }
+    .image-source-row input { box-sizing: border-box; max-width: 100%; }
+    .image-source-row .btn { flex: none; min-height: 38px; }
+    .image-source-divider { display: flex; align-items: center; gap: .6rem; color: var(--text-muted); font-size: .75rem; margin: .7rem 0; }
+    .image-source-divider::before, .image-source-divider::after { content: ''; height: 1px; background: var(--border); flex: 1; }
+    .image-count { font-size: .75rem; margin: 0; }
+    #assetList.lib-grid-img { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .65rem; }
+    #assetList .asset { border-radius: 4px; }
+    #assetList .asset .image-thumb { display: grid; place-items: center; width: 100%; height: 118px; padding: 0; margin: 0; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; cursor: zoom-in; background: var(--surface-raised); color: var(--text-muted); }
+    #assetList .asset .image-thumb img { height: 118px; width: 100%; object-fit: contain; }
+    #assetList .image-name { padding: .5rem .5rem .2rem; font-size: .8rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #assetList .asset .k { padding: .1rem .5rem; }
+    #assetList .image-actions { display: flex; justify-content: space-between; gap: .3rem; padding: .5rem; margin-top: auto; }
+    #assetList .image-actions .btn { margin: 0; min-height: 32px; padding: .3rem .45rem; font-size: .7rem; }
+    .image-trash svg { width: 15px; height: 15px; }
+    #assetMsg { user-select: text; -webkit-user-select: text; overflow-wrap: anywhere; }
+    .image-preview-dialog { max-width: min(900px, 92vw); max-height: 90vh; padding: 1rem; background: var(--surface); color: var(--text); border: 1px solid var(--accent); border-radius: 6px; }
+    .image-preview-dialog img { display: block; max-width: 100%; max-height: 70vh; object-fit: contain; margin-top: .8rem; }
+    .image-preview-dialog p { overflow-wrap: anywhere; }
+    .image-preview-dialog::backdrop { background: #000a; }
 
     @media (max-width: 380px) {
       .lib-grid { grid-template-columns: 1fr; }
@@ -1757,6 +2283,9 @@
     .hint { background: color-mix(in srgb, var(--accent) 8%, transparent); border-left: 3px solid var(--rule);
             padding: 8px 10px; font-size: 12px; margin: 8px 0; }
   </style>
+  <link rel="stylesheet" href="/css/inventory.css" />
+  <link rel="stylesheet" href="/css/spellbook.css" />
+  <link rel="stylesheet" href="/css/characters.css" />
 </head>
 <body class="no-select">
 
@@ -2000,7 +2529,7 @@
     <div id="sideTabs" role="tablist" aria-label="Panels">
       <button class="tab" id="tabChat" role="tab" aria-controls="panelChat" aria-selected="true" tabindex="0" type="button">Chat &amp; Dice</button>
       <button class="tab" id="tabChars" role="tab" aria-controls="panelChars" aria-selected="false" tabindex="-1" type="button">Characters</button>
-      <button class="tab" id="tabLibrary" role="tab" aria-controls="panelLibrary" aria-selected="false" tabindex="-1" type="button">Library</button>
+      <button class="tab gm-only" id="tabLibrary" role="tab" aria-controls="panelLibrary" aria-selected="false" tabindex="-1" type="button">Library</button>
     </div>
 
     <!-- Chat panel. Rolling lives in the bottom dice tray. Top: a title row with
@@ -2015,34 +2544,34 @@
         </button>
       </div>
 
-      <!-- Players accordion: colour, name, connected status. Collapsed by default. -->
-      <div id="presence" class="presence">
-        <button id="presenceHead" class="presence-head" type="button" aria-expanded="false" aria-controls="presenceList">
+      <!-- Players accordion: colour, name, connected status. Expanded by default. -->
+      <div id="presence" class="presence expanded">
+        <button id="presenceHead" class="presence-head" type="button" aria-expanded="true" aria-controls="presenceList">
           <svg class="presence-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
           <span class="presence-title">Players</span>
           <span id="presenceCount" class="presence-count muted">0/0 online</span>
         </button>
-        <div id="presenceList" class="presence-list" role="list" hidden></div>
+        <div id="presenceList" class="presence-list" role="list"></div>
       </div>
 
-      <div id="chat" aria-live="polite"></div>
+      <div id="chat" role="log" aria-label="Table conversation" aria-live="polite" aria-relevant="additions"></div>
 
       <div class="chat-composer">
         <div class="chat-composer-send">
-          <input id="chatText" class="chat-input" placeholder="Say something…" />
+          <input id="chatText" class="chat-input" placeholder="Write a message…" aria-label="Chat message" />
           <button id="sendChat" class="btn small primary" type="button">Send</button>
         </div>
         <div class="chat-composer-top">
           <div class="field speak-field">
-            <label for="speakAsBtn">speaking as</label>
+            <label for="speakAsBtn">Speaking as</label>
             <div class="vtt-dd" id="speakAsDD" data-value="">
               <input type="hidden" id="speakAs" value="" />
-              <button type="button" id="speakAsBtn" class="vtt-dd-btn" aria-haspopup="listbox" aria-expanded="false">yourself</button>
+              <button type="button" id="speakAsBtn" class="vtt-dd-btn" aria-haspopup="listbox" aria-expanded="false">Player</button>
               <ul class="vtt-dd-list" role="listbox" aria-label="Speaking as" tabindex="-1" hidden></ul>
             </div>
           </div>
           <div class="field whisper-field">
-            <label for="whisperTo">whisper to <span class="opt">— empty = everyone</span></label>
+            <span class="chat-field-label">Send to</span>
             <select id="whisperTo" class="site-select" multiple size="1"></select>
           </div>
         </div>
@@ -2085,57 +2614,42 @@
       </div>
     </section>
 
-    <!-- Characters panel (verbatim from actors.html's characters fieldset). -->
+    <!-- Characters panel: portrait-led roster + toolbar, mirroring Items/Spells.
+         Creation moved into #actorDialog. -->
     <section class="side-panel" id="panelChars" role="tabpanel" aria-labelledby="tabChars" hidden>
-      <h3>Create a character</h3>
-      <div class="row">
-        <div class="field" style="flex:2"><label for="acName">name</label><input id="acName" placeholder="Aria" /></div>
-        <div class="field"><label for="acImg">img url</label><input id="acImg" placeholder="https://…" /></div>
-        <div class="field"><label for="acHp">hp</label><input id="acHp" type="number" value="10" /></div>
+      <div class="lib-section-head">
+        <h3>Characters</h3>
+        <button id="newActor" class="btn small primary" type="button">+ New character</button>
       </div>
-      <p class="muted player-only">You create a character shell — the GM fills in its capabilities (size, max HP, level, ability scores) afterwards.</p>
-      <div class="gm-only">
-        <div class="row">
-          <div class="field"><label for="acSize">size</label>
-            <select id="acSize">
-              <option>Tiny</option><option>Small</option>
-              <option selected>Medium</option><option>Large</option>
-              <option>Huge</option><option>Gargantuan</option>
-            </select>
+      <div class="muted char-cap" id="actorCap"></div>
+
+      <div class="char-toolbar">
+        <div class="char-toolbar-row">
+          <div class="char-search">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+            <input id="charSearch" type="search" placeholder="Search characters…" aria-label="Search characters" />
           </div>
-          <div class="field"><label for="acHpMax">hp max</label><input id="acHpMax" type="number" value="10" /></div>
-          <div class="field"><label for="acAc">AC</label><input id="acAc" type="number" value="10" /></div>
-          <div class="field"><label for="acLevel">level</label><input id="acLevel" type="number" value="1" /></div>
-          <div class="field"><label for="acSpeed">speed</label><input id="acSpeed" type="number" value="30" /></div>
+          <button id="charFilterToggle" class="char-filter-toggle" type="button" aria-expanded="false" aria-controls="charFilterPanel" title="Filter characters">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 5h18M6 12h12M10 19h4"/></svg>
+            <span>Filter</span>
+            <span id="charFilterCount" class="char-filter-count" hidden>0</span>
+          </button>
         </div>
-        <div class="row">
-          <div class="field"><label for="acStr">STR</label><input id="acStr" type="number" value="10" /></div>
-          <div class="field"><label for="acDex">DEX</label><input id="acDex" type="number" value="10" /></div>
-          <div class="field"><label for="acCon">CON</label><input id="acCon" type="number" value="10" /></div>
-          <div class="field"><label for="acInt">INT</label><input id="acInt" type="number" value="10" /></div>
-          <div class="field"><label for="acWis">WIS</label><input id="acWis" type="number" value="10" /></div>
-          <div class="field"><label for="acCha">CHA</label><input id="acCha" type="number" value="10" /></div>
-        </div>
-        <div class="row">
-          <div class="field"><label for="acIsNpc">is NPC (stats stay GM-only)</label>
-            <select id="acIsNpc"><option value="false">no — player character</option><option value="true">yes — NPC</option></select>
-          </div>
-          <div class="field"><label for="acOwner">controlled by</label>
-            <select id="acOwner"><option value="">nobody (GM runs it)</option></select>
-          </div>
+        <div id="charFilterPanel" class="char-filters" hidden>
+          <div class="char-filter" id="charFilterType" role="group" aria-label="Filter by type"></div>
+          <div class="char-filter" id="charFilterControl" role="group" aria-label="Filter by control"></div>
+          <div class="char-filter" id="charFilterParty" role="group" aria-label="Filter by party"></div>
         </div>
       </div>
-      <button id="createActor" class="btn small primary" type="button">create character</button>
-      <span class="muted" id="actorCap"></span>
-      <hr />
-      <div id="actorList"></div>
+
+      <div id="actorList" class="char-grid"></div>
     </section>
 
     <!-- Library panel: three sub-tabs — Items, Spells, Images. The spellbook
          (a per-character list) is being moved into the character sheet next to
          inventory; its controls are kept here but HIDDEN so actors.js bindings
          still resolve until that move lands. -->
-    <section class="side-panel lib-panel" id="panelLibrary" role="tabpanel" aria-labelledby="tabLibrary" hidden>
+    <section class="side-panel lib-panel gm-only" id="panelLibrary" role="tabpanel" aria-labelledby="tabLibrary" hidden>
       <div class="lib-subtabs" role="tablist" aria-label="Library sections">
         <button class="lib-subtab is-active" id="libTabItems" role="tab" aria-selected="true" aria-controls="libItems" type="button">Items</button>
         <button class="lib-subtab" id="libTabSpells" role="tab" aria-selected="false" aria-controls="libSpells" type="button">Spells</button>
@@ -2177,42 +2691,31 @@
       <div class="lib-section" id="libSpells" role="tabpanel" aria-labelledby="libTabSpells" hidden>
         <div class="lib-section-head">
           <h3>Spell catalogue</h3>
+          <button id="newSpell" class="btn small primary gm-only" type="button">+ New spell</button>
         </div>
-        <div class="lib-form gm-only">
-          <div class="lib-field lib-field-wide">
-            <label for="spName">Name</label>
-            <input id="spName" placeholder="Magic Missile" />
+        <p class="muted player-only lib-note">Only the GM authors spells. Every member reads the catalogue in full; what is confidential is which spells a character has prepared.</p>
+
+        <!-- Search + a Filter toggle, mirroring Items: the chips live in a panel
+             that only shows when Filter is active. -->
+        <div class="spell-toolbar">
+          <div class="spell-toolbar-row">
+            <div class="spell-search">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+              <input id="spellSearch" type="search" placeholder="Search spells…" aria-label="Search spells" />
+            </div>
+            <button id="spellFilterToggle" class="spell-filter-toggle" type="button" aria-expanded="false" aria-controls="spellFilterPanel" title="Filter spells">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 5h18M6 12h12M10 19h4"/></svg>
+              <span>Filter</span>
+              <span id="spellFilterCount" class="spell-filter-count" hidden>0</span>
+            </button>
           </div>
-          <div class="lib-field">
-            <label for="spLevel">Level</label>
-            <select id="spLevel">
-              <option value="0">Cantrip</option>
-              <option value="1">1st</option><option value="2">2nd</option>
-              <option value="3">3rd</option><option value="4">4th</option>
-              <option value="5">5th</option><option value="6">6th</option>
-              <option value="7">7th</option><option value="8">8th</option>
-              <option value="9">9th</option>
-            </select>
+          <div id="spellFilterPanel" class="spell-filters" hidden>
+            <div class="spell-filter" id="spellFilterLevel" role="group" aria-label="Filter by level"></div>
+            <div class="spell-filter" id="spellFilterSchool" role="group" aria-label="Filter by school"></div>
           </div>
-          <div class="lib-field lib-field-wide">
-            <label for="spDesc">Description</label>
-            <input id="spDesc" placeholder="Three darts of force." />
-          </div>
-          <button id="createSpell" class="btn small primary lib-form-submit" type="button">Add spell</button>
         </div>
-        <div class="lib-filter">
-          <label for="spFilter">Show</label>
-          <select id="spFilter">
-            <option value="">Every level</option>
-            <option value="0">Cantrips</option>
-            <option value="1">1st</option><option value="2">2nd</option>
-            <option value="3">3rd</option><option value="4">4th</option>
-            <option value="5">5th</option><option value="6">6th</option>
-            <option value="7">7th</option><option value="8">8th</option>
-            <option value="9">9th</option>
-          </select>
-        </div>
-        <div id="spellList" class="lib-grid"></div>
+
+        <div id="spellList" class="spell-grid"></div>
       </div>
 
       <!-- IMAGES ----------------------------------------------------------- -->
@@ -2220,46 +2723,53 @@
         <div class="lib-section-head">
           <h3>Image library</h3>
         </div>
-        <p class="muted lib-note">An upload goes straight from your browser to the bucket. A pasted link is stored as-is; every viewer connects directly to that host.</p>
-        <div class="lib-form">
-          <div class="lib-field">
-            <label for="assetKind">Kind</label>
+        <p class="muted lib-note">Artwork for your characters, items and worlds.</p>
+        <details class="image-add"><summary class="btn small primary">+ Add image</summary>
+        <div class="image-add-body">
+          <div class="lib-field image-shared-category">
+            <label for="assetKind">Category</label>
             <select id="assetKind">
               <option value="portrait">Portrait</option>
               <option value="token">Token art</option>
               <option value="item">Item art</option>
               <option value="map">Map (GM only)</option>
               <option value="avatar">My profile picture</option>
+              <option value="cover">Campaign cover (GM only)</option>
             </select>
           </div>
+          <p class="muted image-category-hint">Choose a category, then upload a file or add an image URL.</p>
+          <div class="image-source-row">
           <div class="lib-field lib-field-wide">
             <label for="assetFile">Upload a file</label>
             <input id="assetFile" type="file" accept="image/png,image/jpeg,image/webp,image/gif" />
           </div>
           <button id="assetUpload" class="btn small primary lib-form-submit" type="button">Upload</button>
         </div>
-        <div class="lib-form">
+        <div class="image-source-divider">or</div>
+        <div class="image-source-row">
           <div class="lib-field lib-field-wide">
-            <label for="assetUrl">…or paste an image link</label>
+            <label for="assetUrl">Image URL</label>
             <input id="assetUrl" placeholder="https://example.com/portrait.png" />
           </div>
-          <button id="assetLink" class="btn small secondary lib-form-submit" type="button">Add link</button>
+          <button id="assetLink" class="btn small secondary lib-form-submit" type="button">Add URL</button>
         </div>
-        <p class="muted lib-msg" id="assetMsg"></p>
+        </div>
+        </details>
+        <p class="muted lib-msg" id="assetMsg" role="status"></p>
         <div id="assetList" class="assets lib-grid-img"></div>
       </div>
 
-      <!-- Spellbook — hidden; moving into the character sheet. Kept so actors.js
-           (sbWho/sbSpell/sbSource/learnSpell/sbList) still binds without error. -->
-      <div hidden aria-hidden="true">
-        <span id="sbWho"></span>
-        <select id="sbSpell"></select>
-        <select id="sbSource">
-          <option value="">—</option><option value="class">class</option>
-          <option value="race">race</option><option value="item">item</option>
-          <option value="other">other</option>
-        </select>
-        <button id="learnSpell" type="button">learn</button>
+      <div id="sheetSpellbookBlock" hidden>
+        <span id="sbWho" hidden>select a character above</span>
+        <div class="spellbook-learn-row">
+          <div class="field spellbook-choice"><label for="sbSpell">Spell</label><select id="sbSpell"></select></div>
+          <div class="field"><label for="sbSource">Source</label>
+            <select id="sbSource"><option value="">Not specified</option><option value="class">Class</option><option value="race">Ancestry</option><option value="item">Item</option><option value="other">Other</option></select>
+          </div>
+          <button id="learnSpell" class="btn small secondary" type="button">Learn spell</button>
+        </div>
+        <p class="spellbook-error" role="alert" hidden></p>
+        <p class="spellbook-summary muted" aria-live="polite"></p>
         <div id="sbList"></div>
       </div>
     </section>
@@ -2277,14 +2787,22 @@
       </div>
       <div class="rule"></div>
       <div id="sheetPanel"><p class="muted">select a character</p></div>
-      <div class="subhead">Inventory — <span id="invWho" class="muted">select a character</span></div>
-      <div class="row">
-        <div class="field" style="flex:3"><label for="invItem">item</label><select id="invItem"></select></div>
-        <div class="field"><label for="invQty">qty</label><input id="invQty" type="number" value="1" min="1" /></div>
-        <button id="addToBag" class="btn small secondary" type="button">add to bag</button>
+      <div id="sheetInvBlock">
+        <div class="subhead">Inventory<span id="invWho" class="muted" hidden>select a character</span></div>
+        <div class="row">
+          <div class="field" style="flex:3"><label for="invItem-btn">item</label>
+            <div class="vtt-dd fo-inv-dd" id="invItemDd">
+              <input type="hidden" id="invItem" />
+              <button class="vtt-dd-btn" id="invItem-btn" type="button" aria-haspopup="listbox" aria-expanded="false">—</button>
+              <ul class="vtt-dd-list" role="listbox" tabindex="-1" hidden aria-label="Item"></ul>
+            </div>
+          </div>
+          <div class="field"><label for="invQty">qty</label><input id="invQty" type="number" value="1" min="1" /></div>
+          <button id="addToBag" class="btn small secondary" type="button">Add to bag</button>
+        </div>
+        <p class="muted">Attunement is capped at 3 per character, enforced atomically — a fourth returns 409.</p>
+        <div id="invList"></div>
       </div>
-      <p class="muted">Attunement is capped at 3 per character, enforced atomically — a fourth returns 409.</p>
-      <div id="invList"></div>
     </div>
   </dialog>
 
@@ -2297,6 +2815,31 @@
       </div>
       <div class="rule"></div>
       <div id="itemEditor"><p class="muted">pick an item, or “+ new item”</p></div>
+    </div>
+  </dialog>
+
+  <!-- Spell editor modal: wraps spellsheet.js's editor, mirroring #itemDialog. -->
+  <dialog id="spellDialog" class="dialog-wide" aria-labelledby="spellHeadTitle">
+    <div class="card-inner">
+      <div class="dialog-head">
+        <h2 id="spellHeadTitle">Spell editor — <span id="spellWho" class="muted">none selected</span></h2>
+        <button class="card-close" type="button" data-close aria-label="Close">✕</button>
+      </div>
+      <div class="rule"></div>
+      <div id="spellEditor"><p class="muted">pick a spell, or “+ new spell”</p></div>
+    </div>
+  </dialog>
+
+  <!-- New character modal: wraps actorsheet.js's creation form, mirroring the
+       item/spell editors. Editing an existing character stays in #sheetDialog. -->
+  <dialog id="actorDialog" class="dialog-wide" aria-labelledby="actorHeadTitle">
+    <div class="card-inner">
+      <div class="dialog-head">
+        <h2 id="actorHeadTitle">New character</h2>
+        <button class="card-close" type="button" data-close aria-label="Close">✕</button>
+      </div>
+      <div class="rule"></div>
+      <div id="actorEditor"></div>
     </div>
   </dialog>
 
@@ -2563,6 +3106,8 @@
   <script src="/js/actors.js" defer></script>
   <script src="/js/sheet.js" defer></script>
   <script src="/js/itemsheet.js" defer></script>
+  <script src="/js/spellsheet.js" defer></script>
+  <script src="/js/actorsheet.js" defer></script>
   <script src="/js/align.js" defer></script>
   <script src="/js/game.js" defer></script>
 </body>

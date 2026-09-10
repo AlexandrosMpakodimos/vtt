@@ -240,7 +240,7 @@
   function initTabs(tablistId, onSelect) {
     var strip = $(tablistId);
     if (!strip) return;
-    var tabs = Array.prototype.slice.call(strip.querySelectorAll('[role="tab"]'));
+    var tabs = Array.prototype.slice.call(strip.querySelectorAll('[role="tab"]')).filter(function (tab) { return !tab.hidden && !tab.disabled; });
     function select(tab, focusIt) {
       // The selected tab's panel. When several tabs share ONE panel (the list's
       // All/Running/Playing all control #campaignPanel), that panel must stay
@@ -340,6 +340,9 @@
       }
     }
     function open() {
+      // Opt-in portal for controls inside filtered/clipped sidebars. Keep the
+      // same list node and handlers; return it to its owner when closed.
+      if (dd.dataset.portal === 'body') document.body.appendChild(list);
       dd.setAttribute('data-open', 'true');
       btn.setAttribute('aria-expanded', 'true');
       list.removeAttribute('hidden');
@@ -354,6 +357,7 @@
       dd.setAttribute('data-open', 'false');
       btn.setAttribute('aria-expanded', 'false');
       list.setAttribute('hidden', '');
+      if (dd.dataset.portal === 'body') dd.appendChild(list);
       document.removeEventListener('mousedown', onOutside, true);
       window.removeEventListener('scroll', positionList, true);
       window.removeEventListener('resize', positionList);
@@ -366,7 +370,7 @@
       hidden.dispatchEvent(new Event('change', { bubbles: true }));
       close(); btn.focus();
     }
-    function onOutside(e) { if (!dd.contains(e.target)) close(); }
+    function onOutside(e) { if (!dd.contains(e.target) && !list.contains(e.target)) close(); }
 
     btn.addEventListener('click', function () { isOpen() ? close() : open(); });
     btn.addEventListener('keydown', function (e) {
