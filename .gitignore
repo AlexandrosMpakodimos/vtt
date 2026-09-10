@@ -4,3 +4,11 @@ node_modules/
 
 *.bak
 .DS_Store
+# local build/handoff notes — keep out of the repo
+CHAT_FIX_UPDATE.md
+CHAT_UPDATE.md
+IMAGES_UPDATE.md
+LIBRARY_POLISH_UPDATE.md
+OWNER_STATS_UPDATE.md
+PARTY_UPDATE.md
+SPELLBOOK_UPDATE.md
