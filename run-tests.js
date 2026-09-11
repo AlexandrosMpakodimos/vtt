@@ -50,6 +50,11 @@ const DB = [
   'test-items-inventory.js', 'test-combat.js', 'test-speaker-color.js',
   'test-scene-grid.js', 'test-spells.js', 'test-assets.js', 'test-landing-server.js',
   'test-campaign-open.js', 'test-lobby.js',
+  // Storage budget ledger + durable cleanup. DB-backed (real Postgres) but NOT
+  // server-backed: they exercise the serialisable accounting directly, which is
+  // where the money-safety property lives. Run with `SKIP_HIBP=1 node <suite>`.
+  'test-storage-budget.js', 'test-budget-lifecycle.js', 'test-storage-cleanup.js',
+  'test-storage-reconcile.js', 'test-media-gateway.js', 'test-media-rewrite.js',
 ];
 
 // Adversarial security regressions.

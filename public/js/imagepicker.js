@@ -351,42 +351,45 @@
     const f = fileInput.files && fileInput.files[0];
     if (!f) { msg.textContent = 'choose a file first'; return; }
 
-    const body = { kind: state.kind, mime: f.type, bytes: f.size };
+    // The controlled upload: the bytes go THROUGH the server, which validates,
+    // meters and writes them to storage exactly once — there is no presigned
+    // grant handed to the browser to replay. Metadata travels in the query
+    // string; the body is the file itself. An idempotency key makes a retry
+    // safe: if the response is lost and we resend, the server returns the same
+    // asset instead of creating a second one.
+    const params = new URLSearchParams({ kind: state.kind, mime: f.type });
     if (state.kind !== 'avatar') {
       if (!state.campaignId) { msg.textContent = 'no campaign loaded'; return; }
-      body.campaign_id = state.campaignId;
+      params.set('campaign_id', state.campaignId);
+    }
+    // A stable key for THIS file selection, reused across retries in this call.
+    const idem = `${Date.now()}-${Math.random().toString(16).slice(2)}-${f.size}`;
+
+    msg.textContent = 'uploading…';
+    let res; let data;
+    try {
+      res = await fetch(`/api/assets/upload?${params.toString()}`, {
+        method: 'POST',
+        headers: { 'Content-Type': f.type || 'application/octet-stream', 'Idempotency-Key': idem },
+        credentials: 'same-origin',
+        body: f,
+      });
+      data = await res.json().catch(() => ({}));
+    } catch (err) {
+      msg.textContent = `upload failed (${err.message})`;
+      return;
     }
 
-    msg.textContent = 'requesting authorisation…';
-    const pres = await api('POST', '/api/assets/presign', body);
-    if (pres.status === 503) {
+    if (res.status === 503) {
       msg.textContent = 'image storage is not configured on this server — paste a link instead';
       return;
     }
-    if (pres.status !== 201) {
-      msg.textContent = (pres.data && pres.data.error) || 'upload was not authorised';
+    if (res.status === 507) {
+      msg.textContent = (data && data.message) || 'the storage budget is full; uploads are paused';
       return;
     }
-
-    msg.textContent = 'uploading…';
-    try {
-      const put = await fetch(pres.data.upload.url, {
-        method: pres.data.upload.method,
-        headers: pres.data.upload.headers,
-        body: f,
-      });
-      if (!put.ok) { msg.textContent = `the storage service refused the upload (${put.status})`; return; }
-    } catch (err) {
-      // A network error here is almost always the bucket's CORS policy or the
-      // page's connect-src, neither of which is visible from the server.
-      msg.textContent = `upload failed (${err.message}) — check the bucket CORS policy and connect-src`;
-      return;
-    }
-
-    msg.textContent = 'verifying…';
-    const done = await api('POST', `/api/assets/${pres.data.asset.id}/confirm`);
-    if (done.status !== 200) {
-      msg.textContent = (done.data && done.data.error) || 'verification failed';
+    if (res.status !== 201 && res.status !== 200) {
+      msg.textContent = (data && data.error) || `upload was refused (${res.status})`;
       return;
     }
 
@@ -394,7 +397,7 @@
     // wants that image, and making them find it in the grid afterwards is a
     // step with no purpose.
     fileInput.value = '';
-    choose(done.data.asset.url);
+    choose(data.asset.url);
   }
 
   async function doLink(linkInput, msg) {

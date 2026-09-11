@@ -68,6 +68,7 @@ const {
 const { withAtomicCap } = require('../services/atomicCap');
 const { shapeItemFor } = require('./items');
 const { contentWriteLimiter } = require('../middleware/rateLimit');
+const gateway = require('../services/mediaGateway');
 
 const router = express.Router({ mergeParams: true });
 
@@ -516,7 +517,7 @@ router.post('/', requireMember, async (req, res, next) => {
 
     const actor = rows[0];
     await broadcastActor(req, actor);
-    return res.status(201).json({ actor: shapeActorFor(true, actor) });
+    return gateway.sendJson(req, res, { actor: shapeActorFor(true, actor) }, 201);
   } catch (err) {
     return next(err);
   }
@@ -539,13 +540,13 @@ router.get('/', requireMember, async (req, res, next) => {
       .orderBy('created_at', 'asc');
 
     if (req.isOwner === true) {
-      return res.json({ actors: rows.map((a) => publicActor(a)) });
+      return gateway.sendJson(req, res, { actors: rows.map((a) => publicActor(a)) });
     }
 
     // One query for the whole list rather than one per row.
     const onTheBoard = await npcIdsOnTheBoard(req.campaign);
     const visible = rows.filter((a) => !a.is_npc || a.in_party === true || onTheBoard.has(a.id));
-    return res.json({ actors: visible.map((a) => shapeActorFor(false, a)) });
+    return gateway.sendJson(req, res, { actors: visible.map((a) => shapeActorFor(false, a)) });
   } catch (err) {
     return next(err);
   }
@@ -561,11 +562,11 @@ router.get('/:actorId', requireMember, async (req, res, next) => {
   try {
     const actor = await loadActorInCampaign(req.params.actorId, req.campaign.id);
     if (!actor) return res.status(404).json({ error: 'actor not found' });
-    if (req.isOwner === true) return res.json({ actor: publicActor(actor) });
+    if (req.isOwner === true) return gateway.sendJson(req, res, { actor: publicActor(actor) });
     if (!(await playersMayKnowActor(req.campaign, actor))) {
       return res.status(404).json({ error: 'actor not found' });
     }
-    return res.json({ actor: shapeActorFor(false, actor) });
+    return gateway.sendJson(req, res, { actor: shapeActorFor(false, actor) });
   } catch (err) {
     return next(err);
   }
@@ -624,7 +625,7 @@ router.patch('/:actorId', requireMember, async (req, res, next) => {
       const sockets = req.app.get('campaignSockets');
       if (sockets) await sockets.broadcastRoom(req.campaign.id, 'party:changed', {});
     }
-    return res.json({ actor: shapeActorFor(isOwner, row) });
+    return gateway.sendJson(req, res, { actor: shapeActorFor(isOwner, row) });
   } catch (err) {
     return next(err);
   }
@@ -831,7 +832,7 @@ router.get('/:actorId/inventory', requireMember, async (req, res, next) => {
       }),
     }));
 
-    return res.json({ inventory });
+    return gateway.sendJson(req, res, { inventory });
   } catch (err) {
     return next(err);
   }

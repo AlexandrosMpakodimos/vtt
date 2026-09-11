@@ -1,5 +1,6 @@
 const express = require('express');
 const knex = require('../db');
+const gateway = require('../services/mediaGateway');
 const { hashPassword, verifyPassword } = require('../services/password');
 const { requireAuth } = require('../middleware/auth');
 const { contentWriteLimiter } = require('../middleware/rateLimit');
@@ -215,7 +216,7 @@ router.post('/', async (req, res, next) => {
       }
     }
 
-    return res.status(201).json({ campaign: publicCampaign(campaign, req.user.id) });
+    return gateway.sendJson(req, res, { campaign: publicCampaign(campaign, req.user.id) }, 201);
   } catch (err) {
     return next(err);
   }
@@ -254,7 +255,7 @@ router.get('/mine', async (req, res, next) => {
       .orderBy('c.updated_at', 'desc')
       .select('c.*', 'm.archived_at', 'owner.username as owner_username'); // archived_at feeds the per-viewer `archived` flag; owner_username labels the card
 
-    return res.json({ campaigns: rows.map((c) => publicCampaign(c, req.user.id)) });
+    return gateway.sendJson(req, res, { campaigns: rows.map((c) => publicCampaign(c, req.user.id)) });
   } catch (err) {
     return next(err);
   }
@@ -269,7 +270,7 @@ router.get('/deleted', async (req, res, next) => {
       .whereRaw(`deleted_at > now() - interval '${SOFT_DELETE_DAYS} days'`)
       .orderBy('deleted_at', 'desc');
 
-    return res.json({ campaigns: rows.map((c) => publicCampaign(c, req.user.id)) });
+    return gateway.sendJson(req, res, { campaigns: rows.map((c) => publicCampaign(c, req.user.id)) });
   } catch (err) {
     return next(err);
   }
@@ -322,7 +323,7 @@ router.get('/search', async (req, res, next) => {
       .offset(offset)
       .select('c.*', 'owner.username as owner_username', knex.raw('count(m.user_id) as member_count'));
 
-    return res.json({ campaigns: rows.map(searchResult) });
+    return gateway.sendJson(req, res, { campaigns: rows.map(searchResult) });
   } catch (err) {
     return next(err);
   }
@@ -337,7 +338,7 @@ router.get('/:id', requireMemberAnyState, async (req, res, next) => {
       .where('m.status', 'active')
       .select('m.user_id', 'm.status', 'm.color', 'm.joined_at', 'u.username', 'u.avatar_url');
 
-    return res.json({
+    return gateway.sendJson(req, res, {
       campaign: publicCampaign(req.campaign, req.user.id),
       members: members
         .map((m) => ({ ...m, is_gm: m.user_id === req.campaign.owner_id }))
@@ -376,7 +377,7 @@ router.post('/:id/join', async (req, res, next) => {
 
     // 2. Already active (includes the owner) — no password, no write.
     if (campaign.owner_id === req.user.id || (existing && existing.status === 'active')) {
-      return res.json({ campaign: publicCampaign(campaign, req.user.id), status: 'active' });
+      return gateway.sendJson(req, res, { campaign: publicCampaign(campaign, req.user.id), status: 'active' });
     }
 
     // 3. 'left' or brand new — private campaigns verify the password here.
@@ -459,7 +460,7 @@ router.post('/:id/join', async (req, res, next) => {
       }
     }
 
-    return res.json({ campaign: publicCampaign(campaign, req.user.id), status: 'active' });
+    return gateway.sendJson(req, res, { campaign: publicCampaign(campaign, req.user.id), status: 'active' });
   } catch (err) {
     return next(err);
   }
@@ -533,7 +534,7 @@ router.patch('/:id/me', requireMemberAnyState, contentWriteLimiter, async (req, 
     // nothing — every member can already read the member list.
     req.app.get('campaignSockets')?.broadcastRoom(req.campaign.id, 'member:updated', shaped);
 
-    return res.json({ member: shaped });
+    return gateway.sendJson(req, res, { member: shaped });
   } catch (err) {
     return next(err);
   }
@@ -678,7 +679,7 @@ router.patch('/:id', requireOwner, async (req, res, next) => {
       );
     }
 
-    return res.json({ campaign: publicCampaign(row, req.user.id) });
+    return gateway.sendJson(req, res, { campaign: publicCampaign(row, req.user.id) });
   } catch (err) {
     return next(err);
   }
@@ -737,7 +738,7 @@ router.post('/:id/restore', async (req, res, next) => {
       .update({ deleted_at: null, updated_at: knex.fn.now() })
       .returning([...SAFE_COLUMNS, 'password_hash']);
 
-    return res.json({ campaign: publicCampaign(row, req.user.id) });
+    return gateway.sendJson(req, res, { campaign: publicCampaign(row, req.user.id) });
   } catch (err) {
     return next(err);
   }
@@ -752,7 +753,7 @@ router.get('/:id/members', requireOwner, async (req, res, next) => {
       .orderBy('m.joined_at', 'asc')
       .select('m.user_id', 'm.status', 'm.color', 'm.joined_at', 'u.username', 'u.avatar_url');
 
-    return res.json({
+    return gateway.sendJson(req, res, {
       members: members
         .map((m) => ({ ...m, is_gm: m.user_id === req.campaign.owner_id }))
         .map(publicMember),
@@ -849,7 +850,7 @@ router.post('/:id/transfer', requireOwner, async (req, res, next) => {
 
     // The old owner keeps their (already existing) membership row and stays an
     // active member — now an ordinary player.
-    return res.json({ campaign: publicCampaign(row, req.user.id) });
+    return gateway.sendJson(req, res, { campaign: publicCampaign(row, req.user.id) });
   } catch (err) {
     return next(err);
   }

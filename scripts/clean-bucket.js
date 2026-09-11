@@ -49,12 +49,14 @@
 require('dotenv').config();
 const { S3Client, ListObjectsV2Command, DeleteObjectsCommand } = require('@aws-sdk/client-s3');
 const knex = require('../src/db');
+const budget = require('../src/services/storageBudget');
 
 const BUCKET = process.env.R2_BUCKET;
 const ACCOUNT_ID = process.env.R2_ACCOUNT_ID;
+const PUBLIC_BASE = (process.env.R2_PUBLIC_BASE_URL || '').replace(/\/+$/, '');
 
-if (!BUCKET || !ACCOUNT_ID || !process.env.R2_ACCESS_KEY_ID) {
-  console.error('R2 is not configured in .env — nothing to clean.');
+if (!BUCKET || !ACCOUNT_ID || !process.env.R2_ACCESS_KEY_ID || !PUBLIC_BASE) {
+  console.error('R2 is not fully configured in .env (including R2_PUBLIC_BASE_URL) — nothing to clean.');
   process.exit(1);
 }
 
@@ -73,10 +75,55 @@ const client = new S3Client({
 // break a live upload for the sake of tidiness.
 const MIN_AGE_MINUTES = 60;
 
+
+// Legacy image columns still store hosted R2 URLs by value. During migrations
+// an object can be referenced here even if its `assets` row is missing. Such an
+// object is NOT an orphan and must never be deleted by this script. Protect all
+// six image-bearing tables explicitly; once every legacy reference has a proper
+// asset row this guard becomes a no-op, but it remains a cheap safety net.
+const LEGACY_IMAGE_SOURCES = [
+  ['users', 'id', 'avatar_url'],
+  ['campaigns', 'id', 'img_url'],
+  ['scenes', 'id', 'img_url'],
+  ['tokens', 'id', 'img_url'],
+  ['actors', 'id', 'img_url'],
+  ['items', 'id', 'img_url'],
+];
+
+function storageKeyFromLegacyUrl(raw) {
+  if (typeof raw !== 'string' || !raw.startsWith(`${PUBLIC_BASE}/`)) return null;
+  const key = raw.slice(PUBLIC_BASE.length + 1);
+  if (!key || key.includes('..') || key.includes('?') || key.includes('#')) return null;
+  return key;
+}
+
+async function legacyReferencedKeys() {
+  const out = new Map(); // key -> [{ table, id, column }]
+  for (const [table, idColumn, urlColumn] of LEGACY_IMAGE_SOURCES) {
+    // eslint-disable-next-line no-await-in-loop
+    if (!(await knex.schema.hasTable(table))) continue;
+    // eslint-disable-next-line no-await-in-loop
+    if (!(await knex.schema.hasColumn(table, urlColumn))) continue;
+    // eslint-disable-next-line no-await-in-loop
+    const rows = await knex(table).whereNotNull(urlColumn).select(idColumn, urlColumn);
+    for (const row of rows) {
+      const key = storageKeyFromLegacyUrl(row[urlColumn]);
+      if (!key) continue;
+      if (!out.has(key)) out.set(key, []);
+      out.get(key).push({ table, id: row[idColumn], column: urlColumn });
+    }
+  }
+  return out;
+}
+
 async function listAll() {
   const keys = [];
   let token;
   do {
+    // LIST is a Class A R2 operation. Maintenance may use the reserved slice,
+    // but it is still metered before the provider is touched.
+    // eslint-disable-next-line no-await-in-loop
+    await budget.charge('list', { maintenance: true });
     // eslint-disable-next-line no-await-in-loop
     const page = await client.send(new ListObjectsV2Command({
       Bucket: BUCKET, ContinuationToken: token,
@@ -116,13 +163,21 @@ async function listAll() {
     .select('id', 'storage_key', 'url', 'kind'))
     .filter((r) => !stored.has(r.storage_key));
 
+  // A key referenced by a legacy image column is live even if its asset row is
+  // missing. The old implementation would classify it as an orphan and --delete
+  // could destroy an image still used by the game. Build this set before any
+  // deletion decision and keep those objects out of `orphans`.
+  const legacyRefs = await legacyReferencedKeys();
+
   const cutoff = Date.now() - MIN_AGE_MINUTES * 60 * 1000;
   const orphans = [];
+  const referencedWithoutAsset = [];
   let recent = 0;
   let accounted = 0;
 
   for (const obj of objects) {
     if (known.has(obj.key)) { accounted += 1; continue; }
+    if (legacyRefs.has(obj.key)) { referencedWithoutAsset.push(obj); continue; }
     if (obj.modified && obj.modified.getTime() > cutoff) { recent += 1; continue; }
     orphans.push(obj);
   }
@@ -133,8 +188,23 @@ async function listAll() {
   console.log(`\n${objects.length} object(s) in ${BUCKET}`);
   console.log(`  ${accounted} accounted for by an asset row`);
   console.log(`  ${recent} too recent to judge (< ${MIN_AGE_MINUTES}m — may be mid-upload)`);
+  console.log(`  ${referencedWithoutAsset.length} referenced by legacy game data but missing an asset row (PROTECTED)`);
   console.log(`  ${orphans.length} orphaned, ${mb(orphanBytes)} MB`);
   console.log(`  ${dangling.length} row(s) pointing at an object that is NOT there\n`);
+
+  if (referencedWithoutAsset.length) {
+    console.log('  PROTECTED LEGACY REFERENCES — not deleted even with --delete:');
+    for (const o of referencedWithoutAsset.slice(0, 40)) {
+      console.log(`    ${o.key}`);
+      for (const ref of legacyRefs.get(o.key) || []) {
+        console.log(`      <- ${ref.table}.${ref.column} id=${ref.id}`);
+      }
+    }
+    if (referencedWithoutAsset.length > 40) {
+      console.log(`    … and ${referencedWithoutAsset.length - 40} more`);
+    }
+    console.log('  Repair these into assets rows before considering them orphaned.\n');
+  }
 
   if (dangling.length) {
     // Reported, never deleted. See the header: a dangling row is the only

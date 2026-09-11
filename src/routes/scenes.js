@@ -17,6 +17,7 @@
 const express = require('express');
 const knex = require('../db');
 const { requireMember, requireOwner, validCampaignId } = require('../middleware/campaignAuth');
+const gateway = require('../services/mediaGateway');
 const {
   validateSceneName, validateTokenName, validateImageUrl,
   validateGridCoord, validateTokenSize, validateSceneDimension,
@@ -359,7 +360,7 @@ router.post('/', requireOwner, async (req, res, next) => {
     }
     const row = rows[0];
 
-    return res.status(201).json({ scene: publicScene(row) });
+    return gateway.sendJson(req, res, { scene: publicScene(row) }, 201);
   } catch (err) {
     return next(err);
   }
@@ -376,12 +377,12 @@ router.get('/', requireMember, async (req, res, next) => {
       const active = await knex('scenes')
         .where({ id: req.campaign.active_scene_id, campaign_id: req.campaign.id })
         .first();
-      return res.json({ scenes: active ? [publicScene(active)] : [] });
+      return gateway.sendJson(req, res, { scenes: active ? [publicScene(active)] : [] });
     }
     const rows = await knex('scenes')
       .where({ campaign_id: req.campaign.id })
       .orderBy('created_at', 'asc');
-    return res.json({ scenes: rows.map(publicScene) });
+    return gateway.sendJson(req, res, { scenes: rows.map(publicScene) });
   } catch (err) {
     return next(err);
   }
@@ -588,7 +589,7 @@ router.patch('/:sceneId', requireOwner, async (req, res, next) => {
         .where({ scene_id: scene.id }).count({ n: '*' }).first()).n);
     }
 
-    return res.json({ scene: shaped, grid_changed: gridChanged, affected_tokens: affectedTokens });
+    return gateway.sendJson(req, res, { scene: shaped, grid_changed: gridChanged, affected_tokens: affectedTokens });
   } catch (err) {
     return next(err);
   }
@@ -925,7 +926,7 @@ router.post('/:sceneId/tokens', requireMember, async (req, res, next) => {
     const enrolled = await autoAddCombatant(token);
     if (enrolled) await afterTokensDeleted(req, scene.id);
 
-    return res.status(201).json({ token: shaped, actor: actor ? shapeActorFor(true, actor) : null });
+    return gateway.sendJson(req, res, { token: shaped, actor: actor ? shapeActorFor(true, actor) : null }, 201);
   } catch (err) {
     return next(err);
   }
@@ -1122,7 +1123,7 @@ router.patch('/:sceneId/tokens/:tokenId', requireOwner, async (req, res, next) =
       await syncPropFlag(req, row);
     }
 
-    return res.json({ token: shaped });
+    return gateway.sendJson(req, res, { token: shaped });
   } catch (err) {
     return next(err);
   }
@@ -1370,7 +1371,7 @@ router.post('/:sceneId/tokens/copy', requireOwner, async (req, res, next) => {
     }
     if (enrolledAny) await afterTokensDeleted(req, scene.id);
 
-    return res.status(201).json({ tokens: shaped });
+    return gateway.sendJson(req, res, { tokens: shaped }, 201);
   } catch (err) {
     return next(err);
   }

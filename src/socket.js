@@ -21,6 +21,7 @@
 
 const knex = require('./db');
 const { isActiveMember } = require('./middleware/campaignAuth');
+const gateway = require('./services/mediaGateway');
 const {
   publicToken, shapeTokens, tokenMovePolicy, loadSceneInCampaign,
   validateGridCoord, validateTokenSize,
@@ -120,7 +121,11 @@ function initSockets(io) {
 
   // Exported so HTTP routes can push a lobby event (PATCH /:id uses it for
   // campaign:state). Mirrors broadcastToken's shape, scoped to the lobby room.
-  function broadcastLobby(campaignId, event, payload) {
+  // Image URLs in the payload are routed through the media gateway (a room-scoped
+  // bearer token, since a broadcast has many recipients) — a no-op when the
+  // gateway is disabled.
+  async function broadcastLobby(campaignId, event, payload) {
+    await gateway.rewritePayload(payload);
     io.to(lobbyName(campaignId)).emit(event, payload);
   }
 
@@ -129,7 +134,8 @@ function initSockets(io) {
   // routes (place / delete), which do the authoritative write and then hand the
   // shaped row here to fan out. Emitting to io.to(room) rather than a single
   // socket means the acting user's own other tabs get the update too.
-  function broadcastToken(campaignId, event, payload) {
+  async function broadcastToken(campaignId, event, payload) {
+    await gateway.rewritePayload(payload);
     io.to(roomName(campaignId)).emit(event, payload);
   }
 
@@ -150,7 +156,7 @@ function initSockets(io) {
       .where({ id: campaignId }).whereNull('deleted_at').first();
     if (!campaign) return;
     if (campaign.active_scene_id === sceneId) {
-      broadcastToken(campaignId, event, payload);
+      await broadcastToken(campaignId, event, payload);
       return;
     }
     await broadcastToOwner(campaignId, event, payload);
@@ -173,6 +179,7 @@ function initSockets(io) {
     const campaign = await knex('campaigns')
       .where({ id: campaignId }).whereNull('deleted_at').first();
     if (!campaign) return;
+    await gateway.rewritePayload(payload);
     const ids = socketsByUser.get(campaign.owner_id);
     if (!ids) return;
     for (const sid of ids) {
@@ -206,6 +213,7 @@ function initSockets(io) {
     const campaign = await knex('campaigns')
       .where({ id: campaignId }).whereNull('deleted_at').first();
     if (!campaign) return;
+    await gateway.rewritePayload(payload);
     const room = roomName(campaignId);
     // A Set, so a duplicate id (sender also listed as a recipient) does not emit
     // the same message twice to the same socket.
@@ -227,6 +235,7 @@ function initSockets(io) {
     const campaign = await knex('campaigns')
       .where({ id: campaignId }).whereNull('deleted_at').first();
     if (!campaign) return;
+    await gateway.rewritePayload(payload);
     const ownerSockets = socketsByUser.get(campaign.owner_id) || new Set();
     const room = io.sockets.adapter.rooms.get(roomName(campaignId));
     if (!room) return;

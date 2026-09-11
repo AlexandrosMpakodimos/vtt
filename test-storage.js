@@ -143,5 +143,32 @@ t('isConfigured reports a boolean', typeof s.isConfigured() === 'boolean');
 t('the upload URL lifetime is short', s.UPLOAD_URL_TTL_SECONDS <= 900,
   `${s.UPLOAD_URL_TTL_SECONDS}s — it authorises a write into our bucket`);
 
+console.log('\n--- object size comes from Content-Range total, never the slice length ---');
+// [REGRESSION 2026-09-11] The bug: confirm recorded the ranged GET's
+// Content-Length (16, the length of a bytes=0-15 slice) as the object's size,
+// so every upload was stored as 16 bytes and any byte ledger built on it was
+// fiction. The fix reads the FULL size from Content-Range's total (or a HEAD),
+// never from the slice. These probes pin the parse that stands between a
+// sixteen-byte range body and a sixteen-byte size record.
+t('a 12 MB object whose range body is 16 bytes reports 12 MB, not 16',
+  s.parseContentRangeTotal('bytes 0-15/12582912') === 12582912,
+  'the total after the slash is the object size; Content-Length would be 16');
+t('a small object still reports its real total',
+  s.parseContentRangeTotal('bytes 0-15/2048') === 2048);
+t('the total is parsed with surrounding whitespace tolerated',
+  s.parseContentRangeTotal('  bytes 0-15/1000  ') === 1000);
+t('an unknown total (bytes 0-15/*) is null, not a guess',
+  s.parseContentRangeTotal('bytes 0-15/*') === null);
+t('a bare Content-Length-style value is not mistaken for a range',
+  s.parseContentRangeTotal('16') === null);
+t('a malformed range header is null', s.parseContentRangeTotal('bytes=0-15') === null);
+t('a non-string header is null', s.parseContentRangeTotal(16) === null);
+t('null is null', s.parseContentRangeTotal(null) === null);
+t('a negative total is rejected', s.parseContentRangeTotal('bytes 0-15/-5') === null);
+// The exported surface now includes the authoritative size path, so a caller
+// cannot reach for the ranged read's length by habit — there is no size on it.
+t('headSize is exported as the authoritative size path', typeof s.headSize === 'function');
+t('parseContentRangeTotal is exported for cross-checking', typeof s.parseContentRangeTotal === 'function');
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

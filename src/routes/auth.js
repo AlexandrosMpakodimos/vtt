@@ -1,5 +1,6 @@
 const express = require('express');
 const crypto = require('crypto');
+const gateway = require('../services/mediaGateway');
 const { hashPassword, verifyPassword } = require('../services/password');
 const passport = require('../config/passport');
 const knex = require('../db');
@@ -119,7 +120,7 @@ router.post('/login', (req, res, next) => {
     }
     req.login(user, (loginErr) => {
       if (loginErr) return next(loginErr);
-      return res.json({ user: publicUser(user) });
+      return gateway.sendJson(req, res, { user: publicUser(user) });
     });
   })(req, res, next);
 });
@@ -173,7 +174,7 @@ router.post('/logout', (req, res, next) => {
 
 router.get('/me', (req, res) => {
   if (!req.isAuthenticated()) return res.status(401).json({ user: null });
-  return res.json({ user: publicUser(req.user) });
+  return gateway.sendJson(req, res, { user: publicUser(req.user) });
 });
 
 router.get('/verify-email', async (req, res, next) => {
@@ -305,7 +306,7 @@ router.patch('/me', requireAuth, async (req, res, next) => {
     }
 
     const [user] = await knex('users').where({ id: req.user.id }).update(updates).returning(SAFE_COLUMNS);
-    return res.json({ user: publicUser(user) });
+    return gateway.sendJson(req, res, { user: publicUser(user) });
   } catch (err) {
     if (err.code === '23505') return res.status(409).json({ error: 'username already taken' });
     return next(err);

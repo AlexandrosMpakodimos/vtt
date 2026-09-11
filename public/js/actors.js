@@ -521,50 +521,33 @@ async function uploadAsset() {
   const kind = document.getElementById('assetKind').value;
   // An avatar is personal and has no campaign — the scopes are exclusive, and
   // sending both is refused by the server.
-  const body = { kind, mime: file.type, bytes: file.size };
+  const params = new URLSearchParams({ kind, mime: file.type });
   if (kind !== 'avatar') {
     if (!campaign) { msg.textContent = 'load a campaign first'; return; }
-    body.campaign_id = campaign.id;
+    params.set('campaign_id', campaign.id);
   }
 
-  msg.textContent = 'requesting authorisation…';
-  const pres = await api('POST', '/api/assets/presign', body);
-  show('POST presign', pres);
-  if (pres.status !== 201) {
-    msg.textContent = (pres.data && pres.data.error) || 'upload was not authorised';
-    return;
-  }
-
-  const { asset, upload } = pres.data;
-
+  // The controlled upload: bytes go THROUGH the server (validated, metered,
+  // written once) rather than via a replayable presigned grant. One request,
+  // idempotent on retry.
+  const idem = `${Date.now()}-${Math.random().toString(16).slice(2)}-${file.size}`;
   msg.textContent = 'uploading…';
-  let put;
+  let res; let data;
   try {
-    // Straight to the bucket. Note this is NOT the api() helper: it is a
-    // different origin, carries no session cookie, and must send exactly the
-    // headers the signature covers.
-    put = await fetch(upload.url, {
-      method: upload.method,
-      headers: upload.headers,
+    res = await fetch(`/api/assets/upload?${params.toString()}`, {
+      method: 'POST',
+      headers: { 'Content-Type': file.type || 'application/octet-stream', 'Idempotency-Key': idem },
+      credentials: 'same-origin',
       body: file,
     });
+    data = await res.json().catch(() => ({}));
   } catch (err) {
-    // A network error here is usually the bucket's CORS policy, which is
-    // invisible from the server side — worth naming rather than reporting a
-    // bare failure.
-    msg.textContent = `upload failed (${err.message}) — check the bucket CORS policy`;
+    msg.textContent = `upload failed (${err.message})`;
     return;
   }
-  if (!put.ok) {
-    msg.textContent = `the storage service refused the upload (${put.status})`;
-    return;
-  }
-
-  msg.textContent = 'verifying…';
-  const done = await api('POST', `/api/assets/${asset.id}/confirm`);
-  show('POST confirm', done);
-  if (done.status !== 200) {
-    msg.textContent = (done.data && done.data.error) || 'verification failed';
+  show('POST upload', { status: res.status, data });
+  if (res.status !== 201 && res.status !== 200) {
+    msg.textContent = (data && (data.message || data.error)) || `upload was refused (${res.status})`;
     return;
   }
 

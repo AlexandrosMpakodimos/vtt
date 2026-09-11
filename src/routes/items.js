@@ -43,6 +43,7 @@
 const express = require('express');
 const knex = require('../db');
 const { requireMember, requireOwner } = require('../middleware/campaignAuth');
+const gateway = require('../services/mediaGateway');
 const {
   validUuid, validateImageUrl, validateBool,
   validateShortText, validateLongText, validateJsonBlob,
@@ -200,7 +201,7 @@ router.post('/', requireOwner, async (req, res, next) => {
 
     const item = rows[0];
     await broadcastItem(req, item, 'item:created');
-    return res.status(201).json({ item: publicItem(item) });
+    return gateway.sendJson(req, res, { item: publicItem(item) }, 201);
   } catch (err) {
     return next(err);
   }
@@ -218,7 +219,7 @@ router.get('/', requireMember, async (req, res, next) => {
     const rows = await knex('items')
       .where({ campaign_id: req.campaign.id })
       .orderBy('created_at', 'asc');
-    return res.json({ items: rows.map((i) => shapeItemFor(req.isOwner === true, i)) });
+    return gateway.sendJson(req, res, { items: rows.map((i) => shapeItemFor(req.isOwner === true, i)) });
   } catch (err) {
     return next(err);
   }
@@ -229,7 +230,7 @@ router.get('/:itemId', requireMember, async (req, res, next) => {
   try {
     const item = await loadItemInCampaign(req.params.itemId, req.campaign.id);
     if (!item) return res.status(404).json({ error: 'item not found' });
-    return res.json({ item: shapeItemFor(req.isOwner === true, item) });
+    return gateway.sendJson(req, res, { item: shapeItemFor(req.isOwner === true, item) });
   } catch (err) {
     return next(err);
   }
@@ -289,7 +290,7 @@ router.patch('/:itemId', requireOwner, async (req, res, next) => {
 
     const [row] = await knex('items').where({ id: item.id }).update(updates).returning('*');
     await broadcastItem(req, row);
-    return res.json({ item: publicItem(row) });
+    return gateway.sendJson(req, res, { item: publicItem(row) });
   } catch (err) {
     return next(err);
   }
