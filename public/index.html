@@ -77,7 +77,7 @@
       transition: background-color 0.7s ease, color 0.7s ease, border-color 0.7s ease, box-shadow 0.2s var(--ease);
     }
     /* The art crossfade and the effects fade keep their own opacity transitions. */
-    .theme-ready .rays, .theme-ready .embers { transition: opacity 0.6s ease; }
+    .theme-ready .leaves, .theme-ready .fireflies { transition: opacity 0.6s ease; }
 
     /* Chrome/labels/wordmark/CTA text are not meant to be selected — they are UI,
        not content. Body copy (about/thesis) stays selectable. */
@@ -174,51 +174,42 @@
 
     /* ── Hero: parallax scene, low-anchored title, over-scrim ── */
     .hero {
-      position: relative; min-height: 100svh;
+      position: relative; min-height: max(100svh, 52rem);
       display: flex; flex-direction: column; align-items: center; justify-content: flex-end;
       overflow: hidden; text-align: center;
       padding: 7rem var(--pad) 5.5rem;
     }
     .hero-layers { position: absolute; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; }
-    /* Layers are full-bleed background-image divs, not <img>: background-size:cover
-       always fills the hero at any viewport aspect ratio and can never expose a
-       top/bottom edge. The scale() gives overscan headroom for the parallax
-       translate (the parallax JS writes translate3d(...) scale(1.06) each frame).
-
-       Theme-aware art with a CROSSFADE: background-image can't be transitioned,
-       so each layer carries the NIGHT image as its base and the DAY image on a
-       ::before overlay, and we fade the overlay opacity on theme change. Both
-       images are always loaded, so the crossfade is smooth. The .theme-ready
-       gate (added by JS after first paint) keeps the initial load instant. */
-    /* Theme-aware art with a CROSSFADE that works with TRANSPARENT layers.
-       The mid/front layers have alpha (keyed party/foliage), so a single overlay
-       over an image base would let the base show through the overlay's clear
-       pixels (the campfire from the night mid layer bled into the day theme).
-       Fix: the .layer div carries NO image — it only holds the parallax transform.
-       Night art is on ::before, day art on ::after, both full-bleed overlays that
-       crossfade by opacity. Neither "shows through" the other's transparency. */
+    /* Separate day/night planes preserve transparency during theme changes.
+       Landscape fills the viewport; the party scales with the scene width. */
     .layer {
       position: absolute; inset: -4%;
       transform: translate3d(0, 0, 0) scale(1.06);
       will-change: transform;
+      isolation: isolate;
     }
-    /* Two overlays hold night (::before) and day (::after) art. The day overlay's
-       opacity toggles INSTANTLY on theme change — NOT crossfaded. Crossfading two
-       large background-images made Chrome blend them tile-by-tile, showing as
-       horizontal bands mid-fade (Safari was fine; Chrome was not). An instant swap
-       can't band. The smooth feel comes from the UI colours transitioning; the
-       art simply changes with them. Two overlays (not one) keep the transparent
-       mid/front layers from leaking the other theme through their clear pixels. */
     .layer::before, .layer::after {
       content: ""; position: absolute; inset: 0;
       background-size: cover; background-position: center 42%; background-repeat: no-repeat;
     }
-    /* The night source images sit ~23px (2.56%) higher than the day ones (the
-       generations weren't pixel-aligned), so the night ::before layers are nudged
-       down to match — otherwise the scene visibly jumps vertically on theme swap. */
-    .layer::before { background-position: center 45%; }
-    .layer::before { opacity: 1; }
-    .layer::after  { opacity: 0; }
+    .layer.mid::before, .layer.mid::after {
+      /* Width-driven scale gives the party presence in the clearing. The lower
+         anchor moves both themes together without changing the parallax plane. */
+      background-size: min(86%, 101rem) auto;
+      background-position: center calc(78% + 4rem);
+    }
+    @media (max-aspect-ratio: 1/1) {
+      .layer.mid::before, .layer.mid::after {
+        background-size: 100% auto;
+        background-position: center 44%;
+      }
+    }
+    .layer.front::before, .layer.front::after { background-size: 100% 100%; }
+    /* Lift the artwork without filtering the heading, buttons, or particles.
+       Night gets more light; daylight keeps its warm, restrained highlights. */
+    .layer::before { opacity: 1; filter: brightness(1.24) saturate(1.32); }
+    .layer.mid::before { filter: brightness(1.32) saturate(1.36); }
+    .layer::after  { opacity: 0; filter: brightness(1.10) saturate(1.30); }
     html[data-theme="light"] .layer::before { opacity: 0; }
     html[data-theme="light"] .layer::after  { opacity: 1; }
 
@@ -229,18 +220,26 @@
     .layer.mid::after   { background-image: url("/assets/layer-mid.webp"); }
     .layer.front::after { background-image: url("/assets/layer-front.webp"); }
 
-    /* The day overlay crossfades in/out on theme change. A slower fade (0.9s) gives
-       Chrome's compositor more time per frame, which markedly reduces (though can't
-       fully eliminate) the tile-banding that fast image crossfades can show there;
-       Safari is clean. Only applies after first paint (.theme-ready), so the
-       initial theme is set instantly with no flash. */
     .theme-ready .layer::before, .theme-ready .layer::after {
       transition: opacity 0.9s ease;
+    }
+    /* Normal source-over blending makes two half-opacity cutouts only 75%
+       opaque. Add their complementary weights inside each isolated plane so
+       solid character pixels remain opaque throughout the theme transition. */
+    @supports (mix-blend-mode: plus-lighter) {
+      .layer::after { mix-blend-mode: plus-lighter; }
+    }
+    /* Older browsers swap cutouts directly instead of showing a ghosted party. */
+    @supports not (mix-blend-mode: plus-lighter) {
+      .theme-ready .layer.mid::before, .theme-ready .layer.mid::after,
+      .theme-ready .layer.front::before, .theme-ready .layer.front::after {
+        transition: none;
+      }
     }
     /* Vignette + scrim: darken toward the edges and bottom so the title reads,
        without hiding the art. Two stacked gradients, no flat overlay. */
     .scrim {
-      position: absolute; inset: 0; z-index: 1;
+      position: absolute; inset: 0; z-index: 1; opacity: 0.82;
       background:
         /* central pool of shade behind the title, strongest where the text sits */
         radial-gradient(90% 70% at 50% 52%, var(--scrim) 0%, transparent 70%),
@@ -260,81 +259,62 @@
         var(--surface) 96%);
     }
 
-    /* ── Atmospheric effects ── */
-    .fx { position: absolute; inset: 0; z-index: 1; pointer-events: none; overflow: hidden; }
-
-    /* God-rays fanning out from the sun at top-centre. LIGHT theme only. A
-       repeating-conic-gradient centred on the sun makes the beams radiate from a
-       point (not parallel streaks), masked to fade with distance so they look like
-       shafts of sunlight breaking downward through the canopy. */
-    .rays { position: absolute; inset: 0; z-index: 1; opacity: 0; overflow: hidden; }
-    html[data-theme="light"] .rays { opacity: 1; }
-    .rays::before, .rays::after {
-      content: ""; position: absolute;
-      /* Anchor the cone's apex at the sun: top-centre of the hero. */
-      top: -60%; left: 50%; width: 220%; height: 200%;
-      transform: translateX(-50%); transform-origin: 50% 0%;
-      mix-blend-mode: screen; pointer-events: none;
+    /* Woodland atmosphere: leaves in daylight, fireflies after dusk.
+       All particles stay decorative, non-interactive, and away from the copy. */
+    .fx { position: absolute; inset: 0; z-index: 3; pointer-events: none; overflow: hidden; }
+    .leaves, .fireflies { position: absolute; inset: 0; opacity: 0; }
+    html[data-theme="light"] .leaves,
+    html[data-theme="dark"] .fireflies { opacity: 1; }
+    .leaves span, .fireflies span { position: absolute; opacity: 0; animation-play-state: paused; }
+    html[data-theme="light"] .leaves span,
+    html[data-theme="dark"] .fireflies span { animation-play-state: running; }
+    .leaves span {
+      top: 8%; width: 18px; height: 9px;
+      border: 1px solid #48513b; border-radius: 0 80% 0 80%;
+      background: #c3ad62; box-shadow: 0 1px 3px rgb(30 40 24 / 25%); transform-origin: center;
+      animation: leafDrift 13s linear infinite; animation-play-state: paused;
     }
-    .rays::before {
-      background: repeating-conic-gradient(from 180deg at 50% 0%,
-        transparent 0deg 3deg,
-        color-mix(in srgb, #fff4cf 70%, transparent) 4deg 6deg,
-        transparent 7deg 12deg);
-      /* fade the beams out toward the bottom and sides so they read as light shafts */
-      -webkit-mask: radial-gradient(90% 85% at 50% 0%, #000 8%, transparent 68%);
-      mask: radial-gradient(90% 85% at 50% 0%, #000 8%, transparent 68%);
-      animation: rayDrift 16s ease-in-out infinite alternate;
+    .leaves span:nth-child(1) { left: 9%; animation-delay: -3s; }
+    .leaves span:nth-child(2) { left: 18%; animation-delay: -11s; animation-duration: 21s; }
+    .leaves span:nth-child(3) { left: 27%; animation-delay: -7s; animation-duration: 19s; }
+    .leaves span:nth-child(4) { left: 73%; animation-delay: -14s; animation-duration: 23s; }
+    .leaves span:nth-child(5) { left: 82%; animation-delay: -5s; animation-duration: 18s; }
+    .leaves span:nth-child(6) { left: 91%; animation-delay: -16s; animation-duration: 22s; }
+    .leaves span:nth-child(7) { left: 6%; animation-delay: -9s; animation-duration: 14s; }
+    .leaves span:nth-child(8) { left: 36%; animation-delay: -4s; animation-duration: 16s; width: 14px; height: 7px; }
+    .leaves span:nth-child(9) { left: 64%; animation-delay: -12s; animation-duration: 15s; }
+    .leaves span:nth-child(10) { left: 95%; animation-delay: -6s; animation-duration: 18s; width: 22px; height: 11px; }
+    @keyframes leafDrift {
+      0% { opacity: 0; transform: translate3d(0, 0, 0) rotate(-25deg); }
+      12%, 75% { opacity: 0.9; }
+      45% { transform: translate3d(-42px, 23svh, 0) rotate(90deg); }
+      100% { opacity: 0; transform: translate3d(58px, 52svh, 0) rotate(210deg); }
     }
-    .rays::after {
-      background: repeating-conic-gradient(from 180deg at 50% 0%,
-        transparent 0deg 5deg,
-        color-mix(in srgb, #ffe6a8 55%, transparent) 6deg 8deg,
-        transparent 9deg 18deg);
-      -webkit-mask: radial-gradient(80% 75% at 50% 0%, #000 6%, transparent 62%);
-      mask: radial-gradient(80% 75% at 50% 0%, #000 6%, transparent 62%);
-      animation: rayDrift 23s ease-in-out infinite alternate-reverse;
+    .fireflies span {
+      width: 5px; height: 5px; border-radius: 50%; background: #fff3b8;
+      box-shadow: 0 0 8px 3px rgb(223 235 151 / 65%), 0 0 20px 6px rgb(205 217 154 / 25%);
+      animation: fireflyWander 11s ease-in-out infinite; animation-play-state: paused;
     }
-    @keyframes rayDrift {
-      from { opacity: 0.55; transform: translateX(-50%) rotate(-2.5deg); }
-      to   { opacity: 1;    transform: translateX(-50%) rotate(2.5deg); }
-    }
-
-    /* Floating embers rising from the campfire (bottom-centre). DARK theme only. */
-    .embers { position: absolute; inset: 0; opacity: 0; }
-    html[data-theme="dark"] .embers { opacity: 1; }
-    .embers span {
-      position: absolute; bottom: 20%; left: 50%;
-      width: var(--s, 5px); height: var(--s, 5px); border-radius: 50%;
-      background: radial-gradient(circle, #fff0c0 0%, #ffab4d 40%, #ff8a2c 60%, transparent 72%);
-      box-shadow: 0 0 8px 3px color-mix(in srgb, #ffab4d 75%, transparent),
-                  0 0 16px 6px color-mix(in srgb, #ff8a2c 35%, transparent);
-      opacity: 0; will-change: transform, opacity;
-      animation-name: emberRise; animation-iteration-count: infinite;
-      animation-timing-function: ease-in;
-    }
-    /* Wider horizontal spread so embers drift across the fire, not just straight up. */
-    .embers span:nth-child(1)  { left: 42%; --s: 4px; --sway: -26px; --rise: -380px; animation-delay: 0s;   animation-duration: 5.5s; }
-    .embers span:nth-child(2)  { left: 55%; --s: 6px; --sway:  34px; --rise: -460px; animation-delay: 0.9s; animation-duration: 6.9s; }
-    .embers span:nth-child(3)  { left: 48%; --s: 3px; --sway: -14px; --rise: -320px; animation-delay: 1.8s; animation-duration: 5.1s; }
-    .embers span:nth-child(4)  { left: 58%; --s: 7px; --sway:  22px; --rise: -500px; animation-delay: 2.6s; animation-duration: 7.6s; }
-    .embers span:nth-child(5)  { left: 40%; --s: 5px; --sway: -40px; --rise: -420px; animation-delay: 3.3s; animation-duration: 6.0s; }
-    .embers span:nth-child(6)  { left: 52%; --s: 4px; --sway:  16px; --rise: -350px; animation-delay: 0.4s; animation-duration: 5.8s; }
-    .embers span:nth-child(7)  { left: 46%; --s: 6px; --sway: -30px; --rise: -480px; animation-delay: 2.1s; animation-duration: 7.1s; }
-    .embers span:nth-child(8)  { left: 60%; --s: 3px; --sway:  44px; --rise: -300px; animation-delay: 4.0s; animation-duration: 5.3s; }
-    .embers span:nth-child(9)  { left: 44%; --s: 5px; --sway: -20px; --rise: -440px; animation-delay: 1.2s; animation-duration: 6.6s; }
-    .embers span:nth-child(10) { left: 50%; --s: 7px; --sway:  28px; --rise: -520px; animation-delay: 3.7s; animation-duration: 8.0s; }
-    .embers span:nth-child(11) { left: 38%; --s: 4px; --sway: -36px; --rise: -360px; animation-delay: 2.9s; animation-duration: 6.2s; }
-    .embers span:nth-child(12) { left: 62%; --s: 5px; --sway:  12px; --rise: -410px; animation-delay: 0.6s; animation-duration: 7.4s; }
-    /* Rise with a sideways sway: embers drift one way early, curve back later, and
-       rise to a per-ember height (--rise). Sizes, sway, height, delay and duration
-       all vary per span (below) so no two move alike. */
-    @keyframes emberRise {
-      0%   { opacity: 0; transform: translate(-50%, 0) scale(0.4); }
-      12%  { opacity: 1; }
-      45%  { transform: translate(calc(-50% + var(--sway, 20px)), calc(var(--rise, -400px) * 0.45)) scale(1); }
-      78%  { opacity: 0.8; }
-      100% { opacity: 0; transform: translate(calc(-50% - var(--sway, 20px) * 0.4), var(--rise, -400px)) scale(1.2); }
+    .fireflies span:nth-child(1) { left: 12%; top: 35%; animation-delay: -2s; }
+    .fireflies span:nth-child(2) { left: 22%; top: 48%; animation-delay: -7s; animation-duration: 13s; }
+    .fireflies span:nth-child(3) { left: 30%; top: 25%; animation-delay: -4s; animation-duration: 15s; }
+    .fireflies span:nth-child(4) { left: 42%; top: 18%; animation-delay: -9s; animation-duration: 12s; }
+    .fireflies span:nth-child(5) { left: 66%; top: 22%; animation-delay: -6s; animation-duration: 14s; }
+    .fireflies span:nth-child(6) { left: 77%; top: 44%; animation-delay: -1s; animation-duration: 16s; }
+    .fireflies span:nth-child(7) { left: 87%; top: 33%; animation-delay: -10s; animation-duration: 13s; }
+    .fireflies span:nth-child(8) { left: 92%; top: 52%; animation-delay: -5s; animation-duration: 17s; }
+    .fireflies span:nth-child(9) { left: 7%; top: 56%; animation-delay: -3s; animation-duration: 12s; }
+    .fireflies span:nth-child(10) { left: 18%; top: 23%; animation-delay: -8s; animation-duration: 14s; }
+    .fireflies span:nth-child(11) { left: 52%; top: 16%; animation-delay: -5s; animation-duration: 13s; }
+    .fireflies span:nth-child(12) { left: 72%; top: 31%; animation-delay: -11s; animation-duration: 16s; }
+    .fireflies span:nth-child(13) { left: 83%; top: 57%; animation-delay: -4s; animation-duration: 15s; }
+    .fireflies span:nth-child(14) { left: 95%; top: 19%; animation-delay: -7s; animation-duration: 12s; }
+    @keyframes fireflyWander {
+      0%, 100% { opacity: 0; transform: translate3d(0, 8px, 0); }
+      20% { opacity: 0.9; }
+      45% { opacity: 0.2; transform: translate3d(28px, -24px, 0); }
+      65% { opacity: 1; }
+      80% { opacity: 0.15; transform: translate3d(-20px, -38px, 0); }
     }
 
     .hero-inner { position: relative; z-index: 3; color: var(--hero-text); max-width: 54rem; }
@@ -471,7 +451,8 @@
       .scroll-cue { animation: none; }
       .layer { transition: none; }
       /* Atmospheric effects are motion — hide entirely under reduced-motion. */
-      .rays, .embers { display: none; }
+      .fx { display: none; }
+      .theme-ready .layer::before, .theme-ready .layer::after { transition: none; }
       * { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; }
     }
 
@@ -512,15 +493,16 @@
         <div class="layer front" data-depth="0.6"></div>
       </div>
 
-      <!-- Atmospheric effects, theme-gated by CSS. God-rays show in the light
-           (day) theme; floating campfire embers show in the dark (night) theme.
-           aria-hidden, pointer-events:none, all CSS animation (reduced-motion off). -->
+      <!-- Decorative woodland particles; CSS handles theme and reduced motion. -->
       <div class="fx" aria-hidden="true">
-        <div class="rays"></div>
-        <div class="embers">
+        <div class="leaves">
           <span></span><span></span><span></span><span></span><span></span>
           <span></span><span></span><span></span><span></span><span></span>
-          <span></span><span></span>
+        </div>
+        <div class="fireflies">
+          <span></span><span></span><span></span><span></span><span></span>
+          <span></span><span></span><span></span><span></span><span></span>
+          <span></span><span></span><span></span><span></span>
         </div>
       </div>
 
