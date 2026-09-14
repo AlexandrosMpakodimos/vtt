@@ -78,7 +78,7 @@ const { withAtomicCap } = require('../services/atomicCap');
 const { contentWriteLimiter } = require('../middleware/rateLimit');
 const {
   validateCombatName, validateHpOverride, validateBool,
-  validateSortOrder, validateTokenIdList,
+  validateSortOrder, validateTokenIdList, validateInt,
 } = require('../services/validators');
 const { shapeActorFor } = require('./actors');
 
@@ -118,6 +118,8 @@ function publicCombat(c) {
     scene_id: c.scene_id,
     name: c.name,
     active: c.active,
+    round: c.round,
+    turn_index: c.turn_index,
     created_at: c.created_at,
     updated_at: c.updated_at,
   };
@@ -504,6 +506,26 @@ router.patch('/:combatId', requireOwner, async (req, res, next) => {
       const b = validateBool(body.active, 'active');
       if (b.error) return res.status(400).json({ error: b.error });
       updates.active = b.value;
+      // Ending a fight resets the turn pointer, so a later restart begins at
+      // round 1, top of the order — not wherever the previous fight stopped.
+      if (b.value === false) { updates.round = 1; updates.turn_index = 0; }
+    }
+    if (body.round !== undefined) {
+      const r = validateInt(body.round, { min: 1, max: 9999, field: 'round' });
+      if (r.error) return res.status(400).json({ error: r.error });
+      updates.round = r.value;
+    }
+    if (body.turn_index !== undefined) {
+      // turn_index indexes the roster ordered by sort_order. Bound it to the live
+      // combatant count so a stale client index can never point past the end;
+      // an empty roster pins it to 0. min 0 always; max is count-1 (or 0).
+      const count = await knex('combatants')
+        .where({ combat_id: found.combat.id }).count('* as n').first();
+      const n = Number(count ? count.n : 0);
+      const hi = n > 0 ? n - 1 : 0;
+      const ti = validateInt(body.turn_index, { min: 0, max: hi, field: 'turn_index' });
+      if (ti.error) return res.status(400).json({ error: ti.error });
+      updates.turn_index = ti.value;
     }
     if (!Object.keys(updates).length) {
       return res.status(400).json({ error: 'nothing to update' });

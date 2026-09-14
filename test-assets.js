@@ -57,8 +57,26 @@ function agent() {
       try { data = await res.json(); } catch { /* empty */ }
       return { status: res.status, data };
     },
+    // Raw-body request for the controlled upload route: the body is the file
+    // bytes, metadata is in the query string, and an idempotency key may be set.
+    async reqRaw(method, path, bodyBuf, { mime, idem } = {}) {
+      const headers = { Origin: BASE, 'Content-Type': mime || 'application/octet-stream' };
+      if (cookie) headers.Cookie = cookie;
+      if (idem) headers['Idempotency-Key'] = idem;
+      const res = await fetch(BASE + path, { method, headers, body: bodyBuf });
+      const setC = res.headers.get('set-cookie');
+      if (setC) cookie = setC.split(';')[0];
+      let data = null;
+      try { data = await res.json(); } catch { /* empty */ }
+      return { status: res.status, data };
+    },
   };
 }
+
+// A minimal valid PNG (8-byte signature + IHDR start) — enough to pass the
+// magic-number check. The controlled-upload probes that reach the write need a
+// bucket; the ones that test validation/auth/idempotency-shape do not.
+const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D]);
 
 async function mk(name) {
   const a = agent();
@@ -319,6 +337,67 @@ async function teardown(gm, pl) {
     outcome.every((r) => r.status < 500), outcome.map((r) => r.status).join(','));
 
   // ===================================================================
+  // THE CONTROLLED UPLOAD PATH (POST /api/assets/upload)
+  // These probes test routing, auth, validation and strict-mode — none of which
+  // needs a bucket. The actual byte WRITE + idempotency-dedup are exercised in
+  // the bucket-only section further down.
+  // ===================================================================
+  results.push('\n--- the controlled upload path: routing, auth, validation ---');
+  {
+    // Unauthenticated is refused before anything else.
+    const anon = agent();
+    const un = await anon.reqRaw('POST', '/api/assets/upload?kind=portrait&mime=image%2Fpng', PNG_MAGIC, { mime: 'image/png' });
+    t('an unauthenticated controlled upload is refused (401/403)',
+      un.status === 401 || un.status === 403, `got ${un.status}`);
+
+    // NOTE: campaign_id must be camp.id (the UUID), not the campaign object.
+    // pl is an active MEMBER of camp (it joined at setup), so these probes reach
+    // the validation/permission logic rather than the membership 404.
+    // An unknown kind fails kind-validation (before permission) -> 400.
+    const badKind = await pl.reqRaw('POST', `/api/assets/upload?kind=nonsense&mime=image%2Fpng&campaign_id=${camp.id}`, PNG_MAGIC, { mime: 'image/png' });
+    t('an unknown kind is refused (400/503)', badKind.status === 400 || badKind.status === 503, `got ${badKind.status}`);
+
+    // A player MAY upload a portrait, so permission passes and the SVG mime is
+    // caught at the allow-list -> 400. (Map would be a 403 before the mime check,
+    // which is why this probe uses portrait, not map.)
+    const svg = await pl.reqRaw('POST', `/api/assets/upload?kind=portrait&mime=image%2Fsvg%2Bxml&campaign_id=${camp.id}`, PNG_MAGIC, { mime: 'image/svg+xml' });
+    t('an SVG mime is refused (400/503) — no scriptable image reaches storage', svg.status === 400 || svg.status === 503, `got ${svg.status}`);
+
+    // A player may upload a portrait; an empty body is then refused -> 400.
+    const empty = await pl.reqRaw('POST', `/api/assets/upload?kind=portrait&mime=image%2Fpng&campaign_id=${camp.id}`, Buffer.alloc(0), { mime: 'image/png' });
+    t('an empty body is refused (400)', empty.status === 400 || empty.status === 503, `got ${empty.status}`);
+
+    // A player uploading a MAP is refused by PERMISSION (BFLA) -> 403. This probe
+    // must use a player (not the GM, who may upload maps) for the refusal to mean
+    // anything.
+    const playerMap = await pl.reqRaw('POST', `/api/assets/upload?kind=map&mime=image%2Fpng&campaign_id=${camp.id}`, PNG_MAGIC, { mime: 'image/png' });
+    t('a player cannot controlled-upload a map (403/503)',
+      playerMap.status === 403 || playerMap.status === 503, `got ${playerMap.status}`);
+
+    // A non-member is 404, not 403 (no campaign enumeration).
+    const outsiderAgent = await mk('outsider');
+    const nm = await outsiderAgent.reqRaw('POST', `/api/assets/upload?kind=portrait&mime=image%2Fpng&campaign_id=${camp.id}`, PNG_MAGIC, { mime: 'image/png' });
+    t('a non-member controlled upload is 404/503 (no enumeration)',
+      nm.status === 404 || nm.status === 503, `got ${nm.status}`);
+
+    // Strict mode disables legacy presign. Only assert when the server is in
+    // strict mode (env-driven); otherwise note it.
+    if (process.env.UPLOAD_MODE === 'strict') {
+      const pres = await pl.req('POST', '/api/assets/presign', { kind: 'portrait', mime: 'image/png', bytes: 100, campaign_id: camp.id });
+      t('strict mode: legacy presign is disabled (410)', pres.status === 410, `got ${pres.status}`);
+    } else {
+      note('strict mode', 'server not in UPLOAD_MODE=strict; presign still available for cutover');
+    }
+
+    // Bytes that lie about their type are refused BEFORE any write (a text body
+    // claiming to be PNG). A player may upload a portrait, so this reaches the
+    // magic-byte check -> 400.
+    const liar = await pl.reqRaw('POST', `/api/assets/upload?kind=portrait&mime=image%2Fpng&campaign_id=${camp.id}`, Buffer.from('this is not a png'), { mime: 'image/png' });
+    t('bytes that are not the declared image type are refused (400/503)',
+      liar.status === 400 || liar.status === 503, `got ${liar.status}`);
+  }
+
+  // ===================================================================
   // Everything below needs a real bucket.
   // ===================================================================
   if (!storageOn) {
@@ -437,6 +516,34 @@ async function teardown(gm, pl) {
   });
   t('R2 refuses a body larger than was signed, before our code runs',
     oversize.status >= 400, `${oversize.status} — the length is part of the signature`);
+
+  console.log('\n--- the controlled upload actually writes, once, and is idempotent ---');
+  {
+    const idem = `test-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const up1 = await gm.reqRaw('POST', `/api/assets/upload?kind=portrait&mime=image%2Fpng&campaign_id=${camp.id}`, PNG, { mime: 'image/png', idem });
+    t('a controlled upload succeeds (201)', up1.status === 201, `got ${up1.status} ${JSON.stringify(up1.data)}`);
+    t('...and returns a ready asset with a url', up1.data && up1.data.asset && !!up1.data.asset.url);
+    const newId = up1.data && up1.data.asset && up1.data.asset.id;
+    t('...marked ready in the database',
+      newId && (await knex('assets').where({ id: newId }).first()).status === 'ready');
+    t('...with its real byte size recorded (not 16, not the declared max)',
+      newId && Number((await knex('assets').where({ id: newId }).first()).bytes) === PNG.length,
+      newId && `bytes=${(await knex('assets').where({ id: newId }).first()).bytes}`);
+    t('...and at least one write attempt recorded',
+      newId && Number((await knex('assets').where({ id: newId }).first()).upload_attempts) >= 1);
+
+    // Idempotency: the SAME key returns the SAME asset, no second row/object.
+    const before = Number((await knex('assets').where({ campaign_id: camp.id }).count({ n: '*' }).first()).n);
+    const up2 = await gm.reqRaw('POST', `/api/assets/upload?kind=portrait&mime=image%2Fpng&campaign_id=${camp.id}`, PNG, { mime: 'image/png', idem });
+    const after = Number((await knex('assets').where({ campaign_id: camp.id }).count({ n: '*' }).first()).n);
+    t('a repeat with the same idempotency key returns 200 (deduped)', up2.status === 200, `got ${up2.status}`);
+    t('...the SAME asset id', up2.data && up2.data.asset && up2.data.asset.id === newId);
+    t('...and creates NO second row', after === before, `before ${before}, after ${after}`);
+
+    // A liar reaches the server but never the bucket: 400, no object, no row.
+    const liar = await gm.reqRaw('POST', `/api/assets/upload?kind=portrait&mime=image%2Fpng&campaign_id=${camp.id}`, Buffer.from('definitely not a png'), { mime: 'image/png' });
+    t('bytes that lie about their type are refused at the server (400)', liar.status === 400, `got ${liar.status}`);
+  }
 
   note('teardown', `${await teardown(gm, pl)} asset(s) removed from the bucket and the database`);
 

@@ -68,6 +68,7 @@ const {
 const { withAtomicCap } = require('../services/atomicCap');
 const { shapeItemFor } = require('./items');
 const { contentWriteLimiter } = require('../middleware/rateLimit');
+const gateway = require('../services/mediaGateway');
 
 const router = express.Router({ mergeParams: true });
 
@@ -132,6 +133,7 @@ function publicActor(a) {
     img_offset_y: a.img_offset_y === undefined ? undefined : Number(a.img_offset_y),
     img_scale: a.img_scale === undefined ? undefined : Number(a.img_scale),
     is_npc: a.is_npc,
+    in_party: a.in_party === true,
     level: a.level,
     class: a.class,
     race: a.race,
@@ -176,6 +178,7 @@ function projectedActor(a) {
     img_offset_y: a.img_offset_y === undefined ? undefined : Number(a.img_offset_y),
     img_scale: a.img_scale === undefined ? undefined : Number(a.img_scale),
     is_npc: a.is_npc,
+    in_party: a.in_party === true,
     size: a.size,
   };
 }
@@ -219,37 +222,21 @@ function mayWriteActor({ isOwner, actor, userId }) {
 // Fields the GM may write. `id`, `campaign_id`, `created_at` and `updated_at`
 // appear nowhere and are never taken from a body.
 const GM_WRITABLE = [
-  'name', 'img_url', 'is_npc', 'user_id', 'level', 'class', 'race', 'size',
+  'name', 'img_url', 'is_npc', 'in_party', 'user_id', 'level', 'class', 'race', 'size',
   'hp_current', 'hp_max', 'hp_temp', 'armor_class', 'speed',
   'strength', 'dexterity', 'constitution', 'intelligence', 'wisdom', 'charisma',
   'death_save_successes', 'death_save_failures', 'notes', 'data',
   'img_offset_x', 'img_offset_y', 'img_scale',
 ];
 
-// Fields a PLAYER may write on their own actor. A restricted list, not
-// "everything except the privileged columns", and the reasoning is worth
-// recording: the alternative was to let players write anything non-privileged
-// and catch cheating afterwards with a change history. That history is audit
-// logging, which is on this project's out-of-scope list, and it is the more
-// expensive of the two answers — prevention is one array of column names,
-// surveillance is a table, a retention sweep, an authorisation surface and its
-// own probe suite. If a player should not be able to raise their own strength,
-// the fix is to refuse the write, not to log it.
-//
-// So: the player owns their character's CONDITION and description. The GM owns
-// its CAPABILITIES.
-//
-// KNOWN AND ACCEPTED: `data` is player-writable and currency lives in `data`
-// (database-decisions.md keeps gold out of the columns), so a player can set
-// their own gold. Removing `data` would also remove their ability to record
-// spell slots and proficiencies, which is most of what the bucket is for. If
-// gold must become GM-controlled it has to LEAVE `data` and become a real
-// column — a schema deviation and a separate decision, flagged not folded in.
-// `data` is size-bounded by validateJsonBlob regardless.
+// Owners may edit every gameplay statistic and descriptive field on their own
+// character. Campaign-management fields (user_id, is_npc, in_party) remain
+// GM-only. Ownership checks and all field validation still apply.
 const PLAYER_WRITABLE = [
-  'name', 'img_url', 'hp_current', 'hp_temp',
+  'name', 'img_url', 'level', 'class', 'race', 'size',
+  'hp_current', 'hp_max', 'hp_temp', 'armor_class', 'speed',
+  'strength', 'dexterity', 'constitution', 'intelligence', 'wisdom', 'charisma',
   'death_save_successes', 'death_save_failures', 'notes', 'data',
-  // Framing follows img_url: a player who may set the portrait may frame it.
   'img_offset_x', 'img_offset_y', 'img_scale',
 ];
 
@@ -302,6 +289,10 @@ async function validateActorField(field, raw, campaignId) {
       // what M3 learned to do explicitly for fog points; being explicit here
       // costs nothing and removes a class of driver-inference surprise.
       return r.error ? r : { column: 'data', value: JSON.stringify(r.value) };
+    }
+    case 'in_party': {
+      const r = validateBool(raw, 'in_party');
+      return r.error ? r : { column: 'in_party', value: r.value };
     }
     case 'is_npc': {
       const r = validateBool(raw, 'is_npc');
@@ -361,7 +352,7 @@ async function validateActorField(field, raw, campaignId) {
 // other's sheets.
 async function playersMayKnowActor(campaign, actor) {
   if (!actor) return false;
-  if (!actor.is_npc) return true;
+  if (!actor.is_npc || actor.in_party === true) return true;
   if (!campaign.active_scene_id) return false;
   const seen = await knex('tokens')
     .where({ actor_id: actor.id, scene_id: campaign.active_scene_id, hidden: false })
@@ -463,25 +454,8 @@ router.post('/', requireMember, async (req, res, next) => {
       ? GM_WRITABLE.filter((f) => f !== 'name')
       : PLAYER_WRITABLE.filter((f) => f !== 'name');
 
-    // A player aiming at a GM-owned field is REFUSED here, exactly as it is on
-    // PATCH. Until 2026-08-02 this path silently ignored them, which was the one
-    // remaining inconsistency in the actor routes: the same request that earns a
-    // 403 on PATCH earned a 201 on create, with the value quietly discarded.
-    //
-    // The two exclusions below are NOT an oversight. `user_id` and `is_npc` are
-    // SERVER-SET for a player, not merely unwritable — they are forced to the
-    // caller's own id and to false regardless of what arrives. Forcing is a
-    // strictly stronger guarantee than refusing, and it lets a well-behaved
-    // client echo a whole actor object back without being rejected for carrying
-    // fields the server was going to overwrite anyway. The mass-assignment
-    // probes that assert "create forces user_id to the caller" test exactly that
-    // and must keep passing.
-    //
-    // Consequence worth stating: a player now creates a character SHELL — name,
-    // portrait, current HP, notes — and the GM fills in its capabilities. That
-    // is the permission model this milestone chose (the player owns their
-    // character's condition, the GM owns what it can do), applied honestly at
-    // the moment of creation rather than accepted and then discarded.
+    // Players may supply gameplay stats at creation. Membership is GM-only;
+    // ownership and PC/NPC status are forced to self/PC for player creates.
     if (!isOwner) {
       const SERVER_SET = ['user_id', 'is_npc'];
       const refused = Object.keys(body).filter(
@@ -543,7 +517,7 @@ router.post('/', requireMember, async (req, res, next) => {
 
     const actor = rows[0];
     await broadcastActor(req, actor);
-    return res.status(201).json({ actor: shapeActorFor(true, actor) });
+    return gateway.sendJson(req, res, { actor: shapeActorFor(true, actor) }, 201);
   } catch (err) {
     return next(err);
   }
@@ -566,13 +540,13 @@ router.get('/', requireMember, async (req, res, next) => {
       .orderBy('created_at', 'asc');
 
     if (req.isOwner === true) {
-      return res.json({ actors: rows.map((a) => publicActor(a)) });
+      return gateway.sendJson(req, res, { actors: rows.map((a) => publicActor(a)) });
     }
 
     // One query for the whole list rather than one per row.
     const onTheBoard = await npcIdsOnTheBoard(req.campaign);
-    const visible = rows.filter((a) => !a.is_npc || onTheBoard.has(a.id));
-    return res.json({ actors: visible.map((a) => shapeActorFor(false, a)) });
+    const visible = rows.filter((a) => !a.is_npc || a.in_party === true || onTheBoard.has(a.id));
+    return gateway.sendJson(req, res, { actors: visible.map((a) => shapeActorFor(false, a)) });
   } catch (err) {
     return next(err);
   }
@@ -588,11 +562,11 @@ router.get('/:actorId', requireMember, async (req, res, next) => {
   try {
     const actor = await loadActorInCampaign(req.params.actorId, req.campaign.id);
     if (!actor) return res.status(404).json({ error: 'actor not found' });
-    if (req.isOwner === true) return res.json({ actor: publicActor(actor) });
+    if (req.isOwner === true) return gateway.sendJson(req, res, { actor: publicActor(actor) });
     if (!(await playersMayKnowActor(req.campaign, actor))) {
       return res.status(404).json({ error: 'actor not found' });
     }
-    return res.json({ actor: shapeActorFor(false, actor) });
+    return gateway.sendJson(req, res, { actor: shapeActorFor(false, actor) });
   } catch (err) {
     return next(err);
   }
@@ -617,12 +591,8 @@ router.patch('/:actorId', requireMember, async (req, res, next) => {
     const body = req.body || {};
     const allowed = isOwner ? GM_WRITABLE : PLAYER_WRITABLE;
 
-    // A player aiming at a GM-only field is REFUSED, not silently ignored. This
-    // differs from the placement routes, where a non-allow-listed field is
-    // dropped, and the difference is deliberate: silently accepting a request to
-    // set strength to 20 and returning 200 tells the player it worked. Refusing
-    // is the honest answer, and it is the whole reason this list exists rather
-    // than a change history.
+    // Gameplay stats are owner-writable. Campaign-management fields remain
+    // explicitly refused rather than silently ignored.
     if (!isOwner) {
       const refused = Object.keys(body).filter(
         (k) => GM_WRITABLE.includes(k) && !PLAYER_WRITABLE.includes(k),
@@ -649,7 +619,13 @@ router.patch('/:actorId', requireMember, async (req, res, next) => {
 
     const [row] = await knex('actors').where({ id: actor.id }).update(updates).returning('*');
     await broadcastActor(req, row);
-    return res.json({ actor: shapeActorFor(isOwner, row) });
+    // A removed, off-map party NPC no longer passes the normal actor broadcast
+    // gate. Invalidate the roster without disclosing any hidden actor payload.
+    if (actor.in_party !== row.in_party) {
+      const sockets = req.app.get('campaignSockets');
+      if (sockets) await sockets.broadcastRoom(req.campaign.id, 'party:changed', {});
+    }
+    return gateway.sendJson(req, res, { actor: shapeActorFor(isOwner, row) });
   } catch (err) {
     return next(err);
   }
@@ -699,6 +675,8 @@ router.delete('/:actorId', requireMember, async (req, res, next) => {
       } else {
         sockets.broadcastRoom(req.campaign.id, 'actor:deleted', { id: actor.id });
       }
+      // Party NPCs can be visible without any token to trigger a roster refresh.
+      if (actor.in_party === true) await sockets.broadcastRoom(req.campaign.id, 'party:changed', {});
       // Then tell every affected canvas that these tokens are now unlinked.
       // broadcastScene applies the active-scene gate, so a player hears nothing
       // about tokens on a map they cannot open; a hidden token stays GM-only.
@@ -854,7 +832,7 @@ router.get('/:actorId/inventory', requireMember, async (req, res, next) => {
       }),
     }));
 
-    return res.json({ inventory });
+    return gateway.sendJson(req, res, { inventory });
   } catch (err) {
     return next(err);
   }

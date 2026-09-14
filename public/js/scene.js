@@ -67,6 +67,9 @@ let clipboard = [];
 // Last known pointer position over the stage, in grid units. Paste drops tokens
 // here; duplicate ignores it and offsets from the original instead.
 let cursorGrid = { x: 0, y: 0 };
+// M6: the crop chosen for a token's OWN override image, applied at placement.
+// Reset whenever the image field changes (framing describes a specific picture).
+let tokenFrame = { ox: 0, oy: 0, scale: 1, set: false };
 // The same position UNROUNDED, in fractional grid units.
 //
 // cursorGrid is deliberately snapped — a pasted token belongs in a square, and
@@ -95,6 +98,9 @@ const fogSelection = new Set();    // selected fog ids
 let fogClipboard = [];             // SNAPSHOTS ({type, points}), never ids
 let fogMode = false;
 let fogDraw = null;                // in-progress drag: {tool, x0, y0, x1, y1}
+let fogClickCandidate = null;      // region under a fog-draw press; if the press
+                                   // turns out to be a click (no drag), it is
+                                   // selected instead of drawing a zero-size shape
 let polyPoints = [];               // in-progress polygon vertices, grid units
 // Moving a region by mouse needs the SVG nodes to SURVIVE the gesture, so the
 // drag path deliberately does not re-render: it transforms the existing nodes
@@ -117,9 +123,30 @@ async function whoami() {
 }
 
 // --- scene management ---
-document.getElementById('load-scenes').addEventListener('click', loadScenes);
+// Seam: the harness supplies the campaign id through the #campaign-id input and
+// the "Load scenes" button; the game shell supplies it through boot(id). The
+// wiring is guarded so binding does not throw on a page (game.html, the jsdom
+// suite's shell) that has no such input/button.
+{
+  const _loadBtn = document.getElementById('load-scenes');
+  const _cidInput = document.getElementById('campaign-id');
+  if (_loadBtn) {
+    _loadBtn.addEventListener('click', () => {
+      // Harness: the id comes from the #campaign-id input. Game page: the input
+      // is gone, the button is the Scenes-modal refresh, and campaignId is
+      // already set by boot() — so only re-read when the input is present.
+      if (_cidInput) campaignId = _cidInput.value.trim();
+      if (campaignId) loadScenes();
+    });
+  }
+}
+// The game shell's entry point: set the campaign id (bypassing the dead input)
+// then run the file's existing scene-load body unchanged.
+function boot(id) {
+  campaignId = id;
+  return loadScenes();
+}
 async function loadScenes() {
-  campaignId = document.getElementById('campaign-id').value.trim();
   if (!campaignId) return;
   // Ownership decides what this list even means, so settle it before rendering.
   await fetchOwner();
@@ -129,11 +156,21 @@ async function loadScenes() {
   renderSceneList(lastSceneList);
   if (!joinedRoom) joinRoom();
 
-  // A player never chooses a scene: they land on whatever the GM has active,
-  // and the server only sent them that one anyway.
-  if (!isGm()) {
-    if (activeSceneId) openScene(activeSceneId);
-    else closeScene('the GM has not opened a scene yet');
+  updateCanvasEmpty();
+
+  // Everyone lands on the active scene automatically when the game opens.
+  // Players never choose a scene — the server only sent them the active one.
+  // The GM previously got just the list and a blank canvas; now the GM also
+  // opens straight onto the active scene (they can still open others from the
+  // Scenes modal). If nothing is active, the canvas shows an empty state.
+  if (!scene) {
+    if (activeSceneId) {
+      openScene(activeSceneId);
+    } else {
+      closeScene(isGm()
+        ? (lastSceneList.length ? 'no scene is active yet — open one from Scenes' : '')
+        : 'the GM has not opened a scene yet');
+    }
   }
 }
 
@@ -148,45 +185,106 @@ function renderSceneList(scenes) {
   const box = document.getElementById('scene-list');
   box.textContent = '';
   if (!isGm()) {
-    box.appendChild(document.createTextNode(
-      activeSceneId ? 'the GM controls which scene is open' : 'waiting for the GM to open a scene'));
+    const note = document.createElement('p');
+    note.className = 'scenes-empty';
+    note.textContent = activeSceneId
+      ? 'The GM controls which scene is open.'
+      : 'Waiting for the GM to open a scene…';
+    box.appendChild(note);
     return;
   }
   if (!scenes.length) {
-    box.appendChild(document.createTextNode('no scenes yet — create one'));
+    const note = document.createElement('p');
+    note.className = 'scenes-empty';
+    note.textContent = 'No scenes yet — create one above.';
+    box.appendChild(note);
     return;
   }
   for (const sc of scenes) {
-    const row = document.createElement('div');
-    row.className = 'scene-row';
-
-    const label = document.createElement('span');
     const isActive = sc.id === activeSceneId;
-    label.textContent = `${sc.name} (${sc.width}x${sc.height})${isActive ? '  ← ACTIVE' : ''}`;
-    if (isActive) label.className = 'active-scene';
-    row.appendChild(label);
-    row.appendChild(document.createTextNode(' '));
+    const isOpen = scene && sc.id === scene.id;
+
+    // A scene TILE: the map fills it as a background, the name sits on a scrim at
+    // the bottom, badges mark active/open state, and a compact action bar runs
+    // along the very bottom. The map is the anchor — a GM scans by picture.
+    const tile = document.createElement('div');
+    tile.className = 'scene-tile' + (isActive ? ' is-active' : '');
+
+    // The map (or a placeholder). img_url is normalised http(s) by the server,
+    // so it is safe to embed in a CSS url().
+    const art = document.createElement('div');
+    art.className = 'scene-art';
+    if (sc.img_url) {
+      art.style.backgroundImage = 'url("' + sc.img_url + '")';
+    } else {
+      art.classList.add('no-map');
+      art.textContent = 'No map yet';
+    }
+    tile.appendChild(art);
+
+    // State badge (top-left), always visible while scanning.
+    if (isActive || (isOpen && !isActive)) {
+      const badge = document.createElement('span');
+      badge.className = 'scene-badge ' + (isActive ? 'active' : 'open');
+      badge.textContent = isActive ? 'Active' : 'Open';
+      badge.title = isActive
+        ? 'Every player is on this scene'
+        : 'You have this scene loaded (players are not here)';
+      tile.appendChild(badge);
+    }
+
+    // Name on a bottom scrim, readable over any map.
+    const name = document.createElement('div');
+    name.className = 'scene-tile-name';
+    name.textContent = sc.name;
+    name.title = sc.name;
+    tile.appendChild(name);
+
+    // Action bar along the bottom edge. Weighted: Open (quiet) · Activate
+    // (primary, moves everyone) · Delete (danger). On their own bar so they're
+    // reachable on touch and never triggered by an accidental tile click.
+    const actions = document.createElement('div');
+    actions.className = 'scene-tile-actions';
 
     const openBtn = document.createElement('button');
-    openBtn.textContent = 'open';
-    openBtn.title = 'load this scene for you only — players are not moved';
+    openBtn.type = 'button';
+    openBtn.className = 'btn small secondary';
+    openBtn.textContent = 'Open';
+    openBtn.title = 'Load this scene for you only — players are not moved';
     openBtn.addEventListener('click', () => openScene(sc.id));
-    row.appendChild(openBtn);
-
-    const delBtn = document.createElement('button');
-    delBtn.textContent = 'delete';
-    delBtn.title = 'permanently delete this scene, its tokens and its fog';
-    delBtn.addEventListener('click', () => deleteScene(sc));
-    row.appendChild(delBtn);
+    actions.appendChild(openBtn);
 
     const actBtn = document.createElement('button');
-    actBtn.textContent = isActive ? 'active' : 'activate';
+    actBtn.type = 'button';
+    actBtn.className = 'btn small primary';
+    actBtn.textContent = isActive ? 'Active' : 'Activate';
     actBtn.disabled = isActive;
-    actBtn.title = 'make this the active scene — every player is moved here';
+    actBtn.title = 'Make this the active scene — every player is moved here';
     actBtn.addEventListener('click', () => activateScene(sc.id));
-    row.appendChild(actBtn);
+    actions.appendChild(actBtn);
 
-    box.appendChild(row);
+    const delBtn = document.createElement('button');
+    delBtn.type = 'button';
+    delBtn.className = 'btn small danger scene-del';
+    delBtn.setAttribute('aria-label', 'Delete scene');
+    delBtn.title = 'Permanently delete this scene, its tokens and its fog';
+    // Minimalist line-icon trash can (same stroke style as the toolbar icons);
+    // currentColor so it follows the button's danger colour and flips on hover.
+    const delSvg = svgEl('svg', {
+      viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor',
+      'stroke-width': '1.7', 'stroke-linecap': 'round', 'stroke-linejoin': 'round',
+      'aria-hidden': 'true',
+    });
+    delSvg.appendChild(svgEl('path', { d: 'M4 7h16' }));                         // lid line
+    delSvg.appendChild(svgEl('path', { d: 'M10 4h4a1 1 0 0 1 1 1v2H9V5a1 1 0 0 1 1-1z' })); // handle
+    delSvg.appendChild(svgEl('path', { d: 'M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13' })); // can body
+    delSvg.appendChild(svgEl('path', { d: 'M10 11v6M14 11v6' }));                // ribs
+    delBtn.appendChild(delSvg);
+    delBtn.addEventListener('click', () => deleteScene(sc));
+    actions.appendChild(delBtn);
+
+    tile.appendChild(actions);
+    box.appendChild(tile);
   }
 }
 
@@ -213,16 +311,26 @@ async function deleteScene(sc) {
     const t = peek.data.tokens.length, f = (peek.data.fog || []).length;
     blast = `${t} token${t === 1 ? '' : 's'} and ${f} fog region${f === 1 ? '' : 's'}`;
   }
-  const active = sc.id === activeSceneId ? '\n\nThis is the ACTIVE scene — every player will be dropped out of it.' : '';
-  if (!window.confirm(`Delete "${sc.name}"?\n\nThis permanently removes the scene and ${blast}. It cannot be undone.${active}`)) return;
+  const active = sc.id === activeSceneId
+    ? ' This is the active scene — every player will be dropped out of it.' : '';
+  const body = `This permanently removes the scene and ${blast}. It cannot be undone.${active}`;
 
-  const r = await api('DELETE', `/api/campaigns/${campaignId}/scenes/${sc.id}`);
-  show(`delete scene -> ${r.status}`, r.data);
-  if (r.status !== 200) return;
-  log(`deleted "${sc.name}" (${r.data.deleted.tokens} tokens, ${r.data.deleted.fog} fog regions)`);
-  if (scene && scene.id === sc.id) closeScene('scene deleted');
-  if (r.data.was_active) activeSceneId = null;
-  await loadScenes();
+  // Use the shared themed confirm dialog (same as the dashboard's "Delete this
+  // game?"), not the browser's window.confirm. The delete runs on confirm.
+  const runDelete = async () => {
+    const r = await api('DELETE', `/api/campaigns/${campaignId}/scenes/${sc.id}`);
+    show(`delete scene -> ${r.status}`, r.data);
+    if (r.status !== 200) return;
+    log(`deleted "${sc.name}" (${r.data.deleted.tokens} tokens, ${r.data.deleted.fog} fog regions)`);
+    if (scene && scene.id === sc.id) closeScene('scene deleted');
+    if (r.data.was_active) activeSceneId = null;
+    await loadScenes();
+  };
+  if (window.VTTGame && typeof window.VTTGame.confirm === 'function') {
+    window.VTTGame.confirm(`Delete "${sc.name}"?`, body, true, runDelete);
+  } else if (window.confirm(`Delete "${sc.name}"?\n\n${body}`)) {
+    await runDelete();
+  }
 }
 
 // Tear the canvas down — used when a player's scene stops being the active one.
@@ -233,11 +341,25 @@ function closeScene(reason) {
   fog.clear(); fogSelection.clear();
   fogLayer.textContent = '';
   document.getElementById('scene-title').textContent = reason ? `— ${reason}` : '';
+  updateCanvasEmpty();
   log(reason || 'scene closed');
 }
 
+// The empty-canvas prompt ("No scenes yet — create one") shows only for a GM
+// who has NO scenes at all and no scene open. Any scene existing or open hides
+// it. Players never see it (it's gm-only in markup and guarded here too).
+function updateCanvasEmpty() {
+  const el = document.getElementById('canvasEmpty');
+  if (!el) return;
+  const show = isGm() && !scene && lastSceneList.length === 0;
+  if (show) el.removeAttribute('hidden'); else el.setAttribute('hidden', '');
+}
+
 document.getElementById('create-scene').addEventListener('click', async () => {
-  campaignId = document.getElementById('campaign-id').value.trim();
+  // Seam: read the harness's #campaign-id input when present; on the game page
+  // the input is gone and campaignId is already set by boot(), so keep it.
+  const _cid = document.getElementById('campaign-id');
+  if (_cid) campaignId = _cid.value.trim();
   const name = document.getElementById('new-scene-name').value.trim();
   if (!campaignId || !name) return show('need a campaign id and a scene name');
   const r = await api('POST', `/api/campaigns/${campaignId}/scenes`, { name });
@@ -278,6 +400,8 @@ async function openScene(sceneId) {
   renderFog();
 
   if (!joinedRoom) joinRoom();
+  updateCanvasEmpty();
+  centerView();   // frame the map in the middle of the canvas on load
 }
 
 // --- rendering ---
@@ -304,10 +428,54 @@ function applyGridAlignment() {
   const grid = (scene && scene.grid) || {};
   const cell = Number(grid.size) || 0;
 
-  if (!scene || !scene.img_url || !cell) {
-    // No alignment set: fall back to the pre-M6 behaviour exactly.
+  // Reset any inline element sizing/positioning left by a previous render (the
+  // uncalibrated large-map path and the calibrated path both grow and offset the
+  // #stage-bg element), so it returns to its CSS inset:0 = scene-box baseline
+  // before this render decides how to size it. Without this, switching scenes
+  // would carry over the old element width/height/offset.
+  stageBg.style.width = '';
+  stageBg.style.height = '';
+  stageBg.style.left = '';
+  stageBg.style.top = '';
+  stageBg.style.right = '';
+  stageBg.style.bottom = '';
+
+  if (!scene || !scene.img_url) {
     stageBg.style.backgroundSize = 'cover';
     stageBg.style.backgroundPosition = 'center';
+    return;
+  }
+
+  if (!cell) {
+    // No grid calibration set. The old behaviour was `cover`, which scales the
+    // image to FILL the scene box and crops whatever doesn't fit that box's
+    // aspect ratio — so a map wider or taller than the scene's width:height lost
+    // its edges. Instead, size the background to the image's own natural
+    // dimensions so the WHOLE image shows, uncropped, whatever its aspect ratio.
+    //
+    // This is safe to do without touching the stored scene.width/height (which
+    // would need a migration and would move the fog mask): token coordinates are
+    // grid-cell anchored (rendered at x*GRID_PX), not measured within the scene
+    // box, so they don't shift when the image's drawn extent changes. An image
+    // larger than the scene box simply extends into the grid pad (already 24
+    // squares) rather than being clipped.
+    const probe = new Image();
+    probe.onload = () => {
+      if (!scene || scene.img_url !== probe.src) return;   // scene switched mid-load
+      // Grow the #stage-bg ELEMENT to the image's natural size (overriding its
+      // inset:0 = scene-box sizing), then fill it 1:1. A background can't overflow
+      // its element, so if the element stayed at the scene-box size a larger image
+      // would still be clipped at the box's right/bottom edges — sizing the element
+      // to the image is what actually shows the whole thing.
+      stageBg.style.width = probe.naturalWidth + 'px';
+      stageBg.style.height = probe.naturalHeight + 'px';
+      stageBg.style.right = 'auto';
+      stageBg.style.bottom = 'auto';
+      stageBg.style.backgroundSize = `${probe.naturalWidth}px ${probe.naturalHeight}px`;
+      stageBg.style.backgroundPosition = '0 0';
+      stageBg.style.backgroundRepeat = 'no-repeat';
+    };
+    probe.src = scene.img_url;
     return;
   }
 
@@ -319,9 +487,21 @@ function applyGridAlignment() {
   probe.onload = () => {
     // Guard against a slow load resolving after the GM switched scenes.
     if (!scene || scene.img_url !== probe.src) return;
-    stageBg.style.backgroundSize =
-      `${probe.naturalWidth * scale}px ${probe.naturalHeight * scale}px`;
-    stageBg.style.backgroundPosition = `${-ox * scale}px ${-oy * scale}px`;
+    const w = probe.naturalWidth * scale;
+    const h = probe.naturalHeight * scale;
+    // Grow the #stage-bg ELEMENT to the scaled image size (overriding inset:0 =
+    // scene-box sizing). A background can't overflow its element, so without this
+    // an aligned map taller or wider than the scene box is clipped at the box's
+    // edge — the "cut off below the dragon" on a tall map. The offset shifts the
+    // element rather than the background, keeping the printed grid aligned.
+    stageBg.style.width = w + 'px';
+    stageBg.style.height = h + 'px';
+    stageBg.style.left = (-ox * scale) + 'px';
+    stageBg.style.top = (-oy * scale) + 'px';
+    stageBg.style.right = 'auto';
+    stageBg.style.bottom = 'auto';
+    stageBg.style.backgroundSize = `${w}px ${h}px`;
+    stageBg.style.backgroundPosition = '0 0';
     stageBg.style.backgroundRepeat = 'no-repeat';
   };
   probe.src = scene.img_url;
@@ -338,7 +518,7 @@ function applyGridAlignment() {
 // lattice as the stage origin. A pad of, say, 470px would draw a grid half a
 // square out of step with the one over the image, which is the sort of thing
 // nobody notices until they try to line a token up across the seam.
-const PAD_SQUARES = 12;
+const PAD_SQUARES = 24;
 const PAD_PX = PAD_SQUARES * GRID_PX;
 
 function applyGridOverlay() {
@@ -434,6 +614,128 @@ function removeToken(id) {
   selection.delete(id);
 }
 
+// Highlight one token on the canvas as the active turn (or clear, with null).
+// combat.js calls this so the creature whose turn it is is obvious on the board,
+// not only in the strip. Purely visual — no state, no server call.
+function highlightToken(tokenId) {
+  for (const [id, entry] of tokens) {
+    entry.el.classList.toggle('is-turn', !!tokenId && id === tokenId);
+  }
+}
+
+// ── Token-picking mode (Stage D) ────────────────────────────────────────────
+// Dim the canvas (everything but the tokens) and let the GM click tokens to
+// choose them, then confirm or cancel. combat.js uses this to add combatants:
+// "start an encounter with these" and "add these". Options:
+//   { exclude: Set<id>, hint: string, confirmLabel: string }
+// exclude = tokens already in the fight — shown dimmed and NOT selectable.
+// Resolves via onDone(idsArray) on confirm, or onDone(null) on cancel.
+let pickState = null;   // { chosen:Set, exclude:Set, onDone } while active
+
+function pickTokens(options, onDone) {
+  if (!isGm()) { onDone && onDone(null); return; }
+  if (pickState) endPick(null);   // never stack two pickers
+  const exclude = options && options.exclude ? options.exclude : new Set();
+  pickState = { chosen: new Set(), exclude, onDone: onDone || null };
+
+  // Dim overlay: a scrim INSIDE #stage (same stacking context as the tokens,
+  // which is a transformed element), above the map but below the tokens, so the
+  // selectable tokens sit at full brightness over the dimmed map.
+  const stage = document.getElementById('stage');
+  let dim = document.getElementById('pick-dim');
+  if (!dim) {
+    dim = document.createElement('div');
+    dim.id = 'pick-dim';
+    stage.appendChild(dim);
+  }
+  dim.hidden = false;
+  const wrap = document.getElementById('stage-wrap');
+  wrap.classList.add('picking');   // raises tokens above the scrim + shows rings
+
+  // Mark excluded tokens as non-selectable/dimmed.
+  for (const [id, entry] of tokens) {
+    entry.el.classList.toggle('pick-excluded', exclude.has(id));
+    entry.el.classList.remove('pick-on');
+  }
+
+  // Confirm / cancel bar.
+  let bar = document.getElementById('pick-bar');
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = 'pick-bar';
+    document.body.appendChild(bar);
+  }
+  const hint = (options && options.hint) || 'Click tokens to add them to the encounter.';
+  const confirmLabel = (options && options.confirmLabel) || 'Add selected';
+  bar.textContent = '';
+  const msg = document.createElement('span');
+  msg.className = 'pick-hint';
+  msg.textContent = hint;
+  const count = document.createElement('span');
+  count.className = 'pick-count';
+  count.id = 'pick-count';
+  count.textContent = '0 selected';
+  const cancel = document.createElement('button');
+  cancel.type = 'button'; cancel.className = 'btn small secondary';
+  cancel.textContent = 'Cancel';
+  cancel.addEventListener('click', () => endPick(null));
+  const done = document.createElement('button');
+  done.type = 'button'; done.className = 'btn small primary';
+  done.textContent = confirmLabel;
+  done.addEventListener('click', () => {
+    const ids = [...pickState.chosen];
+    endPick(ids);
+  });
+  bar.appendChild(msg); bar.appendChild(count); bar.appendChild(cancel); bar.appendChild(done);
+  bar.hidden = false;
+
+  // Capture-phase pointerdown on the stage: while picking, a click on a token
+  // TOGGLES it (and never starts a drag); a click on empty space does nothing.
+  wrap.addEventListener('pointerdown', pickPointer, true);
+  // Esc cancels.
+  document.addEventListener('keydown', pickKey, true);
+}
+
+function pickPointer(e) {
+  if (!pickState) return;
+  // Find the token element under the pointer, if any.
+  let node = e.target;
+  let tokenEl = null;
+  while (node && node !== document) {
+    if (node.classList && node.classList.contains('token')) { tokenEl = node; break; }
+    node = node.parentNode;
+  }
+  if (!tokenEl) return;                 // empty space: let pan happen? no — swallow to avoid surprises
+  e.preventDefault(); e.stopPropagation();
+  // Which id is this element?
+  let id = null;
+  for (const [tid, entry] of tokens) { if (entry.el === tokenEl) { id = tid; break; } }
+  if (!id || pickState.exclude.has(id)) return;   // excluded tokens aren't selectable
+  if (pickState.chosen.has(id)) { pickState.chosen.delete(id); tokenEl.classList.remove('pick-on'); }
+  else { pickState.chosen.add(id); tokenEl.classList.add('pick-on'); }
+  const c = document.getElementById('pick-count');
+  if (c) c.textContent = `${pickState.chosen.size} selected`;
+}
+
+function pickKey(e) {
+  if (!pickState) return;
+  if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); endPick(null); }
+}
+
+function endPick(result) {
+  if (!pickState) return;
+  const onDone = pickState.onDone;
+  const wrap = document.getElementById('stage-wrap');
+  wrap.classList.remove('picking');
+  wrap.removeEventListener('pointerdown', pickPointer, true);
+  document.removeEventListener('keydown', pickKey, true);
+  const dim = document.getElementById('pick-dim'); if (dim) dim.hidden = true;
+  const bar = document.getElementById('pick-bar'); if (bar) bar.hidden = true;
+  for (const [, entry] of tokens) { entry.el.classList.remove('pick-on', 'pick-excluded'); }
+  pickState = null;
+  if (onDone) onDone(result);
+}
+
 // --- selection ---
 function setSelection(ids) {
   selection.clear();
@@ -474,25 +776,35 @@ async function loadActorPicker() {
   renderActorPicker(list);
 }
 
+// The character picker is the themed custom dropdown (VTTCommon.initDropdown),
+// matching the other custom lists on the site rather than a native <select>. The
+// dropdown is init'd once (lazily) and its options are swapped on each actor
+// load via setOptions. actorNameById feeds multi-token numbering, replacing the
+// old read of an <option>'s data-name (the custom list has no <option> nodes).
+let tokActorDD = null;
+const actorNameById = new Map();
+
 function renderActorPicker(list) {
-  const sel = document.getElementById('tok-actor');
-  if (!sel) return;
-  const previous = sel.value;
-  sel.textContent = '';
+  const dd = document.getElementById('tokActorDD');
+  if (!dd) return;
 
-  const none = document.createElement('option');
-  none.value = '';
-  none.textContent = '— no character —';
-  sel.appendChild(none);
-
+  const options = [{ value: '', label: '— no character —' }];
+  actorNameById.clear();
   for (const a of list) {
     if (!isGm() && !(me && a.user_id === me.id)) continue;
-    const o = document.createElement('option');
-    o.value = a.id;
-    o.textContent = a.name + (a.is_npc ? ' (NPC)' : '');
-    sel.appendChild(o);
+    options.push({ value: a.id, label: a.name + (a.is_npc ? ' (NPC)' : '') });
+    actorNameById.set(a.id, a.name);   // raw name, for numbering multiples ("Frog 2"…)
   }
-  if ([...sel.options].some((o) => o.value === previous)) sel.value = previous;
+
+  const dropdownApi = window.VTTCommon && window.VTTCommon.initDropdown;
+  if (!tokActorDD && dropdownApi) {
+    // First build: init with these options. Selection defaults to "— no
+    // character —" (value ''), which is the intended default.
+    tokActorDD = window.VTTCommon.initDropdown('tokActorDD', options);
+  } else if (tokActorDD) {
+    // Later loads: swap options, preserving the current pick if it still exists.
+    tokActorDD.setOptions(options);
+  }
 }
 
 
@@ -551,6 +863,16 @@ document.getElementById('place-token').addEventListener('click', async () => {
   const inheritSize = actorId && sizeKey === '';
   const footprint = SIZE_UNITS[sizeKey] || 1;
 
+  // The base used to number multiples. A typed name wins; otherwise, when a
+  // character is chosen, fall back to that character's OWN name (read from the
+  // picker option) so a pile placed from one character still comes out
+  // "Frog", "Frog 2", "Frog 3"… rather than five identical "Frog"s. Single
+  // placement and inheritance are unaffected — this only feeds the numbering.
+  let numberBase = name;
+  if (!numberBase && actorId && actorNameById.has(actorId)) {
+    numberBase = actorNameById.get(actorId);
+  }
+
   // Bound the count client-side; the server independently bounds the batch too.
   let count = parseInt(document.getElementById('tok-count').value, 10);
   if (!Number.isFinite(count) || count < 1) count = 1;
@@ -571,6 +893,12 @@ document.getElementById('place-token').addEventListener('click', async () => {
     // server treats an absent name on an unlinked token as no name.
     if (name) body.name = name;
     if (img_url) body.img_url = img_url;
+    // Send the chosen crop for the override image (only when the user framed it).
+    if (img_url && tokenFrame.set) {
+      body.img_offset_x = tokenFrame.ox;
+      body.img_offset_y = tokenFrame.oy;
+      body.img_scale = tokenFrame.scale;
+    }
     if (!inheritSize) { body.width = footprint; body.height = footprint; }
 
     const r = await api('POST', `/api/campaigns/${campaignId}/scenes/${scene.id}/tokens`, body);
@@ -579,17 +907,22 @@ document.getElementById('place-token').addEventListener('click', async () => {
   }
   if (!isGm()) return show('only the GM can place multiple tokens at once');
 
-  // Bulk placement inherits per spec, on the same absence rule. Numbering still
-  // applies to an explicitly typed name; a character's own name is left to the
-  // server, so five goblins placed from one character all arrive called
-  // "Goblin" rather than being numbered — the numbering lives here, and here it
-  // has no name to number.
+  // Bulk placement inherits per spec, on the same absence rule. Numbering now
+  // uses numberBase — a typed name, or the character's own name when none was
+  // typed — so a pile placed from one character is individually referable
+  // ("Frog", "Frog 2"…). Sending an explicit name also means the server keeps
+  // it rather than re-filling the character's bare name on every token.
   const offsets = packOffsets(count, footprint);
   const specs = offsets.map((o, i) => {
     const spec = { hidden: false, x: origin.x + o.dx, y: origin.y + o.dy };
     if (actorId) spec.actor_id = actorId;
-    if (name) spec.name = instanceName(name, i);
+    if (numberBase) spec.name = instanceName(numberBase, i);
     if (img_url) spec.img_url = img_url;
+    if (img_url && tokenFrame.set) {
+      spec.img_offset_x = tokenFrame.ox;
+      spec.img_offset_y = tokenFrame.oy;
+      spec.img_scale = tokenFrame.scale;
+    }
     if (!inheritSize) { spec.width = footprint; spec.height = footprint; }
     return spec;
   });
@@ -828,6 +1161,24 @@ function applyView() {
   if (zoomHud) zoomHud.textContent = `${Math.round(view.z * 100)}%`;
 }
 
+// Centre the map in the viewport at the current zoom. clampView already centres a
+// map SMALLER than the viewport, but a larger one is otherwise clamped to its
+// top-left corner on load; this sets the pan so the middle of the map sits in the
+// middle of the canvas, then applyView() clamps it (which is a no-op when already
+// centred). Called when a scene is opened so entering a game frames the map.
+function centerView() {
+  if (!scene) return;
+  const vw = wrap.clientWidth;
+  const vh = wrap.clientHeight;
+  const sw = (scene.width + PAD_PX * 2) * view.z;
+  const sh = (scene.height + PAD_PX * 2) * view.z;
+  const originX = PAD_PX * view.z;
+  const originY = PAD_PX * view.z;
+  view.x = (vw - sw) / 2 + originX;
+  view.y = (vh - sh) / 2 + originY;
+  applyView();
+}
+
 function setZoom(next, anchor) {
   const z = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, next));
   if (z === view.z) return;
@@ -922,20 +1273,15 @@ stage.addEventListener('pointerdown', (e) => {
     //   pointermove  sets it (true)
     //   contextmenu  reads and clears it
     //
-    // Clearing in only one of the two was wrong in both directions — on press
-    // alone the flag was stale by the time the drag's own menu event arrived;
-    // on the menu alone it survived to swallow the NEXT legitimate click. The
-    // probe that fires a drag and then a plain click in sequence is what
-    // distinguishes them, and neither single-sided version passes it.
     // Right-drag: marquee. Everything below is the old left-button path, and it
     // is reached with the button swapped rather than duplicated.
-    if (fogMode && fogToolEl.value !== 'select') return;   // draw tools keep the left button
+    // Fog mode always keeps the left button (it draws AND moves regions — see the
+    // dispatch below), so a right press here always means marquee.
   } else if (e.button === 0) {
     // Left on a token is handled by the token's own listener. Left on empty
     // space is a pan, which the wrapper owns — so there is nothing to do here.
     if (!fogMode) return;
-    // In fog mode the left button still draws and still moves regions: the fog
-    // tools are a mode, and a mode owns its button.
+    // In fog mode the left button both draws and moves regions.
   } else {
     return;
   }
@@ -943,46 +1289,38 @@ stage.addEventListener('pointerdown', (e) => {
   // token drag/marquee paths are untouched rather than conditionally patched.
   if (fogMode) {
     hideCtxMenu();
-    // TOOL FIRST. A draw tool always draws, even when the drag starts on top of
-    // an existing region — that is what makes it possible to open a window
-    // inside fog, or lay fog over an already-revealed area. Only the select tool
-    // hit-tests, so drawing can never be swallowed by whatever is underneath.
-    if (fogToolEl.value !== 'select') { beginFogDraw(e); return; }
-
-    // Hit-testing is done in JS against the geometry, not by SVG document order,
-    // so overlaps resolve by the rule we chose: most recently created wins.
-    //
-    // Alt/Option forces a marquee. Without it, a scene that has been fully
-    // covered has NO empty space left to start a marquee from — every point is
-    // inside some region — and box-selection would become unreachable exactly
-    // when a GM has the most regions to manage.
     const g = stageGrid(e);
-    const picked = e.altKey ? null : fogPick(g.x, g.y);
-    if (picked) {
-      if (e.shiftKey) toggleFogSelected(picked.id);
-      else if (!fogSelection.has(picked.id)) setFogSelection([picked.id]);
-      // Clicking an already-selected region keeps the whole selection, so a
-      // multi-region drag works the same way a multi-token drag does.
-      beginFogMove(e);
+
+    // There is no separate "select" tool any more. The shape tool always DRAWS —
+    // including on top of existing fog, which is how you open a window inside
+    // fog or lay fog over a revealed area. Selection of a region is folded in by
+    // gesture, like tokens: a DRAG draws; a CLICK (press+release without moving)
+    // on a region selects it instead (resolved in commitFogDraw). Right-drag
+    // marquees; Alt-drag on a selected region MOVES it.
+    if (e.button === 0) {
+      const pk = fogPick(g.x, g.y);
+      // Press on a region that is ALREADY SELECTED -> move it (plain drag), the
+      // same way a selected token drags. This is what makes "click to select,
+      // then drag to move" work without a separate select tool.
+      if (pk && fogSelection.has(pk.id) && !e.altKey) { beginFogMove(e); return; }
+      // Shift-click on any region toggles it in/out of the selection (no draw).
+      if (pk && e.shiftKey) { toggleFogSelected(pk.id); renderFog(); return; }
+      // Otherwise DRAW — including on top of an unselected region, which is how
+      // you open a window inside fog or lay fog over a revealed area. If the
+      // press turns out to be a click (no drag) on a region, commitFogDraw
+      // selects that region instead of creating a zero-size shape.
+      fogClickCandidate = (fogShapeEl.value !== 'poly') ? pk : null;
+      beginFogDraw(e);
       return;
     }
-    // [FIXED 2026-08-10] Empty space with the select tool: MARQUEE ON THE RIGHT
-    // BUTTON ONLY. A left press here means "pan", exactly as it does outside
-    // fog mode — the marquee moved buttons everywhere, not everywhere except
-    // fog.
-    //
-    // It slipped through because the button check above lets a left press into
-    // this block deliberately: fog DRAWING and region MOVING are left-button
-    // gestures and have to reach the code below. Only this last branch — the
-    // fallthrough for empty space — is a marquee, and it is the one that had to
-    // be excluded rather than the whole block.
+
+    // Right button -> marquee. Capture, for the same reason fog drawing does: a
+    // marquee dragged past the edge of the map otherwise stops receiving
+    // movement and never sees its own release, leaving the rectangle stuck.
     if (e.button !== 2) return;
     const p0 = stagePoint(e);
     const sx0 = p0.x, sy0 = p0.y;
     marquee = { sx: sx0, sy: sy0, pointerId: e.pointerId };
-    // Capture, for the same reason fog drawing does: a marquee dragged past the
-    // edge of the map otherwise stops receiving movement and never sees its own
-    // release, leaving the rectangle stuck to the pointer.
     try { stage.setPointerCapture(e.pointerId); } catch { /* capture unavailable */ }
     marqueeEl.style.left = sx0 + 'px'; marqueeEl.style.top = sy0 + 'px';
     marqueeEl.style.width = '0px'; marqueeEl.style.height = '0px';
@@ -1296,8 +1634,10 @@ function openCtxMenu(px, py) {
 
   const head = document.createElement('div');
   head.className = 'head';
-  head.textContent = sel.length ? `${sel.length} selected` : 'map';
-  ctxMenu.appendChild(head);
+  // No 'map' label when nothing is selected — the menu just shows the actions
+  // that actually apply (ping for everyone; paste for a GM with a clipboard).
+  head.textContent = sel.length ? `${sel.length} selected` : '';
+  if (sel.length) ctxMenu.appendChild(head);
 
   const item = (label, handler) => {
     const d = document.createElement('div');
@@ -1326,28 +1666,41 @@ function openCtxMenu(px, py) {
     // difference is visible in the menu rather than being a surprise.
     item('ping and focus everyone', () => sendPing(at.x, at.y, true));
   }
-  if (sel.length) sep();
 
-  if (gm) {
+  if (gm && sel.length) {
+    // Actions on the current selection — only shown when something is selected,
+    // so the menu never lists size/hide/lock/copy/delete that would silently do
+    // nothing on an empty selection.
+    sep();
     const sizeHead = document.createElement('div');
     sizeHead.className = 'head'; sizeHead.textContent = 'resize (5e)';
     ctxMenu.appendChild(sizeHead);
     for (const size of SIZE_PRESETS) item(`  ${size}`, () => resizeSelection(size));
     sep();
-    item('hide', () => setFlagSelection('hidden', true));
-    item('show', () => setFlagSelection('hidden', false));
-    item('lock', () => setFlagSelection('locked', true));
-    item('unlock', () => setFlagSelection('locked', false));
+    // Hide/show and lock/unlock are single toggles, not both at once: read the
+    // current state of the selection and offer the action that changes it. If
+    // any selected token is already hidden/locked, offer to reveal/unlock the
+    // whole selection; otherwise offer to hide/lock it.
+    const rows = sel.map((id) => tokens.get(id)).filter(Boolean).map((e) => e.row);
+    const anyHidden = rows.some((r) => r && r.hidden);
+    const anyLocked = rows.some((r) => r && r.locked);
+    if (anyHidden) item('reveal', () => setFlagSelection('hidden', false));
+    else item('hide', () => setFlagSelection('hidden', true));
+    if (anyLocked) item('unlock', () => setFlagSelection('locked', false));
+    else item('lock', () => setFlagSelection('locked', true));
     sep();
     item('copy', copySelection);
     item('cut', cutSelection);
     item('duplicate', duplicateSelection);
-    item('paste', pasteClipboard);
     item('delete', deleteSelection);
-  } else {
-    const note = document.createElement('div');
-    note.className = 'head'; note.textContent = '(GM-only actions)';
-    ctxMenu.appendChild(note);
+  }
+
+  // Paste is the one GM action that works with nothing selected — it drops the
+  // clipboard at the point that was right-clicked. Only offered when there is
+  // something to paste, so it never appears as a dead item.
+  if (gm && clipboard.length) {
+    if (!sel.length) sep();
+    item('paste', pasteClipboard);
   }
 
   ctxMenu.style.display = 'block';
@@ -1582,7 +1935,8 @@ function renderFog() {
   fogLayer.appendChild(painted);
 
   fogLayer.classList.toggle('editing', editing);
-  fogLayer.classList.toggle('tool-select', editing && fogToolEl.value === 'select');
+  // No select-only cursor state any more: in fog mode the layer both draws
+  // (crosshair, from .fog-catch) and hit-tests for region selection.
   if (editing) {
     // One transparent surface receives every pointer event. Which region a click
     // landed on is decided in JS by fogPick(), so overlapping regions resolve by
@@ -1809,12 +2163,23 @@ function updateFogDraw(e) {
 async function commitFogDraw() {
   const preview = previewRow();
   const revealed = drawingRevealed();
+  const candidate = fogClickCandidate;
+  fogClickCandidate = null;
   // Release before anything can fail. An awaited request that throws would
   // otherwise leave the pointer captured for the life of the page, which is a
   // worse version of the bug this capture exists to fix.
   if (fogDraw) { try { stage.releasePointerCapture(fogDraw.pointerId); } catch { /* not captured */ } }
   fogDraw = null;
-  if (!preview) { renderFog(); return; }
+  if (!preview) {
+    // The press never became a drag. If it landed on an existing region, treat
+    // it as a CLICK that selects that region (this is how you pick a region to
+    // move/delete without a separate select tool). Otherwise it selected empty
+    // space, which clears the selection.
+    if (candidate) setFogSelection([candidate.id]);
+    else setFogSelection([]);
+    renderFog();
+    return;
+  }
   await createFog(preview.type, preview.points, revealed);
   renderFog();
 }
@@ -1880,7 +2245,7 @@ function setFogMode(on) {
   fogModeEl.checked = next;          // keeps the checkbox honest when F is used
   // Leaving fog mode drops any in-progress drawing and any fog selection, so the
   // two modes never hand state to each other.
-  fogDraw = null; polyPoints = [];
+  fogDraw = null; polyPoints = []; fogClickCandidate = null;
   if (!next) fogSelection.clear();
   setSelection([]);
   hideCtxMenu();
@@ -1892,7 +2257,7 @@ fogModeEl.addEventListener('change', () => setFogMode(fogModeEl.checked));
 
 fogToolEl.addEventListener('change', () => {
   // Switching tool abandons any half-drawn shape rather than carrying it over.
-  fogDraw = null; polyPoints = [];
+  fogDraw = null; polyPoints = []; fogClickCandidate = null;
   renderFog();
 });
 
@@ -1984,17 +2349,10 @@ document.addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
   if (!scene) return;
 
-  // F toggles fog mode — GM ONLY. Handled BEFORE the fog branch below so it
-  // works symmetrically in both directions; inside fogKeydown() it would only
-  // ever be reachable while fog mode was already on, and there would be no way
-  // back in from the keyboard. Bare F rather than Ctrl/Cmd+F, which is the
-  // browser's find; it sits alongside T the same way.
-  if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key.toLowerCase() === 'f') {
-    if (!isGm()) return;             // a player gets nothing at all from F
-    e.preventDefault();
-    setFogMode(!fogMode);
-    return;
-  }
+  // (The bare-F fog-mode toggle was removed: the fog panel now opens fog mode
+  // when it opens and closes it when it closes, so a keyboard toggle would only
+  // desync the panel from the mode. The in-fog-mode editing keys below —
+  // Delete, arrows, Enter/Esc for the polygon, Ctrl+C/V/X/D, T — are unchanged.)
 
   // Fog mode gets first refusal and consumes everything, so no fog keystroke can
   // fall through and move a token instead. With fog mode off this line is a
@@ -2240,6 +2598,18 @@ async function fetchOwner() {
 
 whoami();
 
+// Seam: the game shell's left-rail ping mode. On the next canvas pointerdown it
+// calls pingAt(event); we convert to the exact (unsnapped) grid point the same
+// way the context menu's "ping here" does (openMenuAt), then reuse sendPing.
+function pingAt(e) {
+  const cp = stagePoint(e);
+  sendPing(cp.x / GRID_PX, cp.y / GRID_PX, false);
+}
+
+// The game shell drives this file through boot(id) and pingAt(e); every other
+// render path, socket handler and shortcut is unchanged and still runs at load.
+window.VTTScene = { boot, pingAt, highlightToken, pickTokens };
+
 // M6: let the token image field be filled from the campaign's image library
 // rather than by pasting a URL. Guarded, because the field must keep working on
 // a page that has not loaded the picker — and because the jsdom suites covering
@@ -2249,6 +2619,45 @@ if (window.VTTImagePicker) {
     campaignId: () => campaignId,
     // A token's art is token art whether or not it is linked to a character.
     kind: 'token',
+    // Choosing an image frames it in the picker; the crop rides with placement.
+    frame: () => ({ offsetX: tokenFrame.ox, offsetY: tokenFrame.oy, scale: tokenFrame.scale }),
+    frameTitle: 'Frame the token image',
+    frameNote: 'Drag to move · scroll to zoom. This is the crop the token will use.',
+    onChoose: (url, framing) => {
+      if (framing) tokenFrame = { ox: framing.offsetX, oy: framing.offsetY, scale: framing.scale, set: true };
+    },
   });
+}
+
+// The Size control is the site's themed dropdown (.vtt-dd), driven by
+// VTTCommon.initDropdown; the hidden #tok-size carries the value the placement
+// code reads. Options mirror the old <select>.
+if (window.VTTCommon && window.VTTCommon.initDropdown) {
+  const sizeDD = document.getElementById('tokSizeDD');
+  if (sizeDD) {
+    window.VTTCommon.initDropdown(sizeDD, [
+      { value: '', label: 'Auto (from character)' },
+      { value: 'tiny', label: 'Tiny · ½×½' },
+      { value: 'small', label: 'Small · 1×1' },
+      { value: 'medium', label: 'Medium · 1×1' },
+      { value: 'large', label: 'Large · 2×2' },
+      { value: 'huge', label: 'Huge · 3×3' },
+      { value: 'gargantuan', label: 'Gargantuan · 4×4' },
+    ]);
+  }
+}
+
+// M6: framing for a token's OWN image now happens inside the image picker
+// (VTTImagePicker frame option) when the image is chosen. We only need to reset
+// any pending framing when the image field is changed by hand (typed/cleared),
+// because framing describes a specific picture.
+{
+  const imgEl = document.getElementById('tok-img');
+  if (imgEl) {
+    // A manual edit (typing/clearing) drops any pending crop. When the change
+    // came from the picker, its onChoose fires right AFTER this event and
+    // re-applies the crop it collected, so the reset here is harmless.
+    imgEl.addEventListener('input', () => { tokenFrame = { ox: 0, oy: 0, scale: 1, set: false }; });
+  }
 }
 

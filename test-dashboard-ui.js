@@ -149,6 +149,7 @@ function evalApp(window, beforeBoot) {
     window.eval(fs.readFileSync('public/js/theme.js', 'utf8'));
     window.eval(fs.readFileSync('public/js/common.js', 'utf8'));
     window.eval(fs.readFileSync('public/js/imagepicker.js', 'utf8'));
+    window.eval(fs.readFileSync('public/js/frametool.js', 'utf8'));
     window.eval(fs.readFileSync('public/js/dashboard.js', 'utf8'));
     // Stub seams (e.g. VTTCommon.navigate) after the modules define them but
     // before boot runs on DOMContentLoaded.
@@ -554,7 +555,7 @@ function evalApp(window, beforeBoot) {
     const dom = makeDom();
     const { window, window: { document } } = dom;
     installFakeIo(window);
-    stubApi(window);
+    const apiCalls = stubApi(window);
     evalApp(window);
     await wait(20);
     document.getElementById('profileBtn').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
@@ -564,6 +565,24 @@ function evalApp(window, beforeBoot) {
     t('picker starts closed', pickerUp === false);
     document.getElementById('pfAvatarBtn').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
     t('clicking the photo opens the image picker', window.VTTImagePicker.isOpen() === true);
+
+    // --- avatar framing (M6) ---
+    // Framing now happens inside the picker. Stub the picker so choosing returns
+    // a url + crop; the dashboard must map that into pfFrame and send it on save.
+    let pickerOpts = null;
+    window.VTTImagePicker.open = (o) => { pickerOpts = o; };
+    document.getElementById('pfAvatarBtn').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    t('the avatar picker is opened with a frame option', pickerOpts && !!pickerOpts.frame, JSON.stringify(pickerOpts && pickerOpts.frame));
+    // Simulate the picker completing with a chosen image AND a crop.
+    pickerOpts.onChoose('http://x/face.png', { offsetX: 0.15, offsetY: -0.2, scale: 1.3 });
+    await wait(5);
+
+    document.getElementById('pfSaveBtn').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    await wait(15);
+    const mePatch = apiCalls.filter((cx) => cx.path === '/api/auth/me' && cx.method === 'PATCH').pop();
+    t('the profile save sends the avatar framing from the picker',
+      mePatch && mePatch.body && mePatch.body.avatar_offset_x === 0.15 && mePatch.body.avatar_scale === 1.3,
+      mePatch && JSON.stringify(mePatch.body));
   }
 
   // Accordion: opening one editor collapses any other open one AND clears its

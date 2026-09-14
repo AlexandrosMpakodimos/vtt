@@ -43,6 +43,7 @@
 const express = require('express');
 const knex = require('../db');
 const { requireMember, requireOwner } = require('../middleware/campaignAuth');
+const gateway = require('../services/mediaGateway');
 const {
   validUuid, validateImageUrl, validateBool,
   validateShortText, validateLongText, validateJsonBlob,
@@ -86,11 +87,21 @@ function publicItem(i) {
 // description, no properties.
 function unidentifiedItem(i) {
   if (!i) return null;
+  const props = i.properties || {};
   return {
     id: i.id,
     campaign_id: i.campaign_id,
     type: i.type,
     img_url: i.img_url,
+    // Image FRAMING only (offset/zoom): pure geometry that crops the picture the
+    // player can already see. It reveals nothing about what the item is, so it is
+    // safe to send even while name/description/stats stay hidden — and it keeps a
+    // deliberately-cropped unidentified image looking the same to everyone.
+    properties: {
+      img_offset_x: props.img_offset_x,
+      img_offset_y: props.img_offset_y,
+      img_scale: props.img_scale,
+    },
     identified: false,
   };
 }
@@ -190,7 +201,7 @@ router.post('/', requireOwner, async (req, res, next) => {
 
     const item = rows[0];
     await broadcastItem(req, item, 'item:created');
-    return res.status(201).json({ item: publicItem(item) });
+    return gateway.sendJson(req, res, { item: publicItem(item) }, 201);
   } catch (err) {
     return next(err);
   }
@@ -208,7 +219,7 @@ router.get('/', requireMember, async (req, res, next) => {
     const rows = await knex('items')
       .where({ campaign_id: req.campaign.id })
       .orderBy('created_at', 'asc');
-    return res.json({ items: rows.map((i) => shapeItemFor(req.isOwner === true, i)) });
+    return gateway.sendJson(req, res, { items: rows.map((i) => shapeItemFor(req.isOwner === true, i)) });
   } catch (err) {
     return next(err);
   }
@@ -219,7 +230,7 @@ router.get('/:itemId', requireMember, async (req, res, next) => {
   try {
     const item = await loadItemInCampaign(req.params.itemId, req.campaign.id);
     if (!item) return res.status(404).json({ error: 'item not found' });
-    return res.json({ item: shapeItemFor(req.isOwner === true, item) });
+    return gateway.sendJson(req, res, { item: shapeItemFor(req.isOwner === true, item) });
   } catch (err) {
     return next(err);
   }
@@ -279,7 +290,7 @@ router.patch('/:itemId', requireOwner, async (req, res, next) => {
 
     const [row] = await knex('items').where({ id: item.id }).update(updates).returning('*');
     await broadcastItem(req, row);
-    return res.json({ item: publicItem(row) });
+    return gateway.sendJson(req, res, { item: publicItem(row) });
   } catch (err) {
     return next(err);
   }

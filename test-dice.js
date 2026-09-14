@@ -76,6 +76,23 @@ t('total sums every group plus the modifier', (() => {
 t('canonical formula round-trips a multi-group roll',
   d.roll('  1D20 + 2d6 - 1 ', maxRngEarly).formula === '1d20+2d6-1');
 
+console.log('\n--- d100 rolls as a tens percentile die (10,20,…,100) ---');
+// The 3D layer renders d100 as a single percentile die with only tens faces, so
+// the roll is one of {10,20,…,100} rather than a raw 1..100. maxRng → 100.
+t('a d100 at the max rolls 100', d.roll('1d100', maxRngEarly).results[0] === 100);
+t('a d100 at the min rolls 10', d.roll('1d100', (max) => 1).results[0] === 10);
+t('a d100 is always a multiple of ten', (() => {
+  for (let k = 1; k <= 10; k += 1) {
+    if (d.roll('1d100', () => k).results[0] !== k * 10) return false;
+  }
+  return true;
+})());
+t('other dice are unaffected by the d100 change',
+  d.roll('1d6', (max) => 4).results[0] === 4);
+t('a mixed roll keeps d6 raw and d100 in tens',
+  (() => { const r = d.roll('1d6+1d100', (max) => (max === 6 ? 3 : 5));
+    return r.results[0] === 3 && r.results[1] === 50; })());
+
 console.log('\n--- what multi-group did NOT open up ---');
 t('subtracting DICE still refused (2d6-1d4)', !!p('2d6-1d4').error);
 t('a group after the modifier refused (2d6+3+1d4)', !!p('2d6+3+1d4').error);

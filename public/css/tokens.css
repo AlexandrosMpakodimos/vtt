@@ -21,6 +21,7 @@ html[data-theme="dark"] {
   --surface:        #0c0e13;   /* the near-black ground from the original */
   --surface-raised: #151922;
   --text:           #e8e2d4;   /* warm off-white, not pure white */
+  --chat-text:      #f6f2ea;   /* chat log/input: a touch lighter than --text */
   --text-muted:     #a99a7d;   /* aged parchment grey-gold */
   --link:           #d4a862;
   --danger:         #e06a5f;
@@ -42,6 +43,7 @@ html[data-theme="light"] {
   --surface:        #ece3cf;   /* aged parchment */
   --surface-raised: #f6efdf;
   --text:           #2a2118;
+  --chat-text:      #443a2c;   /* chat log/input: a touch lighter/softer than --text */
   --text-muted:     #5c4f3a;
   --link:           #7a5320;
   --danger:         #9e2b1e;

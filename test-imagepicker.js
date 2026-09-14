@@ -27,10 +27,18 @@ const t = (name, cond, extra = '') => {
 };
 
 const calls = [];
-let presignStatus = 201;
+let uploadStatus = 201;
 window.fetch = async (path, opts = {}) => {
   const method = opts.method || 'GET';
-  calls.push({ path, method, body: opts.body && typeof opts.body === 'string' ? JSON.parse(opts.body) : null });
+  const isRawUpload = /\/api\/assets\/upload/.test(path);
+  calls.push({
+    path,
+    method,
+    // The controlled upload sends the file as the body (not JSON); other calls
+    // send JSON. Only parse JSON bodies.
+    body: (!isRawUpload && opts.body && typeof opts.body === 'string') ? JSON.parse(opts.body) : null,
+    headers: opts.headers || {},
+  });
   const json = async () => {
     if (/\/api\/assets\?campaign_id=/.test(path)) {
       return {
@@ -43,21 +51,17 @@ window.fetch = async (path, opts = {}) => {
     if (/\/api\/assets$/.test(path)) {
       return { assets: [{ id: 'A3', url: 'https://pub-x.r2.dev/u/U1/avatar/me.png', source: 'upload', kind: 'avatar' }] };
     }
-    if (/presign$/.test(path)) {
-      return {
-        asset: { id: 'NEW', status: 'pending' },
-        upload: { url: 'https://bucket.example/put', method: 'PUT', headers: { 'Content-Type': 'image/png' } },
-      };
-    }
-    if (/confirm$/.test(path)) return { asset: { id: 'NEW', url: 'https://pub-x.r2.dev/c/C1/portrait/new.png' } };
+    // The controlled upload: one request in, the ready asset out.
+    if (isRawUpload) return { asset: { id: 'NEW', url: 'https://pub-x.r2.dev/c/C1/portrait/new.png' } };
     if (/external$/.test(path)) return { asset: { id: 'EXT', url: 'https://elsewhere.example/pasted.png' } };
     return {};
   };
-  if (/\/put$/.test(path)) return { ok: true, status: 200, json };
-  return { status: /presign$|external$/.test(path) ? presignStatus : 200, json };
+  if (isRawUpload) return { status: uploadStatus, json };
+  return { status: /external$/.test(path) ? uploadStatus : 200, json };
 };
 
 window.eval(fs.readFileSync('public/js/imagepicker.js', 'utf8'));
+window.eval(fs.readFileSync('public/js/frametool.js', 'utf8'));
 const P = window.VTTImagePicker;
 
 console.log('\n--- the module loads and exposes its surface ---');
@@ -141,15 +145,15 @@ t('...offering exactly the four allowed types',
   t('choosing "clear" empties the field', target.value === '', target.value);
   t('...and still fires the events', inputFired === 2 && changeFired === 2);
 
-  console.log('\n--- the upload conversation, in the order the server expects ---');
+  console.log('\n--- the controlled upload: one request, bytes through the server ---');
   btn.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
   await new Promise((r) => setTimeout(r, 10));
   calls.length = 0;
 
   const fileInput = back.querySelector('.vttpick-file');
   // jsdom cannot populate a file input, so the FileList is substituted. What is
-  // under test is the CONVERSATION — which requests, in which order, with what
-  // body — not the browser's file plumbing.
+  // under test is the REQUEST — one call, the file as the body, metadata in the
+  // query — not the browser's file plumbing.
   Object.defineProperty(fileInput, 'files', {
     configurable: true,
     value: [{ name: 'a.png', type: 'image/png', size: 4096 }],
@@ -158,16 +162,18 @@ t('...offering exactly the four allowed types',
     .dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
   await new Promise((r) => setTimeout(r, 30));
 
-  const seq = calls.map((c) => `${c.method} ${c.path.replace(/^https?:\/\/[^/]+/, '')}`);
-  t('presign, then the bucket, then confirm — in that order',
-    /presign/.test(seq[0]) && /\/put/.test(seq[1]) && /confirm/.test(seq[2]),
-    seq.join(' → '));
-  const presignBody = calls[0].body;
-  t('the declared size is sent, not guessed', presignBody.bytes === 4096);
-  t('the declared type is sent', presignBody.mime === 'image/png');
-  t('the campaign is sent for a campaign-scoped kind', presignBody.campaign_id === 'C1');
-  t('the bytes go to the BUCKET, not to this server',
-    calls[1].path === 'https://bucket.example/put', calls[1].path);
+  const uploadCall = calls.find((c) => /\/api\/assets\/upload/.test(c.path));
+  t('a SINGLE controlled upload request is made (no presign, no direct-to-bucket PUT)',
+    !!uploadCall && !calls.some((c) => /presign|\/put|confirm/.test(c.path)),
+    calls.map((c) => c.path).join(' → '));
+  t('it is a POST', uploadCall && uploadCall.method === 'POST');
+  t('the declared type is sent in the query', uploadCall && /mime=image%2Fpng/.test(uploadCall.path));
+  t('the kind is sent in the query', uploadCall && /kind=portrait/.test(uploadCall.path));
+  t('the campaign is sent for a campaign-scoped kind', uploadCall && /campaign_id=C1/.test(uploadCall.path));
+  t('an idempotency key is sent so a retry is safe',
+    uploadCall && typeof uploadCall.headers['Idempotency-Key'] === 'string' && uploadCall.headers['Idempotency-Key'].length > 0);
+  t('the file bytes are the request body, not JSON',
+    uploadCall && uploadCall.body === null);
   t('the uploaded image is chosen immediately',
     target.value === 'https://pub-x.r2.dev/c/C1/portrait/new.png', target.value);
 
@@ -187,7 +193,7 @@ t('...offering exactly the four allowed types',
     extCall && !('campaign_id' in extCall.body), JSON.stringify(extCall && extCall.body));
 
   console.log('\n--- storage being unconfigured is reported, not swallowed ---');
-  presignStatus = 503;
+  uploadStatus = 503;
   P.open({ campaignId: 'C1', kind: 'portrait', onChoose: () => {} });
   await new Promise((r) => setTimeout(r, 10));
   const f2 = back.querySelector('.vttpick-file');
@@ -200,7 +206,7 @@ t('...offering exactly the four allowed types',
   t('a 503 tells the user to paste a link instead',
     /not configured/.test(back.querySelector('.msg').textContent),
     back.querySelector('.msg').textContent);
-  presignStatus = 201;
+  uploadStatus = 201;
 
   console.log('\n--- dismissal ---');
   P.open({ campaignId: 'C1', kind: 'portrait', onChoose: () => {} });
@@ -304,6 +310,32 @@ t('...offering exactly the four allowed types',
   await new Promise((r) => setTimeout(r, 10));
   t('with no current value, no tile is marked', document.querySelectorAll('.vttpick-item.current').length === 0);
   document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+
+  // --- framing: choosing an image with frame:{} runs the frame step ---
+  {
+    let got = null;
+    P.open({
+      campaignId: 'C1', kind: 'token', frame: { offsetX: 0, offsetY: 0, scale: 1 },
+      onChoose: (url, framing) => { got = { url: url, framing: framing }; },
+    });
+    await new Promise((r) => setTimeout(r, 10));
+    // Simulate picking a grid tile (the first one).
+    const tile = document.querySelector('.vttpick-item');
+    t('a tile is available to pick', !!tile);
+    tile.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    // The frame tool should now be open over the picker; onChoose has NOT fired.
+    t('choosing with frame does not complete immediately', got === null);
+    t('the frame tool opened', !!(window.VTTFrameTool && window.VTTFrameTool.isOpen && window.VTTFrameTool.isOpen()));
+    // Save a crop in the frame tool.
+    const saveBtn = [...document.querySelectorAll('.vttframe button')].find((b) => /Save framing/.test(b.textContent));
+    // Drive the inputs to a known crop first.
+    const scaleI = document.querySelector('.vttframe-field input[step="0.05"]');
+    scaleI.value = '1.4'; scaleI.dispatchEvent(new window.Event('input'));
+    saveBtn.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 10));
+    t('onChoose fires after framing with the url', got && typeof got.url === 'string' && got.url.length > 0);
+    t('...and carries the chosen framing', got && got.framing && got.framing.scale === 1.4, JSON.stringify(got && got.framing));
+  }
 
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);

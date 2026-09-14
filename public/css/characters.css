@@ -1,0 +1,78 @@
+/* Character roster cards; buttons use the shared application theme. */
+    .char-card {
+      display: flex; flex-direction: column; background: var(--surface);
+      border: 1px solid var(--border); border-radius: 10px; overflow: hidden;
+      transition: border-color 0.12s, box-shadow 0.12s; }
+    .char-card.sel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+    .char-card-main { display: flex; gap: 0.6rem; padding: 0.55rem 0.6rem; cursor: pointer; align-items: flex-start; }
+    .char-card-main:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+    .char-portrait {
+      flex: none; width: 72px; height: 72px; border-radius: 8px; overflow: hidden;
+      background: var(--surface-raised); border: 1px solid var(--border);
+      display: grid; place-items: center; }
+    .char-portrait { position: relative; }
+    .char-portrait img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; transform-origin: center; }
+    .char-portrait-fallback { font-size: 1.4rem; font-weight: 700; color: var(--text-muted); }
+    .char-card-body { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 0.15rem; }
+    .char-name-row { display: flex; align-items: center; gap: 0.35rem; flex-wrap: wrap; }
+    .char-name { font-size: 0.92rem; font-weight: 600; line-height: 1.2; }
+    .char-badge {
+      font-size: 0.62rem; font-weight: 700; letter-spacing: 0.02em; padding: 0.06rem 0.35rem; border-radius: 4px;
+      border: 1px solid var(--border); color: var(--text-muted); }
+    .char-badge.pc { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 50%, var(--border)); }
+    .char-badge.npc { color: #c8892f; border-color: color-mix(in srgb, #c8892f 50%, var(--border)); }
+    .char-badge.mine { color: #4f9d5a; border-color: color-mix(in srgb, #4f9d5a 50%, var(--border)); }
+    .char-badge.secret { color: var(--text-muted); }
+    .char-meta { font-size: 0.72rem; color: var(--text-muted); }
+    .char-hp-line { display: flex; align-items: center; gap: 0.4rem; font-size: 0.72rem; color: var(--text-muted); margin-top: 0.1rem; }
+    .char-hp-bar { flex: 1 1 auto; height: 5px; border-radius: 3px; background: var(--surface-raised); overflow: hidden; }
+    .char-hp-fill { height: 100%; background: var(--accent); }
+    .char-hp-fill.low { background: var(--danger); }
+    .char-hp-temp { color: #4f9d5a; font-weight: 600; }
+    .char-down { color: var(--danger); font-size: 0.72rem; font-weight: 600; }
+
+    /* Card action strip: quick-HP disclosure + confirmed deletion. */
+    .char-card-actions { display: flex; align-items: center; gap: 0.3rem; padding: 0 0.6rem 0.5rem; }
+    .char-hp-panel { display: flex; align-items: center; gap: 0.3rem; padding: 0 0.6rem 0.55rem; }
+    .char-hp-panel input { width: 64px; font: inherit; font-size: 0.78rem; padding: 0.25rem 0.4rem; min-height: auto;
+      border-radius: 6px; border: 1px solid var(--border); background: var(--surface-raised); color: var(--text); }
+    .char-hp-panel .btn { padding: 0.25rem 0.55rem; font-size: 0.74rem; }
+
+
+#actorList { gap: 10px; }
+#actorList .char-card { border-radius: 8px; }
+#actorList .char-card:hover { border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); }
+#actorList .char-card.sel { border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); }
+#actorList .char-card-main { gap: 12px; padding: 14px; }
+#actorList .char-portrait { width: 80px; height: 80px; border-radius: 6px; }
+#actorList .char-portrait-fallback { font-family: Georgia, 'Times New Roman', serif; color: var(--accent); }
+#actorList .char-card-body { gap: 6px; }
+#actorList .char-name { font-family: Georgia, 'Times New Roman', serif; font-size: 1.1rem; line-height: 1.25; overflow-wrap: anywhere; }
+#actorList .char-status-row { display: flex; flex-wrap: wrap; gap: 5px; }
+#actorList .char-badge { font-size: .65rem; font-weight: 600; border-radius: 3px; }
+#actorList .char-meta { font-size: .76rem; overflow-wrap: anywhere; }
+#actorList .char-vitals { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 6px 14px; }
+#actorList .char-vital { display: flex; align-items: baseline; gap: 6px; }
+#actorList .char-stat-label { font-size: .65rem; letter-spacing: .05em; color: var(--text-muted); }
+#actorList .char-hp-value, #actorList .char-ac-value { font-size: .95rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+#actorList .char-hp-bar { flex: none; width: 100%; height: 5px; margin: 0; }
+#actorList .char-hp-temp, #actorList .char-down { font-size: .73rem; }
+#actorList .char-card-actions { gap: 8px; padding: 9px 14px; border-top: 1px solid var(--border); background: var(--surface-raised); }
+#actorList .char-hp-toggle { border-radius: 2px; font-size: .78rem; padding: .35rem .75rem; }
+#actorList .char-hp-toggle[aria-expanded="true"] { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+#actorList .char-trash { margin-left: auto; min-width: 34px; padding: 6px 8px; }
+#actorList .char-trash svg { width: 18px; height: 18px; display: block; }
+#actorList .char-hp-panel { padding: 0 14px 12px; background: var(--surface-raised); flex-wrap: wrap; gap: 8px; }
+#actorList .char-hp-panel input { height: 34px; min-height: 34px; box-sizing: border-box; text-align: center; }
+#actorList [hidden] { display: none !important; }
+@media (max-width: 420px) { #actorList .char-card-main { padding: 11px; gap: 10px; } #actorList .char-portrait { width: 64px; height: 64px; } }
+@media (pointer: coarse) { #actorList .btn, #actorList .char-hp-panel input { min-height: 44px; } }
+
+/* Player navigation has two balanced tabs; catalogue browsing is GM chrome. */
+body:not(.is-gm) #tabLibrary, body:not(.is-gm) #panelLibrary { display: none !important; }
+#sideTabs .tab { flex: 1 1 0; text-align: center; min-width: 0; }
+#actorList .char-party-toggle { font-size: .76rem; padding: .35rem .6rem; }
+#actorList .char-party-toggle[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+#actorList .char-badge.party { color: var(--accent); border-color: var(--accent); }
+#actorList .char-party-error { color: var(--danger); font-size: .78rem; padding: 0 14px 10px; margin: 0; }
+#actorList .char-card-actions { flex-wrap: wrap; }

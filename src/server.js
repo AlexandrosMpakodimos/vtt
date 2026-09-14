@@ -12,6 +12,8 @@ const { Pool } = require('pg');
 
 const knex = require('./db');
 const { router: assetRoutes, PENDING_TTL_MINUTES: PENDING_ASSET_TTL_MINUTES } = require('./routes/assets');
+const { router: mediaRoutes } = require('./routes/media');
+const budget = require('./services/storageBudget');
 const passport = require('./config/passport');
 const authRoutes = require('./routes/auth');
 const { router: campaignRoutes, SOFT_DELETE_DAYS } = require('./routes/campaigns');
@@ -44,11 +46,27 @@ const sessionMiddleware = session({
 // Security headers (nosniff, frame protection, HSTS, CSP, ...). Placed first so
 // every response -- API, static files, and errors -- carries them.
 const isProd = process.env.NODE_ENV === 'production';
+
+// Browser-facing media origin. In production the existing `https:` img-src
+// allowance already covers a normal HTTPS media hostname. Local development can
+// explicitly use an HTTP origin such as http://media.test:3000; add only that
+// exact configured origin to img-src rather than allowing arbitrary http:.
+const cspMediaOrigin = (() => {
+  const value = String(process.env.MEDIA_ORIGIN || '').trim();
+  if (!value) return null;
+  try {
+    const parsed = new URL(value);
+    return (parsed.protocol === 'http:' || parsed.protocol === 'https:') ? parsed.origin : null;
+  } catch {
+    return null;
+  }
+})();
+
 app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       ...helmet.contentSecurityPolicy.getDefaultDirectives(),
-      'img-src': ["'self'", 'https:', 'data:'],   // allow externally-hosted https avatars
+      'img-src': ["'self'", 'https:', 'data:', ...(cspMediaOrigin ? [cspMediaOrigin] : [])],
       // connect-src must be stated EXPLICITLY once the browser uploads directly
       // to object storage. Without it the fallback is default-src 'self', which
       // refuses the connection before any CORS preflight is even attempted —
@@ -96,6 +114,13 @@ app.use(express.json());
 app.use(sessionMiddleware);
 app.use(passport.initialize());
 app.use(passport.session());
+
+// Media routes must be mounted on the real app. Put them after session/passport
+// (the token endpoint requires auth) but before static files so /media/:id can
+// never be shadowed by a public/media path. The media-byte endpoint itself
+// enforces MEDIA_HOST and does not rely on the session.
+app.use(mediaRoutes);
+
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
 app.use('/api/auth/login', loginLimiter);
@@ -179,17 +204,54 @@ cleanupDeletedCampaigns();
 // rejection, so the row is a record of something that no longer exists.
 async function cleanupStaleAssets() {
   try {
-    const n = await knex('assets')
+    // A stale pending row may have an OBJECT behind it: the client got a
+    // presigned URL and PUT the bytes but never confirmed, or confirmed and was
+    // rejected. Deleting the ROW without deleting the OBJECT turns a tracked
+    // upload into invisible storage — the exact leak the durable cleanup queue
+    // exists to close. So each stale row that has a storage_key is enqueued for
+    // deletion first, and its byte reservation (if the budget is active) is
+    // released, before the row itself is removed. Rows with no storage_key
+    // (external links never reach 'pending', but be defensive) just go.
+    const stale = await knex('assets')
       .whereIn('status', ['pending', 'rejected'])
       .whereRaw(`created_at < now() - interval '${PENDING_ASSET_TTL_MINUTES} minutes'`)
-      .del();
-    if (n) console.log(`Cleared ${n} stale asset row(s)`);
+      .select('id', 'storage_key', 'reserved_bytes');
+
+    if (stale.length === 0) return;
+
+    for (const row of stale) {
+      if (row.storage_key) {
+        // eslint-disable-next-line no-await-in-loop
+        await knex('storage_cleanup').insert({
+          storage_key: row.storage_key,
+          bytes: null, // an unconfirmed object's size was never established
+          reason: 'orphan_pending',
+        }).catch(() => {});
+      }
+      if (typeof row.reserved_bytes === 'number' && row.reserved_bytes > 0) {
+        // eslint-disable-next-line no-await-in-loop
+        await budget.releaseReservedBytes(row.reserved_bytes).catch(() => {});
+      }
+    }
+
+    const ids = stale.map((r) => r.id);
+    const n = await knex('assets').whereIn('id', ids).del();
+    if (n) console.log(`Cleared ${n} stale asset row(s); queued objects for deletion`);
   } catch (err) {
     console.error('Asset cleanup failed:', err.message);
   }
 }
 setInterval(cleanupStaleAssets, 60 * 60 * 1000);
 cleanupStaleAssets();
+
+// The durable cleanup worker drains storage_cleanup: objects that must not
+// exist but whose deletion has not yet been confirmed. It runs more often than
+// the hourly sweeps because a queued delete is a byte still being billed, and
+// the sooner it clears the sooner the ledger frees the capacity. Fail-soft, and
+// a no-op when storage is unconfigured. Bounded per tick (see the worker).
+const cleanupWorker = require('./services/storageCleanup');
+setInterval(() => { cleanupWorker.tick().catch((e) => console.error('cleanup tick:', e.message)); }, 5 * 60 * 1000);
+cleanupWorker.tick().catch(() => {});
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => console.log(`Server running at http://localhost:${PORT}`));

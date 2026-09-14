@@ -185,7 +185,15 @@ function roll(formula, rng = (max) => crypto.randomInt(1, max + 1)) {
   const groups = [];
   for (const g of parsed.groups) {
     const rolled = [];
-    for (let i = 0; i < g.count; i += 1) rolled.push(rng(g.sides));
+    for (let i = 0; i < g.count; i += 1) {
+      // A d100 is rendered by the 3D layer as a single PERCENTILE die, which has
+      // only the tens faces 00,10,…,90 (with 00 read as 100) — it cannot show a
+      // units digit. So a d100 rolls one of {10,20,…,100}: pick 1..10 and scale
+      // by ten. This keeps the stored result identical to what the model shows,
+      // rather than the die displaying "70" while the log claims "7". Every other
+      // die is unchanged. rng stays injectable for the arithmetic tests.
+      rolled.push(g.sides === 100 ? rng(10) * 10 : rng(g.sides));
+    }
     results.push(...rolled);
     groups.push({ count: g.count, sides: g.sides, results: rolled });
   }

@@ -89,6 +89,7 @@ window.fetch = async (path, opts = {}) => {
         scene: { id: 'S1', name: 'Board', width: 1000, height: 800, grid: {} },
         tokens: [{
           id: 'T1', name: 'Goblin', img_url: 'https://x/g.png',
+          img_offset_x: 0.2, img_offset_y: -0.1, img_scale: 1.5,
           actor_id: null, x: 1, y: 1, width: 1, height: 1, hidden: false,
         }],
         fog: [],
@@ -112,6 +113,8 @@ window.PointerEvent = class extends window.MouseEvent {
 };
 window.Element.prototype.setPointerCapture = function set() {};
 window.Element.prototype.releasePointerCapture = function rel() {};
+// jsdom implements neither; the custom dropdown calls scrollIntoView on open.
+window.Element.prototype.scrollIntoView = function () {};
 
 // The 3D module is an ES module the browser loads separately; jsdom does not run
 // it. Stub the global bridge it would have set, so the colour join has something
@@ -135,10 +138,14 @@ window.VTTDice = {
   colorsetFor: () => ({}),
 };
 
+// Exercise the production presence markup, absent from the developer harness.
+const gameDom = new JSDOM(fs.readFileSync('public/game.html', 'utf8'));
+document.body.appendChild(document.importNode(gameDom.window.document.getElementById('presence'), true));
+
 // ---- load ------------------------------------------------------------------
 let loadError = null;
 try {
-  window.eval(fs.readFileSync('public/js/combat.js', 'utf8'));
+  window.eval(fs.readFileSync('public/js/common.js', 'utf8') + '\n' + fs.readFileSync('public/js/combat.js', 'utf8').replace(/\}\)\(\);\s*$/, 'Object.assign(window, { renderPresence, renderMessage, whisperTargets, renderWhisperTargets }); window.testPlayerSpeakers = async () => { const previousMe = me; const previousGm = isGm; me = { id: "U2" }; isGm = false; await loadSpeakable(); me = previousMe; isGm = previousGm; };\n})();'));
 } catch (err) {
   loadError = err;
 }
@@ -209,16 +216,59 @@ console.log('\n--- the entry points run without throwing ---');
     ![...sel.options].some((o) => o.value === 'U1'));
 
   console.log('\n--- speaking as: the picker, and the local default ---');
-  const spk = document.getElementById('speakAs');
-  t('the picker offers "myself" first', spk.options.length > 0 && spk.options[0].value === '');
+  // Now the themed custom list (.vtt-dd), not a native select. Options render as
+  // <li> items when the dropdown is opened; the value lives in hidden #speakAs.
+  const spkBtn = document.getElementById('speakAsBtn');
+  const clickSpk = (elm) => elm.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  clickSpk(spkBtn);   // open → renders items
+  const spkOpts = [...document.querySelectorAll('body > .vtt-dd-list .vtt-dd-opt')].map((li) => li.textContent);
+  const floatedList = document.querySelector('body > .vtt-dd-list');
+  t('speaker list escapes sidebar containing block', floatedList && !floatedList.hidden);
+  const goblinOption = [...floatedList.children].find(li => li.textContent.includes('Goblin'));
+  clickSpk(goblinOption);
+  t('clicking character updates selected speaker', document.getElementById('speakAs').value === 'A2');
+  t('speaker menu returns home after selection', document.querySelector('#speakAsDD .vtt-dd-list').hidden);
+  clickSpk(spkBtn);
+  clickSpk(document.querySelector('body > .vtt-dd-list .vtt-dd-opt'));
+  t('role option clears character selection', document.getElementById('speakAs').value === '');
+  t('the picker offers the GM role first', spkOpts[0] === 'GM', spkOpts.join(' | '));
   t('a GM is offered every character including NPCs',
-    [...spk.options].some((o) => o.textContent.includes('Goblin (NPC)')),
-    [...spk.options].map((o) => o.textContent).join(' | '));
-  t('and a player character', [...spk.options].some((o) => o.textContent === 'Aria'));
+    spkOpts.some((o) => o.includes('Goblin (NPC)')), spkOpts.join(' | '));
+  t('and a player character', spkOpts.some((o) => o === 'Aria'), spkOpts.join(' | '));
+
+  const presenceHead = document.getElementById('presenceHead');
+  t('players start expanded', presenceHead.getAttribute('aria-expanded') === 'true' && !document.getElementById('presenceList').hidden);
+  clickSpk(presenceHead);
+  window.renderPresence();
+  t('presence refresh preserves explicit collapse', document.getElementById('presenceList').hidden);
+  clickSpk(presenceHead);
+  t('players can be reopened', !document.getElementById('presenceList').hidden);
+
+  window.renderMessage({ speaker_name: 'Alex', speaker_role: 'gm', speaker_as: 'Goblin', content: 'Hello' });
+  t('GM character identity appears beside username', document.querySelector('#chat .msg:last-child .who').textContent === 'Alex (Goblin): ');
+  window.renderMessage({ speaker_name: 'Alex', speaker_role: 'gm', content: 'Hello' });
+  t('default GM identity', document.querySelector('#chat .msg:last-child .who').textContent === 'Alex (GM): ');
+  window.renderMessage({ speaker_name: 'Maria', speaker_role: 'player', content: 'Hello' });
+  t('default Player identity', document.querySelector('#chat .msg:last-child .who').textContent === 'Maria (Player): ');
+  const check = document.querySelector('.whisper-option input');
+  check.checked = true;
+  check.dispatchEvent(new window.Event('change', { bubbles: true }));
+  t('themed recipient checkbox drives whisper payload', window.whisperTargets()[0] === sel.options[0].value);
+  window.renderWhisperTargets();
+  t('recipient refresh retains selection', document.querySelector('.whisper-option input').checked);
+  clickSpk(document.querySelector('.whisper-options button'));
+  t('Everyone clears private recipients', window.whisperTargets() === undefined);
+
+  await window.testPlayerSpeakers();
+  clickSpk(spkBtn);
+  const playerOptions = [...document.querySelectorAll('body > .vtt-dd-list .vtt-dd-opt')];
+  t('player sees role reset and owned character only', playerOptions.map(o => o.textContent).join('|') === 'Player|Aria');
+  clickSpk(playerOptions[1]);
+  t('player can choose their character', document.getElementById('speakAs').value === 'A1');
 
   console.log('\n--- the colour palette shows what is claimed ---');
   const pal = document.getElementById('palette');
-  t('a swatch is rendered for every palette colour', pal.children.length === 16,
+  t('a swatch is rendered for every palette colour', pal.children.length === 18,
     `${pal.children.length}`);
   // U1 (the caller) holds #3366cc, which is NOT in the palette, so nothing is
   // "mine"; U2 holds no colour at all, so nothing is taken either.
@@ -229,24 +279,69 @@ console.log('\n--- the entry points run without throwing ---');
     [...pal.children].filter((b) => b.classList.contains('taken')).length === 0,
     'only an ASSIGNED colour is a claim');
 
-  console.log('\n--- the dice tray builds a formula ---');
+  console.log('\n--- colours have a light and a dark variant ---');
+  // The stored (canonical) hex is the dark-mode variant; light mode swaps to a
+  // deeper partner. In the harness's default (no data-theme = not light) the hex
+  // is used as-is; setting data-theme="light" must change at least one swatch.
+  const darkBg = [...pal.children].map((b) => b.style.background);
+  document.documentElement.setAttribute('data-theme', 'light');
+  await Promise.resolve(); await Promise.resolve();   // flush the MutationObserver microtask
+  const lightBg = [...document.getElementById('palette').children].map((b) => b.style.background);
+  t('switching to light mode renders deeper colour variants',
+    darkBg.join('|') !== lightBg.join('|'),
+    'palette swatch backgrounds should differ between themes');
+  document.documentElement.removeAttribute('data-theme');   // restore for later assertions
+  await Promise.resolve(); await Promise.resolve();
+
+  console.log('\n--- the dice tray builds a pool ---');
   const click = (elm) => elm.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
   const byDie = (n) => [...document.querySelectorAll('.quick')].find((b) => b.dataset.sides === String(n));
   click(byDie(20));
   click(byDie(6));
   click(byDie(6));
+  // The pool now renders one removable TAG per die type (e.g. "1d20", "2d6"),
+  // not an inline formula preview — the joined formula is written to the hidden
+  // #diceFormula at roll time. Assert the tags reflect what was added.
   const poolText = document.getElementById('trayPool').textContent;
-  t('clicking d20 then d6 twice reads as 1d20 + 2d6',
+  t('clicking d20 then d6 twice shows a 1d20 tag and a 2d6 tag',
     /1d20/.test(poolText) && /2d6/.test(poolText), poolText);
-  t('the pool shows the formula it will send', /1d20\+2d6/.test(poolText), poolText);
+  t('one tag per die type (two types → two tags)',
+    document.querySelectorAll('#trayPool .pool-tag').length === 2,
+    String(document.querySelectorAll('#trayPool .pool-tag').length));
 
-  document.getElementById('trayMod').value = '3';
-  document.getElementById('trayMod').dispatchEvent(new window.Event('input'));
-  t('a modifier joins the formula', /1d20\+2d6\+3/.test(document.getElementById('trayPool').textContent),
+  // The pool row is revealed while the pool has contents. (#dicePoolRow exists
+  // in game.html; the older combat.html harness has no row wrapper, so this
+  // assertion is conditional on the element being present — see the
+  // harness-migration TODO in PROJECT_STATE.)
+  const poolRow = document.getElementById('dicePoolRow');
+  if (poolRow) {
+    t('the pool row is visible while the pool is non-empty', poolRow.hidden === false);
+  }
+
+  const rightClick = (node) => node.dispatchEvent(new window.MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+  t('right click suppresses browser menu on a die', rightClick(byDie(6)) === false);
+  t('right click removes exactly one from stack', /1d6/.test(document.getElementById('trayPool').textContent));
+  rightClick([...document.querySelectorAll('.pool-tag')].find(tg => /1d6/.test(tg.textContent)));
+  rightClick(byDie(6));
+  t('last die disappears and empty decrement is harmless', !/d6/.test(document.getElementById('trayPool').textContent));
+  click(byDie(6)); click(byDie(6));
+
+  // A per-type ✕ removes that whole type.
+  const d6tagX = [...document.querySelectorAll('#trayPool .pool-tag')]
+    .find((tg) => /2d6/.test(tg.textContent))
+    .querySelector('.pool-tag-x');
+  click(d6tagX);
+  t('removing the d6 tag leaves only the d20 tag',
+    document.querySelectorAll('#trayPool .pool-tag').length === 1
+    && /1d20/.test(document.getElementById('trayPool').textContent),
     document.getElementById('trayPool').textContent);
 
   click(document.getElementById('trayClear'));
-  t('clear empties the pool', /empty/.test(document.getElementById('trayPool').textContent));
+  t('clear empties the pool',
+    document.querySelectorAll('#trayPool .pool-tag').length === 0);
+  if (poolRow) {
+    t('clear hides the pool row', poolRow.hidden === true);
+  }
 
   console.log('\n--- dragging a combatant card (2026-08-10) ---');
   //
@@ -272,6 +367,11 @@ console.log('\n--- the entry points run without throwing ---');
 
   const portrait = card && card.querySelector('img');
   t('the card carries a portrait', !!portrait);
+  t('the portrait honors the token framing (translate + scale)',
+    portrait && /translate\(20%,\s*-10%\)\s*scale\(1\.5\)/.test(portrait.style.transform),
+    portrait && portrait.style.transform);
+  t('the portrait is clipped by a wrapper so a zoom stays in its slot',
+    portrait && portrait.parentElement && portrait.parentElement.classList.contains('portrait'));
   t('...which is NOT independently draggable',
     portrait && portrait.draggable === false,
     portrait && String(portrait.draggable));

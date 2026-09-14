@@ -310,6 +310,35 @@ const settle = (ms = 700) => new Promise((r) => setTimeout(r, ms));
   const npcFrame = await pl.req('PATCH', `${C}/actors/${lich.id}`, { img_scale: 3 });
   ok('...but not on the GM\'s NPC', npcFrame.status === 403, `${npcFrame.status}`);
 
+  // ---- avatar framing (users table) ----
+  console.log('\n--- avatar framing rides on /me, bounded like every other frame ---');
+  const setAvatar = await pl.req('PATCH', '/api/auth/me', {
+    avatar_url: 'https://example.com/face.png', avatar_offset_x: 0.25, avatar_offset_y: -0.1, avatar_scale: 1.5,
+  });
+  ok('a user may set their own avatar framing (200)', setAvatar.status === 200, `${setAvatar.status}`);
+  ok('...and /me projects it back', setAvatar.data && setAvatar.data.user
+    && Number(setAvatar.data.user.avatar_offset_x) === 0.25
+    && Number(setAvatar.data.user.avatar_scale) === 1.5,
+    JSON.stringify(setAvatar.data && setAvatar.data.user && {
+      x: setAvatar.data.user.avatar_offset_x, s: setAvatar.data.user.avatar_scale }));
+  const meGet = await pl.req('GET', '/api/auth/me');
+  ok('...and it persists across a fresh /me read',
+    meGet.data && meGet.data.user && Number(meGet.data.user.avatar_offset_x) === 0.25,
+    JSON.stringify(meGet.data && meGet.data.user && meGet.data.user.avatar_offset_x));
+
+  const badAvScale = await pl.req('PATCH', '/api/auth/me', { avatar_scale: 99 });
+  ok('an out-of-range avatar scale is refused (400)', badAvScale.status === 400, `${badAvScale.status}`);
+  const badAvOff = await pl.req('PATCH', '/api/auth/me', { avatar_offset_x: 9 });
+  ok('an out-of-range avatar offset is refused (400)', badAvOff.status === 400, `${badAvOff.status}`);
+
+  const clearAv = await pl.req('PATCH', '/api/auth/me', { avatar_url: '' });
+  ok('removing the avatar resets its framing to identity',
+    clearAv.status === 200 && clearAv.data && clearAv.data.user
+    && Number(clearAv.data.user.avatar_offset_x) === 0
+    && Number(clearAv.data.user.avatar_scale) === 1,
+    JSON.stringify(clearAv.data && clearAv.data.user && {
+      x: clearAv.data.user.avatar_offset_x, s: clearAv.data.user.avatar_scale }));
+
   const gridForge = await gm.req('PATCH', `${C}/scenes/${board.id}`, {
     grid: { size: 64, __proto__: { polluted: true }, constructor: 'x' },
   });

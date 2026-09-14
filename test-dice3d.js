@@ -68,11 +68,25 @@ t('a face at the top of the range is fine', notationFor(rd('1d20', [20])) === '1
 t('a face at the bottom of the range is fine', notationFor(rd('1d20', [1])) === '1d20@1');
 
 console.log('\n--- renderable shapes: the library\'s nine, asserted not assumed ---');
-for (const sides of [2, 3, 4, 6, 8, 10, 12, 20, 100]) {
+// d100 is special (a tens percentile die), tested separately below.
+for (const sides of [2, 3, 4, 6, 8, 10, 12, 20]) {
   t(`d${sides} is renderable`, isRenderable(sides));
   t(`d${sides} produces notation`,
     notationFor(rd(`1d${sides}`, [1])) === `1d${sides}@1`);
 }
+t('d100 is renderable', isRenderable(100));
+
+console.log('\n--- d100 is a tens percentile die: result maps to the tens face ---');
+// The server rolls d100 as {10,20,…,100}. The library's percentile face index is
+// 0→"100" and 1..9→"10".."90". notationFor maps the stored tens value to that
+// index so the die lands on exactly what the log prints.
+t('a d100 result of 10 shows on face 1 ("10")',  notationFor(rd('1d100', [10]))  === '1d100@1');
+t('a d100 result of 70 shows on face 7 ("70")',  notationFor(rd('1d100', [70]))  === '1d100@7');
+t('a d100 result of 90 shows on face 9 ("90")',  notationFor(rd('1d100', [90]))  === '1d100@9');
+t('a d100 result of 100 wraps to face 0 ("100")', notationFor(rd('1d100', [100])) === '1d100@0');
+// Legacy rows (raw 1..100 before the tens change) still animate on a real face
+// by rounding to the nearest ten rather than being handed a fractional face.
+t('a legacy d100 result of 7 rounds to face 1',  notationFor(rd('1d100', [7]))   === '1d100@1');
 
 console.log('\n--- the mismatch between two bounds, handled by falling back ---');
 // The server accepts 1..1000 sides. The library has nine meshes. Neither is

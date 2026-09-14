@@ -120,12 +120,10 @@ t('the overlay is drawn at 50px cells', /50px 50px/.test(overlay.style.backgroun
   t('background position applies the offset at the same scale',
     /^8\.92857/.test(map.style.backgroundPosition), map.style.backgroundPosition);
 
-  console.log('\n--- the token hazard is stated BEFORE anything is changed ---');
+  console.log('\n--- the pre-emptive token hazard warning was removed ---');
   const hazard = document.getElementById('hazard').textContent;
-  t('the hazard names the token count', /2 token/.test(hazard), hazard);
-  t('...and says coordinates do not change', /grid coordinates do not change/.test(hazard));
-  t('...and it appeared on LOAD, not after saving',
-    !calls.some((c) => c.method === 'PATCH'), 'no PATCH has been issued yet');
+  t('no pre-emptive hazard warning is shown on load', hazard === '', JSON.stringify(hazard));
+  t('nothing is saved just by loading', !calls.some((c) => c.method === 'PATCH'), 'no PATCH has been issued yet');
 
   console.log('\n--- dragging moves the map in IMAGE pixels ---');
   const vp = document.getElementById('viewport');

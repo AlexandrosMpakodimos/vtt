@@ -56,6 +56,7 @@
 const crypto = require('crypto');
 const {
   S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand,
+  HeadObjectCommand, ListObjectsV2Command,
 } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 
@@ -91,6 +92,13 @@ const client = configured
     // own TLS already guarantees, whereas the byte verification at confirm
     // checks something the transport cannot — whether the file is an image.
     requestChecksumCalculation: 'WHEN_REQUIRED',
+    // Pinned to 1 so the SDK never retries a write invisibly. A silent internal
+    // retry would be an extra Class A operation the account is billed for but the
+    // budget never charged — exactly the metering gap the controlled upload path
+    // exists to close. Retries are done by the caller, one charged permit each,
+    // so the number of billed operations and the number the budget counted are
+    // the same number.
+    maxAttempts: 1,
   })
   : null;
 
@@ -190,13 +198,31 @@ function publicUrl(key) {
   return `${PUBLIC_BASE}/${key}`;
 }
 
-// Authorise exactly one upload.
+// Authorise an upload to this key until the URL expires.
 //
-// The content type and length are part of the SIGNATURE, not merely part of the
-// request: R2 rejects a PUT whose headers do not match what was signed. So the
-// size limit is enforced by the storage provider before a single byte reaches
-// our verification step, and a client cannot sign a small PNG and then send a
-// large one.
+// [CORRECTED 2026-09-11] An earlier version of this comment claimed the grant
+// authorised "exactly one upload." IT DOES NOT. A presigned URL is a bearer
+// authorisation valid until it expires (UPLOAD_URL_TTL_SECONDS): the same URL
+// can be PUT to repeatedly, and each PUT overwrites the object at `key`. So:
+//
+//   - The client can replay the grant and issue many writes, not one. Every
+//     write is a Class A operation the account is billed for, and none of them
+//     pass back through our confirm step.
+//   - A client can confirm (we read the bytes, verify them, mark the row ready
+//     with a size), and THEN PUT different bytes to the same still-valid URL,
+//     mutating the object AFTER we recorded what it was. Confirmation is a
+//     snapshot, not a lock.
+//
+// The size limit IS still real: `content-length` is signed, so R2 refuses a PUT
+// whose length does not match. The TYPE is not signed (see defence 2's
+// correction above) and is caught only by the byte read at confirm. Neither of
+// those closes replay. Replay is bounded structurally instead — by a short TTL,
+// by the per-operation budget that meters every write, and (in strict mode) by
+// not exposing a browser PUT URL at all and taking the bytes through the server
+// so the object is written exactly once under our control. Until that path is
+// the only one, treat a confirmed object's recorded size/type as true AS OF
+// confirmation, and re-establish it from an authoritative HEAD before charging
+// or trusting it downstream.
 async function presignUpload({ key, mime, bytes }) {
   const command = new PutObjectCommand({
     Bucket: BUCKET,
@@ -207,12 +233,66 @@ async function presignUpload({ key, mime, bytes }) {
   return getSignedUrl(client, command, { expiresIn: UPLOAD_URL_TTL_SECONDS });
 }
 
-// Read the first bytes of a stored object.
+// Write bytes to the bucket in ONE attempt, from the server. This is the
+// controlled-upload primitive: the object is created by us, from a body we have
+// already validated and bounded, so it is written exactly once under our control
+// rather than by a replayable browser grant.
+//
+// maxAttempts is pinned to 1 (see the client config note) so a single call is a
+// single billed Class A operation and NOTHING retries invisibly inside the SDK.
+// Retries are the CALLER's job, and the caller charges one permit per attempt —
+// which is the only way "count every actual SDK attempt, including retries" can
+// be true. A PutObject that the SDK silently retried three times would be three
+// operations the account is billed for and one the budget saw; pinning attempts
+// to 1 collapses that gap.
+//
+// Returns { etag } on success. Throws on failure; the caller decides whether the
+// outcome was clean (release/commit) or ambiguous (preserve the reservation).
+async function putObject({ key, mime, body }) {
+  const res = await client.send(new PutObjectCommand({
+    Bucket: BUCKET,
+    Key: key,
+    ContentType: mime,
+    ContentLength: body.length,
+    Body: body,
+  }));
+  return { etag: typeof res.ETag === 'string' ? res.ETag.replace(/^"|"$/g, '') : null };
+}
+
+// Read a whole object's bytes. Used by the media gateway to serve an image
+// through the metered, authorised path. A full GET (Class B) — the caller is
+// responsible for charging the operation and for any caching, because whether a
+// read should be metered depends on whether it was a cache miss, which is the
+// gateway's concern, not this leaf module's.
+async function getObject(key) {
+  const res = await client.send(new GetObjectCommand({ Bucket: BUCKET, Key: key }));
+  const chunks = [];
+  for await (const chunk of res.Body) chunks.push(chunk);
+  return {
+    bytes: Buffer.concat(chunks),
+    mime: res.ContentType || null,
+    etag: typeof res.ETag === 'string' ? res.ETag.replace(/^"|"$/g, '') : null,
+  };
+}
+
+// Read the first bytes of a stored object, for the magic-number check ONLY.
 //
 // A ranged read, so verifying a twelve-megabyte map costs sixteen bytes of
 // transfer rather than twelve megabytes. R2's free tier counts operations
 // rather than bytes, but pulling whole files back to look at their first eight
 // would be a self-inflicted bandwidth cost and a memory hazard.
+//
+// [CORRECTED 2026-09-11] This used to also return `reportedBytes`, taken from
+// the ranged response's `ContentLength`. THAT IS NOT THE OBJECT'S SIZE. A
+// response to `Range: bytes=0-15` has a Content-Length of 16 (the length of the
+// SLICE), so recording it as the object's size stored 16 for every upload, no
+// matter how large — which would make a byte ledger built on it fiction. The
+// full length of a ranged response lives in Content-Range's total
+// (`bytes 0-15/<total>`), not in Content-Length, and R2 may or may not send it.
+// The authoritative source is a HEAD; see `headSize` below. This function no
+// longer reports a size at all, so no caller can accidentally trust the wrong
+// one. It still surfaces `contentRangeTotal` when present, purely so a caller
+// that wants to can cross-check the HEAD against it.
 async function readHead(key, length = 16) {
   const res = await client.send(new GetObjectCommand({
     Bucket: BUCKET,
@@ -223,14 +303,74 @@ async function readHead(key, length = 16) {
   for await (const chunk of res.Body) chunks.push(chunk);
   return {
     head: Buffer.concat(chunks),
-    // R2 echoes back what it was told to store. Recorded for the audit trail,
-    // and deliberately NOT trusted — it is the client's claim, round-tripped.
+    // R2 echoes back the stored content type. Recorded for the audit trail, and
+    // deliberately NOT trusted — it is the client's claim, round-tripped.
     reportedMime: res.ContentType || null,
-    reportedBytes: typeof res.ContentLength === 'number' ? res.ContentLength : null,
+    // The FULL object size parsed out of Content-Range's total, when the
+    // provider sends one. NOT Content-Length (which is the slice length, 16).
+    // May be null; `headSize` is the authoritative path.
+    contentRangeTotal: parseContentRangeTotal(res.ContentRange),
   };
 }
 
-// Does this buffer actually begin like the format it claims to be?
+// Parse the total object size out of an S3/R2 `Content-Range` header.
+// Shape: `bytes 0-15/1048576` -> 1048576. `bytes 0-15/*` (unknown total) and
+// anything malformed -> null. Pure and exported so the suite can pin the exact
+// trap (a 16-byte slice must never be read as a 16-byte object).
+function parseContentRangeTotal(header) {
+  if (typeof header !== 'string') return null;
+  const m = /^bytes\s+\d+-\d+\/(\d+)$/i.exec(header.trim());
+  if (!m) return null;
+  const total = Number(m[1]);
+  return Number.isSafeInteger(total) && total >= 0 ? total : null;
+}
+
+// The authoritative size and type of a stored object: a HEAD request.
+//
+// This is what the byte ledger charges against and what confirm records. A HEAD
+// returns the object's real Content-Length (the WHOLE object, because there is
+// no Range on it) and its stored Content-Type. It is a Class B operation, so it
+// is metered like any other read.
+//
+// Returns integers/strings the caller can trust as "what R2 says it is storing
+// right now", which after a successful verified write is the truth. It is still
+// not proof of what the bytes ARE — that is what the magic-number check on
+// readHead establishes — but it IS proof of how many bytes there are, which is
+// the number that costs money.
+async function headSize(key) {
+  const res = await client.send(new HeadObjectCommand({ Bucket: BUCKET, Key: key }));
+  const bytes = typeof res.ContentLength === 'number' ? res.ContentLength : null;
+  return {
+    bytes,
+    reportedMime: res.ContentType || null,
+    etag: typeof res.ETag === 'string' ? res.ETag.replace(/^"|"$/g, '') : null,
+  };
+}
+
+// One page of a bucket listing. A LIST is a Class A operation, and it returns
+// up to `maxKeys` objects plus a continuation token if more remain. The caller
+// (the reconciler) charges the operation and pages until the token is empty,
+// metering each page — never an unbounded single call. Returns key + size for
+// each object, so the reconciler learns the real stored size WITHOUT a HEAD per
+// object where the LIST already carries it (R2's LIST includes Size).
+async function listPage({ continuationToken = undefined, maxKeys = 1000 } = {}) {
+  const res = await client.send(new ListObjectsV2Command({
+    Bucket: BUCKET,
+    MaxKeys: maxKeys,
+    ContinuationToken: continuationToken,
+  }));
+  const objects = (res.Contents || []).map((o) => ({
+    key: o.Key,
+    bytes: typeof o.Size === 'number' ? o.Size : null,
+    etag: typeof o.ETag === 'string' ? o.ETag.replace(/^"|"$/g, '') : null,
+  }));
+  return {
+    objects,
+    nextToken: res.IsTruncated ? res.NextContinuationToken : null,
+  };
+}
+
+
 //
 // Pure and exported so the suite can exercise every format and every near-miss
 // without a bucket, a network or credentials. This is the function that decides
@@ -267,7 +407,12 @@ module.exports = {
   buildKey,
   publicUrl,
   presignUpload,
+  putObject,
   readHead,
+  headSize,
+  getObject,
+  listPage,
+  parseContentRangeTotal,
   magicMatches,
   remove,
   formatFor,

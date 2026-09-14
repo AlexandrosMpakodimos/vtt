@@ -1,0 +1,23 @@
+.fo-tabs { flex-wrap: wrap; }
+#sheetSpellbookBlock { margin-top: 16px; }
+#sheetSpellbookBlock [hidden] { display: none !important; }
+#sheetSpellbookBlock .spellbook-learn-row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; }
+#sheetSpellbookBlock .field { margin: 0; flex: 1 1 130px; min-width: 0; }
+#sheetSpellbookBlock .spellbook-choice { flex: 3 1 210px; }
+#sheetSpellbookBlock .field label { font-size: .7rem; color: var(--text-muted); text-transform: uppercase; }
+#sheetSpellbookBlock .vtt-dd-btn, #sheetSpellbookBlock select, #learnSpell { box-sizing: border-box; height: 34px; min-height: 34px; }
+#sheetSpellbookBlock .vtt-dd { width: 100%; }
+#sheetSpellbookBlock .vtt-dd-btn { width: 100%; padding: 0 28px 0 8px; text-align: left; }
+#sheetSpellbookBlock .spellbook-summary { margin: 12px 0; }
+#sbList .spellbook-level { margin: 12px 0 4px; color: var(--accent); font-size: .78rem; letter-spacing: .04em; text-transform: uppercase; }
+#sbList .spellbook-identity { flex: 1 1 190px; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+#sbList .spellbook-identity .inv-item-name { flex: 1 0 100%; }
+#sbList .spellbook-school, #sbList .spellbook-source { font-size: .74rem; padding-left: 12px; }
+#sbList .spellbook-source { color: var(--text-muted); }
+#sbList .spellbook-snippet { margin: 6px 12px 2px; color: var(--text-muted); font-size: .82rem; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+#sheetSpellbookBlock .spellbook-error { color: var(--danger); font-size: .82rem; }
+@media (pointer: coarse) { #sheetSpellbookBlock .vtt-dd-btn, #sheetSpellbookBlock select, #learnSpell { min-height: 44px; } }
+
+#sbList .spellbook-entry { cursor: pointer; }
+#sbList .spellbook-entry:hover { border-color: var(--accent); }
+#sbList .spellbook-entry:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }

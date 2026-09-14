@@ -21,6 +21,7 @@
 
 const knex = require('./db');
 const { isActiveMember } = require('./middleware/campaignAuth');
+const gateway = require('./services/mediaGateway');
 const {
   publicToken, shapeTokens, tokenMovePolicy, loadSceneInCampaign,
   validateGridCoord, validateTokenSize,
@@ -96,6 +97,21 @@ function initSockets(io) {
     return users.size;
   }
 
+  // The DISTINCT user ids currently at the table (game room). Same enumeration as
+  // onlineCount, but returns the set — the game room's presence roster needs to
+  // know WHO is online, not just how many. Used to seed a joining socket with the
+  // people already present (join/leave deltas alone would miss them).
+  function onlineUserIds(campaignId) {
+    const room = io.sockets.adapter.rooms.get(roomName(campaignId));
+    if (!room) return [];
+    const users = new Set();
+    for (const sid of room) {
+      const s = io.sockets.sockets.get(sid);
+      if (s && s.data && s.data.userId != null) users.add(s.data.userId);
+    }
+    return [...users];
+  }
+
   // Tell everyone watching a campaign's lobby how many are now at the table.
   function pushPresence(campaignId) {
     io.to(lobbyName(campaignId)).emit('lobby:presence', {
@@ -105,7 +121,11 @@ function initSockets(io) {
 
   // Exported so HTTP routes can push a lobby event (PATCH /:id uses it for
   // campaign:state). Mirrors broadcastToken's shape, scoped to the lobby room.
-  function broadcastLobby(campaignId, event, payload) {
+  // Image URLs in the payload are routed through the media gateway (a room-scoped
+  // bearer token, since a broadcast has many recipients) — a no-op when the
+  // gateway is disabled.
+  async function broadcastLobby(campaignId, event, payload) {
+    await gateway.rewritePayload(payload);
     io.to(lobbyName(campaignId)).emit(event, payload);
   }
 
@@ -114,7 +134,8 @@ function initSockets(io) {
   // routes (place / delete), which do the authoritative write and then hand the
   // shaped row here to fan out. Emitting to io.to(room) rather than a single
   // socket means the acting user's own other tabs get the update too.
-  function broadcastToken(campaignId, event, payload) {
+  async function broadcastToken(campaignId, event, payload) {
+    await gateway.rewritePayload(payload);
     io.to(roomName(campaignId)).emit(event, payload);
   }
 
@@ -135,7 +156,7 @@ function initSockets(io) {
       .where({ id: campaignId }).whereNull('deleted_at').first();
     if (!campaign) return;
     if (campaign.active_scene_id === sceneId) {
-      broadcastToken(campaignId, event, payload);
+      await broadcastToken(campaignId, event, payload);
       return;
     }
     await broadcastToOwner(campaignId, event, payload);
@@ -158,6 +179,7 @@ function initSockets(io) {
     const campaign = await knex('campaigns')
       .where({ id: campaignId }).whereNull('deleted_at').first();
     if (!campaign) return;
+    await gateway.rewritePayload(payload);
     const ids = socketsByUser.get(campaign.owner_id);
     if (!ids) return;
     for (const sid of ids) {
@@ -191,6 +213,7 @@ function initSockets(io) {
     const campaign = await knex('campaigns')
       .where({ id: campaignId }).whereNull('deleted_at').first();
     if (!campaign) return;
+    await gateway.rewritePayload(payload);
     const room = roomName(campaignId);
     // A Set, so a duplicate id (sender also listed as a recipient) does not emit
     // the same message twice to the same socket.
@@ -212,6 +235,7 @@ function initSockets(io) {
     const campaign = await knex('campaigns')
       .where({ id: campaignId }).whereNull('deleted_at').first();
     if (!campaign) return;
+    await gateway.rewritePayload(payload);
     const ownerSockets = socketsByUser.get(campaign.owner_id) || new Set();
     const room = io.sockets.adapter.rooms.get(roomName(campaignId));
     if (!room) return;
@@ -260,6 +284,12 @@ function initSockets(io) {
         socket.join(roomName(campaignId));
         socket.to(roomName(campaignId)).emit('campaign:user-joined', {
           campaign_id: campaignId, user_id: user.id, username: user.username,
+        });
+        // Seed THIS socket with everyone already at the table (join/leave deltas
+        // alone would miss people who were here before it connected). Sent only
+        // to the joiner, after it has joined so it includes itself.
+        socket.emit('campaign:presence', {
+          campaign_id: campaignId, user_ids: onlineUserIds(campaignId),
         });
         // Someone joined the game room: tell the campaign's lobby the new count.
         pushPresence(campaignId);
@@ -686,8 +716,19 @@ function initSockets(io) {
       // Only a deliberate leave/kick/ban changes status.
       untrack(user.id, socket.id);
       // Now that this socket has left its rooms, the table count has dropped for
-      // any game room it was in — tell each of those campaigns' lobbies.
-      for (const campaignId of leavingGameRooms) pushPresence(campaignId);
+      // any game room it was in — tell each of those campaigns' lobbies, and the
+      // game room itself IF this was the user's last socket there (another open
+      // tab means they are still present, so no user-left in that case). Without
+      // this, a browser close/refresh would never clear the presence indicator —
+      // only an explicit campaign:leave did, which a tab-close never sends.
+      for (const campaignId of leavingGameRooms) {
+        pushPresence(campaignId);
+        if (!onlineUserIds(campaignId).includes(user.id)) {
+          io.to(roomName(campaignId)).emit('campaign:user-left', {
+            campaign_id: campaignId, user_id: user.id, username: user.username,
+          });
+        }
+      }
       console.log('Client disconnected:', socket.id);
     });
   });

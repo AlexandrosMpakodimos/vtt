@@ -216,6 +216,36 @@ async function mk(name) {
   t('re-activating the old one is refused while another runs',
     reopen.status === 409, `${reopen.status}`);
 
+  console.log('\n--- round + turn sequencing (Stage C) ---');
+  // A fresh fight starts at round 1, turn 0.
+  const rtScene = await gm.req('POST', `/api/campaigns/${camp.id}/scenes`, { name: 'RT' });
+  const rtBoard = rtScene.data.scene;
+  const mkTok = async (name) => (await gm.req('POST', `/api/campaigns/${camp.id}/scenes/${rtBoard.id}/tokens`, { name })).data.token;
+  const rtA = await mkTok('RA'); const rtB = await mkTok('RB');
+  const rtFight = (await gm.req('POST', C, { scene_id: rtBoard.id })).data.combat;
+  t('a new combat starts at round 1', rtFight.round === 1, `${rtFight.round}`);
+  t('...and turn_index 0', rtFight.turn_index === 0, `${rtFight.turn_index}`);
+  await gm.req('POST', `${C}/${rtFight.id}/combatants`, { token_id: rtA.id });
+  await gm.req('POST', `${C}/${rtFight.id}/combatants`, { token_id: rtB.id });
+  // Advance to the second combatant, then bump the round.
+  const adv = await gm.req('PATCH', `${C}/${rtFight.id}`, { turn_index: 1 });
+  t('turn_index advances', adv.status === 200 && adv.data.combat.turn_index === 1, `${adv.status}/${adv.data.combat && adv.data.combat.turn_index}`);
+  const rnd = await gm.req('PATCH', `${C}/${rtFight.id}`, { round: 2, turn_index: 0 });
+  t('round advances', rnd.data.combat.round === 2 && rnd.data.combat.turn_index === 0, `${rnd.data.combat.round}/${rnd.data.combat.turn_index}`);
+  // turn_index is bounded to the roster (2 combatants -> max index 1).
+  const oob = await gm.req('PATCH', `${C}/${rtFight.id}`, { turn_index: 5 });
+  t('turn_index past the roster end is refused', oob.status === 400, `${oob.status}`);
+  const negTi = await gm.req('PATCH', `${C}/${rtFight.id}`, { turn_index: -1 });
+  t('a negative turn_index is refused', negTi.status === 400, `${negTi.status}`);
+  const negR = await gm.req('PATCH', `${C}/${rtFight.id}`, { round: 0 });
+  t('round below 1 is refused', negR.status === 400, `${negR.status}`);
+  // Ending the fight resets round + turn so a restart begins fresh.
+  await gm.req('PATCH', `${C}/${rtFight.id}`, { active: false });
+  const restarted = await gm.req('PATCH', `${C}/${rtFight.id}`, { active: true });
+  t('ending a fight resets it to round 1', restarted.data.combat.round === 1, `${restarted.data.combat.round}`);
+  t('...and turn_index 0', restarted.data.combat.turn_index === 0, `${restarted.data.combat.turn_index}`);
+  await gm.req('PATCH', `${C}/${rtFight.id}`, { active: false });   // leave it ended
+
   console.log('\n--- chat ---');
   const line = await player.req('POST', M, { content: 'I swing at the goblin' });
   t('a player can post', line.status === 201, `${line.status}`);

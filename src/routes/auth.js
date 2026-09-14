@@ -1,22 +1,28 @@
 const express = require('express');
 const crypto = require('crypto');
+const gateway = require('../services/mediaGateway');
 const { hashPassword, verifyPassword } = require('../services/password');
 const passport = require('../config/passport');
 const knex = require('../db');
-const { validateEmail, validateUsername, validatePassword, normalizeEmail } = require('../services/validators');
+const { validateEmail, validateUsername, validatePassword, normalizeEmail, validateImgFrame, validateImgScale } = require('../services/validators');
 const { isPasswordBreached } = require('../services/breachedPassword');
 const { sendVerificationEmail, sendPasswordResetEmail, sendEmailChangeEmail } = require('../services/mailer');
 const { requireAuth } = require('../middleware/auth');
 
 const router = express.Router();
 
-const SAFE_COLUMNS = ['id', 'email', 'username', 'avatar_url', 'email_verified_at', 'created_at'];
+const SAFE_COLUMNS = ['id', 'email', 'username', 'avatar_url', 'avatar_offset_x', 'avatar_offset_y', 'avatar_scale', 'email_verified_at', 'created_at'];
 
 function publicUser(user) {
   if (!user) return null;
   return {
     id: user.id, email: user.email, username: user.username,
-    avatar_url: user.avatar_url, email_verified: !!user.email_verified_at,
+    avatar_url: user.avatar_url,
+    // Framing for the avatar image; identity transform (0,0,1) unless set.
+    avatar_offset_x: user.avatar_offset_x === undefined || user.avatar_offset_x === null ? 0 : Number(user.avatar_offset_x),
+    avatar_offset_y: user.avatar_offset_y === undefined || user.avatar_offset_y === null ? 0 : Number(user.avatar_offset_y),
+    avatar_scale: user.avatar_scale === undefined || user.avatar_scale === null ? 1 : Number(user.avatar_scale),
+    email_verified: !!user.email_verified_at,
     created_at: user.created_at,
   };
 }
@@ -114,7 +120,7 @@ router.post('/login', (req, res, next) => {
     }
     req.login(user, (loginErr) => {
       if (loginErr) return next(loginErr);
-      return res.json({ user: publicUser(user) });
+      return gateway.sendJson(req, res, { user: publicUser(user) });
     });
   })(req, res, next);
 });
@@ -168,7 +174,7 @@ router.post('/logout', (req, res, next) => {
 
 router.get('/me', (req, res) => {
   if (!req.isAuthenticated()) return res.status(401).json({ user: null });
-  return res.json({ user: publicUser(req.user) });
+  return gateway.sendJson(req, res, { user: publicUser(req.user) });
 });
 
 router.get('/verify-email', async (req, res, next) => {
@@ -271,6 +277,28 @@ router.patch('/me', requireAuth, async (req, res, next) => {
         a = parsed.href;
       }
       updates.avatar_url = a || null;
+      // Framing describes a specific picture: removing the avatar resets it.
+      if (!updates.avatar_url) {
+        updates.avatar_offset_x = 0; updates.avatar_offset_y = 0; updates.avatar_scale = 1;
+      }
+    }
+
+    // Avatar framing (offset/zoom). Only meaningful with an avatar; validated with
+    // the same bounds as character/token framing.
+    if (body.avatar_offset_x !== undefined) {
+      const r = validateImgFrame(body.avatar_offset_x, 'avatar_offset_x');
+      if (r.error) return res.status(400).json({ error: r.error });
+      if (r.value !== undefined) updates.avatar_offset_x = r.value;
+    }
+    if (body.avatar_offset_y !== undefined) {
+      const r = validateImgFrame(body.avatar_offset_y, 'avatar_offset_y');
+      if (r.error) return res.status(400).json({ error: r.error });
+      if (r.value !== undefined) updates.avatar_offset_y = r.value;
+    }
+    if (body.avatar_scale !== undefined) {
+      const r = validateImgScale(body.avatar_scale);
+      if (r.error) return res.status(400).json({ error: r.error });
+      if (r.value !== undefined) updates.avatar_scale = r.value;
     }
 
     if (Object.keys(updates).length === 0) {
@@ -278,7 +306,7 @@ router.patch('/me', requireAuth, async (req, res, next) => {
     }
 
     const [user] = await knex('users').where({ id: req.user.id }).update(updates).returning(SAFE_COLUMNS);
-    return res.json({ user: publicUser(user) });
+    return gateway.sendJson(req, res, { user: publicUser(user) });
   } catch (err) {
     if (err.code === '23505') return res.status(409).json({ error: 'username already taken' });
     return next(err);

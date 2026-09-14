@@ -140,24 +140,18 @@ const STAT_FIELDS = [
   check('player cannot forge is_npc at create (forced, not refused)', forgedOwn.data.actor.is_npc === false);
   const forgedOwnId = forgedOwn.data.actor.id;
 
-  // RESOLVED 2026-08-02. Create now refuses GM-owned fields exactly as PATCH
-  // does; it used to accept the request and discard the values, so the same body
-  // earned a 403 on one path and a 201 on the other.
-  const statAttempt = await player.req('POST', A, { name: 'Cheat', strength: 20, armor_class: 25, level: 12 });
-  check('player create REFUSES GM-only stats (403, not a silent 201)',
-    statAttempt.status === 403, JSON.stringify(statAttempt.data));
-  check('and the refusal names the fields', statAttempt.data
-    && typeof statAttempt.data.error === 'string'
-    && statAttempt.data.error.includes('strength'), JSON.stringify(statAttempt.data));
-  const cheats = await knex('actors').where({ campaign_id: C, name: 'Cheat' });
-  check('the refused create wrote nothing', cheats.length === 0, `${cheats.length} rows`);
-  for (const field of ['size', 'hp_max', 'class', 'race', 'speed']) {
-    const r = await player.req('POST', A, { name: 'Probe', [field]: field === 'size' ? 'Large' : 5 });
-    check(`player create refuses ${field} (403)`, r.status === 403, `got ${r.status}`);
+  // Players may supply their own stats at creation as well as editing them.
+  const statAttempt = await player.req('POST', A, { name: 'Custom stats', strength: 20, armor_class: 25, level: 12 });
+  check('player creates character with custom stats', statAttempt.status === 201, JSON.stringify(statAttempt.data));
+  check('custom stats persist at creation', statAttempt.data.actor && statAttempt.data.actor.strength === 20 && statAttempt.data.actor.armor_class === 25);
+  if (statAttempt.data.actor) await player.req('DELETE', `${A}/${statAttempt.data.actor.id}`);
+  for (const [field, value] of [['size', 'Large'], ['hp_max', 25], ['class', 'Ranger'], ['race', 'Elf'], ['speed', 40]]) {
+    const r = await player.req('POST', A, { name: 'Stat probe', [field]: value });
+    check(`player create accepts ${field}`, r.status === 201 && r.data.actor[field] === value, JSON.stringify(r.data));
+    if (r.data.actor) await player.req('DELETE', `${A}/${r.data.actor.id}`);
   }
 
-  // A third legitimate character, so the per-player cap section below still has
-  // three to work with now that 'Cheat' is refused rather than created.
+  // Third character for the existing cap probes.
   const spare = await player.req('POST', A, { name: 'Spare', hp_current: 1 });
   check('a player may still create a plain character shell (201)', spare.status === 201, JSON.stringify(spare.data));
   const cheatId = spare.data.actor.id;
@@ -203,18 +197,21 @@ const STAT_FIELDS = [
   check('player edits their own condition (200)', heal.status === 200 && heal.data.actor.hp_current === 4, JSON.stringify(heal.data));
 
   const cheat = await player.req('PATCH', `${A}/${aria.id}`, { strength: 20 });
-  check('player cannot raise their own strength (403)', cheat.status === 403, JSON.stringify(cheat.data));
-  check('the refusal names the field rather than failing silently',
-    cheat.data && typeof cheat.data.error === 'string' && cheat.data.error.includes('strength'), JSON.stringify(cheat.data));
+  check('player can edit their own strength', cheat.status === 200 && cheat.data.actor.strength === 20, JSON.stringify(cheat.data));
   const ariaRow = await knex('actors').where({ id: aria.id }).first();
-  check('the refused edit did not land', ariaRow.strength === 10);
-
-  for (const [field, value] of [['is_npc', true], ['user_id', null], ['hp_max', 999], ['level', 20], ['armor_class', 30]]) {
+  check('owner stat edit persists in database', ariaRow.strength === 20);
+  const statChanges = { hp_max: 42, armor_class: 18, level: 5, speed: 40, dexterity: 16, constitution: 15, intelligence: 14, wisdom: 13, charisma: 12, size: 'Small', class: 'Ranger', race: 'Elf' };
+  const ownStats = await player.req('PATCH', `${A}/${aria.id}`, statChanges);
+  check('owner can edit every gameplay stat', ownStats.status === 200 && Object.entries(statChanges).every(([k,v]) => ownStats.data.actor[k] === v), JSON.stringify(ownStats.data));
+  for (const [field, value] of [['is_npc', true], ['user_id', null], ['in_party', true]]) {
     const r = await player.req('PATCH', `${A}/${aria.id}`, { [field]: value });
     check(`player cannot change ${field} (403)`, r.status === 403, `got ${r.status}`);
   }
+  for (const [field, value] of [['hp_max', -1], ['armor_class', 100], ['strength', 31], ['level', 21], ['speed', 'fast']]) {
+    check(`owner stat validation still rejects invalid ${field}`, (await player.req('PATCH', `${A}/${aria.id}`, { [field]: value })).status === 400);
+  }
 
-  const other = await player.req('PATCH', `${A}/${brom.id}`, { hp_current: 1 });
+  const other = await player.req('PATCH', `${A}/${brom.id}`, { hp_current: 1, hp_max: 999, armor_class: 99 });
   check('player cannot edit another player\'s character (403)', other.status === 403, JSON.stringify(other.data));
 
   const gmEdit = await gm.req('PATCH', `${A}/${aria.id}`, { strength: 16, level: 3 });
@@ -381,8 +378,40 @@ const STAT_FIELDS = [
   const malformed = await gm.req('GET', `${A}/not-a-uuid`);
   check('malformed uuid -> 404, not a 500', malformed.status === 404, `got ${malformed.status}`);
 
-  note('create/PATCH asymmetry',
-    'RESOLVED 2026-08-02 — create now refuses GM-owned fields with a 403 exactly as PATCH does. user_id and is_npc stay server-SET rather than refused, because forcing is a stronger guarantee than rejecting.');
+  // ---------- explicit party membership, independent of ownership/disclosure ----------
+  const partyNpc = await gm.req('POST', A, { name: 'Party guide', is_npc: true, hp_max: 27, notes: 'private' });
+  const partyId = partyNpc.data.actor.id;
+  check('party defaults off for new actors', partyNpc.data.actor.in_party === false);
+  check('off-map NPC is hidden before joining party', (await player.req('GET', `${A}/${partyId}`)).status === 404);
+  const partyEvents = recorder(plSock, ['party:changed']);
+  const joined = await gm.req('PATCH', `${A}/${partyId}`, { in_party: true });
+  check('GM can add NPC to party', joined.status === 200 && joined.data.actor.in_party === true);
+  const partyList = await player.req('GET', A);
+  const listedPartyNpc = partyList.data.actors.find((a) => a.id === partyId);
+  check('party NPC is listed without a visible map token', !!listedPartyNpc && listedPartyNpc.in_party === true);
+  check('party membership does not reveal NPC statistics', listedPartyNpc && STAT_FIELDS.every((f) => !(f in listedPartyNpc)));
+  const partyDetail = await player.req('GET', `${A}/${partyId}`);
+  check('party NPC detail uses same safe projection', partyDetail.status === 200 && STAT_FIELDS.every((f) => !(f in partyDetail.data.actor)));
+  check('party NPC inventory remains private', (await player.req('GET', `${A}/${partyId}/inventory`)).status === 404);
+  check('party NPC spellbook remains private', (await player.req('GET', `${A}/${partyId}/spells`)).status === 404);
+  check('GM can add PC to party', (await gm.req('PATCH', `${A}/${aria.id}`, { in_party: true })).status === 200);
+  check('owner player cannot remove own PC from party', (await player.req('PATCH', `${A}/${aria.id}`, { in_party: false })).status === 403);
+  check('player cannot self-enrol at creation', (await player.req('POST', A, { name: 'Self enrol', in_party: true })).status === 403);
+  check('invalid party value is refused', (await gm.req('PATCH', `${A}/${partyId}`, { in_party: 'not-a-boolean' })).status === 400);
+  check('stranger cannot change party membership', (await stranger.req('PATCH', `${A}/${partyId}`, { in_party: false })).status === 404);
+  check('GM can remove NPC from party', (await gm.req('PATCH', `${A}/${partyId}`, { in_party: false })).status === 200);
+  check('removed off-map NPC is hidden again', (await player.req('GET', `${A}/${partyId}`)).status === 404);
+  check('removed off-map NPC is absent from list', !(await player.req('GET', A)).data.actors.some((a) => a.id === partyId));
+  await settle();
+  check('party changes invalidate player roster without private payloads', partyEvents.length >= 2 && partyEvents.every((e) => Object.keys(e.d).length === 0));
+  await gm.req('PATCH', `${A}/${partyId}`, { in_party: true });
+  await settle();
+  const beforePartyDelete = partyEvents.length;
+  await gm.req('DELETE', `${A}/${partyId}`);
+  await settle();
+  check('deleting an off-map party NPC refreshes the roster', partyEvents.length > beforePartyDelete);
+
+  note('Owner stat editing', 'Players may edit their own gameplay stats. Ownership, PC/NPC disclosure, and party membership remain GM-controlled.');
 
   gmSock.close(); plSock.close();
   console.log('\n' + results.join('\n'));
