@@ -410,7 +410,7 @@ router.post('/:id/join', async (req, res, next) => {
     // `let`, not `const`: the retry below clears it if the colour is taken.
     const colour = validateColor(req.body && req.body.color);
     if (colour.error) return res.status(400).json({ error: colour.error });
-    const c = { value: colour.value };
+    const c = { value: colour.value, dropped: false };
 
     // Cap + membership write, made ATOMIC to close the same TOCTOU race as
     // create (OWASP A08:2025): without this, N parallel joiners all read
@@ -425,6 +425,15 @@ router.post('/:id/join', async (req, res, next) => {
         await knex.transaction(async (trx) => {
           await trx.raw('SET TRANSACTION ISOLATION LEVEL SERIALIZABLE');
 
+          // Retry from the current membership, not the pre-password snapshot.
+          // A concurrent join may already have succeeded, or a ban may have landed.
+          const member = await trx('campaign_members')
+            .where({ campaign_id: id, user_id: req.user.id }).first();
+          if (member && member.status === 'banned') {
+            const e = new Error('banned'); e.memberBanned = true; throw e;
+          }
+          if (member && member.status === 'active') return;
+
           const cur = await trx('campaign_members')
             .where({ campaign_id: id, status: 'active' })
             .count({ n: '*' }).first();
@@ -434,10 +443,10 @@ router.post('/:id/join', async (req, res, next) => {
 
           // Rows are never deleted — a returning member is an UPDATE of the
           // existing row, so their history (and original joined_at) survives.
-          if (existing) {
+          if (member) {
             await trx('campaign_members')
               .where({ campaign_id: id, user_id: req.user.id })
-              .update({ status: 'active', ...(c.value ? { color: c.value } : {}) });
+              .update({ status: 'active', ...(c.dropped ? { color: null } : c.value ? { color: c.value } : {}) });
           } else {
             await trx('campaign_members').insert({
               campaign_id: id,
@@ -450,26 +459,27 @@ router.post('/:id/join', async (req, res, next) => {
         break;
       } catch (err) {
         if (err.campaignFull) return res.status(409).json({ error: 'this campaign is full' });
-        if (err.code === '40001' && attempt < 5) { attempt += 1; continue; }
-        // [FINDING, fixed 2026-08-04] The M6 partial unique index on
-        // (campaign_id, color) made this route able to raise 23505, which it did
-        // not handle — so joining a campaign where somebody already held your
-        // colour returned a 500.
-        //
-        // Worse than the crash: the 500 was an ORACLE. A stranger could probe a
-        // public campaign's palette from outside by joining with each colour in
-        // turn and watching which ones failed.
-        //
-        // The colour is DROPPED rather than the join refused. Refusing would be
-        // absurd — you cannot enter a game because somebody took blue — and a
-        // 409 would leak the same information the 500 did. Joining succeeds
-        // colourless; PATCH /:id/me is where a colour is chosen, and that route
-        // answers 409 honestly because by then the caller is already a member
-        // and the palette is data they can already read.
-        if (err.code === '23505' && c.value && attempt < 5) {
-          c.value = null;
-          attempt += 1;
-          continue;
+        if (err.memberBanned) return res.status(403).json({ error: 'you are banned from this campaign' });
+        // Only these two known uniqueness conflicts are recoverable. A duplicate
+        // membership retries the lookup; a color collision drops the color,
+        // including a returning member's retained color, before retrying.
+        const duplicateMember = err.code === '23505' && err.constraint === 'campaign_members_pkey';
+        const duplicateColor = err.code === '23505'
+          && err.constraint === 'campaign_members_campaign_color_unique' && !c.dropped;
+        if (duplicateColor) { c.value = null; c.dropped = true; }
+        if (err.code === '40001' || duplicateMember || duplicateColor) {
+          if (attempt < 5) {
+            const baseDelay = 10 * (2 ** attempt);
+            const delay = baseDelay + Math.floor(Math.random() * baseDelay);
+            attempt += 1;
+            await new Promise(resolve => setTimeout(resolve, delay));
+            continue;
+          }
+          return res.status(409).set('Retry-After', '1').json({
+            error: 'Campaign joining is busy. Please try again.',
+            code: 'campaign_join_busy',
+            retryable: true,
+          });
         }
         throw err;
       }
