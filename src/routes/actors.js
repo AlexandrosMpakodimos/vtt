@@ -57,6 +57,8 @@
 
 const express = require('express');
 const knex = require('../db');
+const canonicalImageReference = require('../services/canonicalImageReference');
+
 const { validateImgFrame, validateImgScale, validateSpellSource } = require('../services/validators');
 const { requireMember } = require('../middleware/campaignAuth');
 const {
@@ -474,7 +476,12 @@ router.post('/', requireMember, async (req, res, next) => {
       if (body[field] === undefined) continue;
       const r = await validateActorField(field, body[field], req.campaign.id);
       if (r.error) return res.status(400).json({ error: r.error });
-      insertRow[r.column] = r.value;
+      insertRow[r.column] = r.column === 'img_url'
+        ? await canonicalImageReference(r.value, {
+          viewerId: req.user.id,
+          campaignId: req.campaign.id,
+        })
+        : r.value;
     }
 
     // Server-set, never from the body. A player's own id and a plain PC.
@@ -609,7 +616,12 @@ router.patch('/:actorId', requireMember, async (req, res, next) => {
       if (body[field] === undefined) continue;
       const r = await validateActorField(field, body[field], req.campaign.id);
       if (r.error) return res.status(400).json({ error: r.error });
-      updates[r.column] = r.value;
+      updates[r.column] = r.column === 'img_url'
+        ? await canonicalImageReference(r.value, {
+          viewerId: req.user.id,
+          campaignId: req.campaign.id,
+        })
+        : r.value;
     }
 
     if (Object.keys(updates).length === 0) {

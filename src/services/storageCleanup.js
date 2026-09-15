@@ -75,9 +75,14 @@ async function processRow(row) {
   const removed = await storage.remove(row.storage_key);
   if (removed) {
     await budget.inSerializable(async (trx) => {
-      // Release the debt (if any) and delete the row together: exactly once.
-      await budget.releaseCleanupDebt(trx, row.bytes == null ? null : Number(row.bytes));
-      await trx('storage_cleanup').where({ id: row.id }).del();
+      // Re-read under lock: another worker may already have finished.
+      const current = await trx('storage_cleanup')
+        .where({ id: row.id }).forUpdate().first();
+      if (!current) return;
+      await budget.releaseCleanupDebt(
+        trx, current.bytes == null ? null : Number(current.bytes)
+      );
+      await trx('storage_cleanup').where({ id: current.id }).del();
     });
     return { ok: true };
   }

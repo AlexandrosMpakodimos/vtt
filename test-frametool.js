@@ -60,7 +60,38 @@ function els() {
 
   console.log('\n--- the transform matches what scene.js draws ---');
   const tf = e.art.style.transform;
-  t('translate first, in PERCENT', /^translate\(25%, -10%\)/.test(tf), tf);
+  t('full image is centred before scaling',
+    /^translate\(-50%, -50%\)/.test(tf), tf);
+  t('horizontal offset is relative to the frame',
+    e.art.style.left === '75%', e.art.style.left);
+  t('vertical offset is relative to the frame',
+    e.art.style.top === '40%', e.art.style.top);
+
+  // jsdom does not load image bytes or calculate layout.
+  // Model a 2:1 image inside the square frame, then fire its load event.
+  Object.defineProperties(e.stage, {
+    clientWidth: { configurable: true, value: STAGE },
+    clientHeight: { configurable: true, value: STAGE },
+  });
+  Object.defineProperties(e.art, {
+    naturalWidth: { configurable: true, value: 440 },
+    naturalHeight: { configurable: true, value: 220 },
+  });
+  e.art.dispatchEvent(new window.Event('load'));
+
+  t('wide image retains its full width instead of being cropped to a square',
+    e.art.style.width === '200%' && e.art.style.height === '100%',
+    e.art.style.width + ' / ' + e.art.style.height);
+
+  Object.defineProperties(e.art, {
+    naturalWidth: { configurable: true, value: 220 },
+    naturalHeight: { configurable: true, value: 440 },
+  });
+  e.art.dispatchEvent(new window.Event('load'));
+
+  t('tall image retains its full height',
+    e.art.style.width === '100%' && e.art.style.height === '200%',
+    e.art.style.width + ' / ' + e.art.style.height);
   t('...and scale second', /scale\(1\.4\)$/.test(tf), tf);
 
   console.log('\n--- dragging moves by a FRACTION of the frame ---');

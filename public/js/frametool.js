@@ -79,6 +79,7 @@ window.VTTFrameTool = (function () {
     var stage = el('div', 'vttframe-stage');
     var art = document.createElement('img');
     art.className = 'vttframe-art';
+    art.addEventListener('load', paint);
     art.alt = '';
     art.draggable = false;   // stop native image drag from stealing the pan gesture
     stage.appendChild(art);
@@ -116,7 +117,22 @@ window.VTTFrameTool = (function () {
 
   function paint() {
     if (!state) return;
-    root.art.style.transform = 'translate(' + (state.ox * 100) + '%, ' + (state.oy * 100) + '%) scale(' + state.scale + ')';
+    // Keep the full image; only the surrounding stage clips it.
+    var iw = root.art.naturalWidth;
+    var ih = root.art.naturalHeight;
+    var fw = root.stage.clientWidth;
+    var fh = root.stage.clientHeight;
+    if (iw > 0 && ih > 0 && fw > 0 && fh > 0) {
+      var cover = Math.max(fw / iw, fh / ih);
+      root.art.style.width = (iw * cover / fw * 100) + '%';
+      root.art.style.height = (ih * cover / fh * 100) + '%';
+    }
+    root.art.style.inset = 'auto';
+    root.art.style.maxWidth = 'none';
+    root.art.style.maxHeight = 'none';
+    root.art.style.left = (50 + state.ox * 100) + '%';
+    root.art.style.top = (50 + state.oy * 100) + '%';
+    root.art.style.transform = 'translate(-50%, -50%) scale(' + state.scale + ')';
     root.scale.value = String(round3(state.scale));
     root.x.value = String(round3(state.ox));
     root.y.value = String(round3(state.oy));

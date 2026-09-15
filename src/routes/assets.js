@@ -32,6 +32,7 @@ const { withAtomicCap } = require('../services/atomicCap');
 const { validateImageUrl, validateInt, validUuid } = require('../services/validators');
 const storage = require('../services/storage');
 const budget = require('../services/storageBudget');
+const queueFailedUpload = require('../services/failedUploadCleanup');
 const gateway = require('../services/mediaGateway');
 
 const router = express.Router();
@@ -50,7 +51,13 @@ const router = express.Router();
 // "exceeded"/"uninitialised" is a real fault and propagates.
 async function budgetActive() {
   const snap = await budget.snapshot();
-  return !!(snap && snap.initialised);
+  if (!snap || !snap.initialised) {
+    const error = new Error('Storage accounting is unavailable; uploads are paused.');
+    error.status = 503;
+    error.budgetUninitialised = true;
+    throw error;
+  }
+  return true;
 }
 
 // UPLOAD_MODE controls which write paths exist.
@@ -363,6 +370,7 @@ router.post('/upload',
     let reservedBytes = 0;
     let row = null;
     let wroteObject = false;
+    let attemptedWrite = false;
     try {
       const kind = typeof req.query.kind === 'string' ? req.query.kind.trim().toLowerCase() : '';
       if (!storage.KINDS.includes(kind)) {
@@ -473,7 +481,10 @@ router.post('/upload',
         });
         row = rows[0];
       } catch (err) {
-        if (reservedBytes) await budget.releaseReservedBytes(reservedBytes).catch(() => {});
+        if (reservedBytes) {
+          await budget.releaseReservedBytes(reservedBytes);
+          reservedBytes = 0;
+        }
         if (err.capExceeded) return res.status(409).json({ error: err.message });
         // A unique-violation on the idempotency key means a concurrent duplicate
         // won the race; treat it as in-progress rather than an error.
@@ -497,17 +508,28 @@ router.post('/upload',
             await budget.charge('put');
           } catch (err) {
             if (err.budgetExceeded) {
-              // Out of operation budget mid-retry. Nothing was written on THIS
-              // attempt. Release the reservation (no object landed on a charge
-              // that never happened) and stop.
-              if (reservedBytes) { await budget.releaseReservedBytes(reservedBytes).catch(() => {}); reservedBytes = 0; }
-              await knex('assets').where({ id: row.id }).update({ status: 'rejected', reserved_bytes: null, upload_attempts: attempt - 1, updated_at: knex.fn.now() }).catch(() => {});
+              if (attemptedWrite) {
+                await queueFailedUpload(row.id);
+                reservedBytes = 0;
+              } else {
+                if (reservedBytes) {
+                  await budget.releaseReservedBytes(reservedBytes);
+                  reservedBytes = 0;
+                }
+                await knex('assets').where({ id: row.id }).update({
+                  status: 'rejected',
+                  reserved_bytes: null,
+                  upload_attempts: 0,
+                  updated_at: knex.fn.now(),
+                });
+              }
               return res.status(507).json({ error: 'operation_budget_reached', message: 'the application has reached its operation budget; try again next period' });
             }
             throw err;
           }
         }
         try {
+          attemptedWrite = true;
           const put = await storage.putObject({ key, mime, body: bytes });
           etag = put.etag;
           wroteObject = true;
@@ -522,16 +544,9 @@ router.post('/upload',
       }
 
       if (!wroteObject) {
-        // Every attempt failed. This is AMBIGUOUS: a write may have partially
-        // landed on any attempt. Do NOT release the byte reservation — the
-        // liability might be real. Queue the key for durable cleanup; only when
-        // the cleanup worker confirms the object is absent is the reservation
-        // released (that is the worker's job). Mark the row rejected.
-        await knex('storage_cleanup').insert({
-          storage_key: key, bytes: reservedBytes || null, reason: 'delete_failed',
-        }).catch(() => {});
-        await knex('assets').where({ id: row.id })
-          .update({ status: 'rejected', updated_at: knex.fn.now() }).catch(() => {});
+        // A failed response does not prove the object was never stored.
+        await queueFailedUpload(row.id);
+        reservedBytes = 0;
         return res.status(502).json({
           error: 'upload_failed',
           message: 'the object could not be stored; the attempt was recorded and will be reconciled',
@@ -539,23 +554,28 @@ router.post('/upload',
         });
       }
 
-      // The write succeeded and the bytes were already verified before writing.
-      // Establish the authoritative size (a HEAD, one Class B) and commit.
+      // A successful PUT gives us the validated body length.
+      // Only ask storage for a HEAD when its permit was granted.
+      let mayHead = true;
       if (active) {
-        try { await budget.charge('head'); } catch (err) {
+        try {
+          await budget.charge('head');
+        } catch (err) {
           if (!err.budgetExceeded) throw err;
-          // Out of Class B for the size check: the object exists and is valid,
-          // so trust the body length we already hold rather than failing a good
-          // upload. Commit from the known length.
+          mayHead = false;
         }
       }
+
       let realBytes = bytes.length;
-      try {
-        const headInfo = await storage.headSize(key);
-        if (typeof headInfo.bytes === 'number' && headInfo.bytes > 0) realBytes = headInfo.bytes;
-      } catch {
-        // HEAD failed; use the body length we already hold. The object is there
-        // (the PUT succeeded), so this is not ambiguous for liability.
+      if (mayHead) {
+        try {
+          const headInfo = await storage.headSize(key);
+          if (typeof headInfo.bytes === 'number' && headInfo.bytes > 0) {
+            realBytes = headInfo.bytes;
+          }
+        } catch {
+          // The PUT succeeded; retain the known body length.
+        }
       }
 
       if (active && reservedBytes) {
@@ -579,11 +599,31 @@ router.post('/upload',
       await gateway.rewriteObject(shaped, ['url'], req.user.id);
       return res.status(201).json({ asset: shaped });
     } catch (err) {
-      // Unexpected failure. If we reserved but never committed and no object was
-      // written, release the reservation. If an object WAS written, its liability
-      // is real — leave the reservation and let reconciliation account for it.
-      if (reservedBytes && !wroteObject) await budget.releaseReservedBytes(reservedBytes).catch(() => {});
-      if (row && !wroteObject) await knex('assets').where({ id: row.id }).update({ status: 'rejected', updated_at: knex.fn.now() }).catch(() => {});
+      if (row && attemptedWrite && !wroteObject) {
+        try {
+          await queueFailedUpload(row.id);
+          reservedBytes = 0;
+        } catch (cleanupError) {
+          // Keep the reservation if the durable handoff fails.
+          console.error('Failed upload cleanup handoff:', cleanupError.message);
+        }
+      } else if (!attemptedWrite) {
+        if (reservedBytes) {
+          try {
+            await budget.releaseReservedBytes(reservedBytes);
+            reservedBytes = 0;
+          } catch (releaseError) {
+            console.error('Upload reservation release:', releaseError.message);
+          }
+        }
+        if (row && !reservedBytes) {
+          await knex('assets').where({ id: row.id }).update({
+            status: 'rejected',
+            reserved_bytes: null,
+            updated_at: knex.fn.now(),
+          }).catch(() => {});
+        }
+      }
       return next(err);
     }
   });

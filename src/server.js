@@ -1,4 +1,4 @@
-require('dotenv').config();
+if (process.env.NODE_ENV !== 'test') require('dotenv').config();
 
 const express = require('express');
 const http = require('http');
@@ -29,7 +29,11 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
 
-const pgPool = new Pool({ connectionString: process.env.DATABASE_URL });
+const pgPool = new Pool(
+  process.env.NODE_ENV === 'test'
+    ? { ...require('../knexfile').test.connection }
+    : { connectionString: process.env.DATABASE_URL }
+);
 
 const sessionMiddleware = session({
   store: new PgSession({ pool: pgPool, createTableIfMissing: true }),
@@ -110,6 +114,48 @@ app.use(helmet({
     },
   },
 }));
+if (process.env.NODE_ENV === 'test') {
+  // Test-only control: invoke the real worker against memory storage.
+  if (require('./services/storage').testBackend === 'memory') {
+    app.post('/__test/cleanup/:id', async (req, res) => {
+      try {
+        const row = await knex('storage_cleanup').where({ id: req.params.id }).first();
+        if (!row) return res.status(404).json({ error: 'queue_row_missing' });
+        const worker = require('./services/storageCleanup');
+        const first = await worker.processRow(row);
+        let repeated = null;
+        if (req.query.repeat === '1') {
+          repeated = await worker.processRow(row);
+        }
+        return res.json({ first, repeated });
+      } catch (error) {
+        console.error('Test cleanup failed:', error.message);
+        return res.status(500).json({ error: 'test_cleanup_failed' });
+      }
+    });
+  }
+
+  app.get('/__test/identity', async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    try {
+      const result = await knex.raw(
+        'SELECT current_database() AS database, current_user AS role'
+      );
+      res.json({
+        environment: 'test',
+        ...result.rows[0],
+        storageConfigured: require('./services/storage').isConfigured(),
+        storageBackend: require('./services/storage').testBackend || 'disabled',
+        storageStats: require('./services/storage').testStats || null,
+        storageInventory: require('./services/storage').testInventory?.() || null,
+        uploadMode: process.env.UPLOAD_MODE,
+      });
+    } catch {
+      res.status(503).json({ error: 'test_database_unavailable' });
+    }
+  });
+}
+
 app.use(express.json());
 app.use(sessionMiddleware);
 app.use(passport.initialize());
@@ -254,4 +300,8 @@ setInterval(() => { cleanupWorker.tick().catch((e) => console.error('cleanup tic
 cleanupWorker.tick().catch(() => {});
 
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log(`Server running at http://localhost:${PORT}`));
+server.listen(
+  PORT,
+  process.env.NODE_ENV === 'test' ? '127.0.0.1' : undefined,
+  () => console.log(`Server running at http://localhost:${PORT}`)
+);

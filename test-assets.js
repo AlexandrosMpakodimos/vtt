@@ -1,34 +1,5 @@
-// Assets: presigned uploads, verification, external links.
-//   Usage: SKIP_HIBP=1 node test-assets.js   (server on npm run dev:test)
-//
-// Functional and adversarial in one file, as test-speaker-color.js and
-// test-scene-grid.js are: the security surface here is not a separate subject
-// from the behaviour. "A player may upload a portrait" and "a player may NOT
-// upload a map" are one rule seen from two sides.
-//
-// Mapped to the OWASP API Security Top 10 (2023):
-//   API1 BOLA   — presigning into a campaign you are not in; confirming
-//                 somebody else's upload
-//   API3 BOPLA  — forging the storage key, the status, the campaign
-//   API4 URC    — the per-campaign and per-user quotas, under a race
-//   API5 BFLA   — a player uploading a map
-//
-// ---------------------------------------------------------------------------
-// WHAT THIS SUITE CAN AND CANNOT DO WITHOUT A BUCKET
-// ---------------------------------------------------------------------------
-// The routes that touch R2 answer 503 when no bucket is configured, so that the
-// application runs — and every other suite passes — on a machine without the
-// author's credentials. That is a deliberate property and this suite must not
-// undermine it by requiring them.
-//
-// So the storage-dependent probes DETECT the 503 and assert the degraded
-// behaviour instead, while every probe that does not need bytes — external
-// links, quotas, permissions, refusal shapes — runs either way. A run without
-// credentials therefore still proves most of the surface, and says which part
-// it could not reach rather than silently passing.
-//
-// It does NOT skip silently: the header of the run states which mode it is in,
-// and the storage-dependent count is reported separately.
+// Strict-mode asset integration tests: real HTTP and DB, memory object storage.
+// Usage: node scripts/test-local.js test-assets.js
 
 const BASE = process.env.BASE_URL || 'http://localhost:3000';
 const knex = require('./src/db');
@@ -87,7 +58,11 @@ async function mk(name) {
   });
   await knex('users').where({ email }).update({ email_verified_at: knex.fn.now() });
   const l = await a.req('POST', '/api/auth/login', { email, password });
+  if (l.status !== 200 || !l.data?.user?.id) {
+    throw new Error('Test user login failed');
+  }
   a.id = l.data.user.id;
+  createdUsers.push(a.id);
   return a;
 }
 
@@ -99,14 +74,19 @@ async function mk(name) {
 // below via the application's own DELETE route, which exercises deletion as a
 // side effect of tidying up.
 const created = [];
+const createdUsers = [];
 function track(res) {
   const id = res && res.data && res.data.asset && res.data.asset.id;
   if (id) created.push(id);
   return res;
 }
 
-const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
-  0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52]);
+
+const PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aWQAAAABJRU5ErkJggg==',
+  'base64'
+);
+
 const NOT_AN_IMAGE = Buffer.from('<!DOCTYPE html><script>alert(1)</script>', 'ascii');
 
 // Upload raw bytes to a presigned URL exactly as a browser would: the headers
@@ -138,72 +118,137 @@ async function teardown(gm, pl) {
   return cleaned;
 }
 
+
+let gm;
+let pl;
+
+function expectStatus(name, response, expected) {
+  t(name, response.status === expected, 'got ' + response.status);
+  if (response.status !== expected) {
+    throw new Error(name + ': expected ' + expected + ', got ' + response.status);
+  }
+  return response;
+}
+
+function upload(who, kind, campaignId, body = PNG, mime = 'image/png', idem) {
+  const query = new URLSearchParams({ kind, mime });
+  if (campaignId != null) query.set('campaign_id', campaignId);
+  return who.reqRaw('POST', '/api/assets/upload?' + query, body, { mime, idem });
+}
+
 (async () => {
-  const gm = await mk('gm');
-  const pl = await mk('pl');
+  if (process.env.NODE_ENV !== 'test' || BASE !== 'http://127.0.0.1:3001') {
+    throw new Error('Use node scripts/test-local.js test-assets.js');
+  }
+
+  const identityResponse = await fetch(BASE + '/__test/identity', {
+    redirect: 'error',
+    signal: AbortSignal.timeout(5000),
+  });
+  const identity = await identityResponse.json();
+
+  if (
+    !identityResponse.ok ||
+    identity.environment !== 'test' ||
+    identity.database !== 'vtt_test' ||
+    identity.role !== 'vtt_test_runner' ||
+    identity.storageBackend !== 'memory' ||
+    identity.storageConfigured !== true ||
+    identity.uploadMode !== 'strict'
+  ) throw new Error('Unexpected test server');
+
+  const databaseIdentity = (await knex.raw(
+    'SELECT current_database() AS database, current_user AS role'
+  )).rows[0];
+
+  if (
+    databaseIdentity.database !== 'vtt_test' ||
+    databaseIdentity.role !== 'vtt_test_runner'
+  ) throw new Error('Unexpected test database');
+
+  const keyed = await knex('assets')
+    .whereNotNull('storage_key').count('* as n').first();
+  const queued = await knex('storage_cleanup').count('* as n').first();
+
+  if (Number(keyed.n) || Number(queued.n)) {
+    throw new Error('Existing stored test assets or cleanup jobs need review before this run');
+  }
+
+  const updated = await knex('storage_budget').where({ id: true }).update({
+    committed_bytes: 0,
+    reserved_bytes: 0,
+    cleanup_debt_bytes: 0,
+    class_a_used: 0,
+    class_b_used: 0,
+    period_start: knex.raw("now() - interval '1 day'"),
+    period_end: knex.raw("now() + interval '1 day'"),
+  });
+  if (updated !== 1) throw new Error('Test budget row missing');
+
+  gm = await mk('gm');
+  pl = await mk('pl');
   const outsider = await mk('out');
 
-  const camp = (await gm.req('POST', '/api/campaigns', { name: 'Assets', is_public: true })).data.campaign;
-  await pl.req('POST', `/api/campaigns/${camp.id}/join`, {});
-  t('setup: campaign created', !!camp);
+  const setup = expectStatus('campaign created',
+    await gm.req('POST', '/api/campaigns', {
+      name: 'Assets', is_public: true,
+    }), 201);
+  const camp = setup.data.campaign;
 
-  // Establish which mode this run is in, from the server's own answer.
-  const probe = await gm.req('POST', '/api/assets/presign', {
-    kind: 'map', campaign_id: camp.id, mime: 'image/png', bytes: 1024,
-  });
-  const storageOn = probe.status !== 503;
-  note('mode', storageOn
-    ? 'R2 configured — the full upload path is exercised'
-    : 'no bucket configured — upload probes assert the 503 degradation instead');
-
-  console.log('\n--- validation, which needs no bucket ---');
-  const bad = [
-    [{ kind: 'nonsense', campaign_id: camp.id, mime: 'image/png', bytes: 10 }, 'an unknown kind'],
-    [{ kind: 'map', campaign_id: camp.id, mime: 'image/svg+xml', bytes: 10 }, 'SVG'],
-    [{ kind: 'map', campaign_id: camp.id, mime: 'text/html', bytes: 10 }, 'HTML'],
-    [{ kind: 'map', campaign_id: camp.id, mime: 'image/png', bytes: 0 }, 'zero bytes'],
-    [{ kind: 'map', campaign_id: camp.id, mime: 'image/png', bytes: -5 }, 'negative bytes'],
-    [{ kind: 'map', campaign_id: camp.id, mime: 'image/png', bytes: 999999999 }, 'a file past the size limit'],
-    [{ kind: 'map', campaign_id: camp.id, mime: 'image/png', bytes: [[10]] }, 'nested-array bytes'],
-    [{ kind: ['map'], campaign_id: camp.id, mime: 'image/png', bytes: 10 }, 'an array kind'],
-    [{ kind: 'map', campaign_id: camp.id, mime: ['image/png'], bytes: 10 }, 'an array mime'],
-  ];
-  for (const [body, label] of bad) {
-    // eslint-disable-next-line no-await-in-loop
-    const r = await gm.req('POST', '/api/assets/presign', body);
-    t(`presign refuses ${label}`, r.status === 400 || r.status === 503, `got ${r.status}`);
+  const joined = await pl.req(
+    'POST', '/api/campaigns/' + camp.id + '/join', {}
+  );
+  if (joined.status < 200 || joined.status >= 300) {
+    throw new Error('Player join failed');
   }
-  note('SVG', 'refused at the allow-list — R2 serves raw bytes, so a scriptable image would be stored XSS');
 
-  // The kind allow-list is shared by both routes; /external runs it without a
-  // bucket, so we can assert deterministically that `cover` is now a valid kind
-  // and that the rejection message enumerates it.
+  console.log('\n--- strict mode and controlled-upload validation ---');
+
+  const probe = await gm.req('POST', '/api/assets/presign', {
+    kind: 'map',
+    campaign_id: camp.id,
+    mime: 'image/png',
+    bytes: PNG.length,
+  });
+  expectStatus('strict mode disables presigning', probe, 410);
+  t('presign refusal identifies disabled route',
+    probe.data?.error === 'presign_disabled');
+  t('presign refusal supplies no upload grant', !probe.data?.upload);
+
+  expectStatus('anonymous upload is refused',
+    await upload(agent(), 'portrait', camp.id), 401);
+  expectStatus('unknown kind is refused',
+    await upload(pl, 'nonsense', camp.id), 400);
+  expectStatus('SVG is refused',
+    await upload(pl, 'portrait', camp.id, PNG, 'image/svg+xml'), 400);
+  expectStatus('HTML MIME is refused',
+    await upload(pl, 'portrait', camp.id, PNG, 'text/html'), 400);
+  expectStatus('empty bytes are refused',
+    await upload(pl, 'portrait', camp.id, Buffer.alloc(0)), 400);
+  expectStatus('false PNG declaration is refused',
+    await upload(pl, 'portrait', camp.id, NOT_AN_IMAGE), 400);
+  expectStatus('player cannot upload a map',
+    await upload(pl, 'map', camp.id), 403);
+  expectStatus('outsider cannot upload into campaign',
+    await upload(outsider, 'portrait', camp.id), 404);
+
+  expectStatus('duplicate kind query is refused',
+    await pl.reqRaw('POST',
+      '/api/assets/upload?kind=portrait&kind=map&mime=image%2Fpng&campaign_id=' + camp.id,
+      PNG, { mime: 'image/png' }), 400);
+
+  const avatarLimit = require('./src/services/storage').limitFor('avatar');
+  expectStatus('oversized avatar is refused',
+    await upload(pl, 'avatar', null, Buffer.alloc(avatarLimit + 1)), 400);
+
   const badKindExt = await gm.req('POST', '/api/assets/external', {
-    kind: 'nonsense', campaign_id: camp.id, url: 'https://example.com/x.png',
+    kind: 'nonsense',
+    campaign_id: camp.id,
+    url: 'https://example.com/x.png',
   });
-  t('external refuses an unknown kind (400)', badKindExt.status === 400, `${badKindExt.status}`);
-  t('...and the allow-list now includes cover',
-    typeof badKindExt.data.error === 'string' && /cover/.test(badKindExt.data.error), badKindExt.data.error);
-
-  console.log('\n--- who may upload what ---');
-  const playerMap = await pl.req('POST', '/api/assets/presign', {
-    kind: 'map', campaign_id: camp.id, mime: 'image/png', bytes: 1024,
-  });
-  t('BFLA: a player cannot upload a map',
-    playerMap.status === 403 || playerMap.status === 503, `got ${playerMap.status}`);
-  const playerPortrait = await pl.req('POST', '/api/assets/presign', {
-    kind: 'portrait', campaign_id: camp.id, mime: 'image/png', bytes: 1024,
-  });
-  t('...but may upload a portrait',
-    playerPortrait.status === 201 || playerPortrait.status === 503, `got ${playerPortrait.status}`);
-  const outsiderUp = await outsider.req('POST', '/api/assets/presign', {
-    kind: 'portrait', campaign_id: camp.id, mime: 'image/png', bytes: 1024,
-  });
-  t('BOLA: a non-member gets 404, not 403 (no campaign enumeration)',
-    outsiderUp.status === 404 || outsiderUp.status === 503, `got ${outsiderUp.status}`);
-  const anon = agent();
-  t('an unauthenticated caller is refused',
-    (await anon.req('POST', '/api/assets/presign', { kind: 'avatar', mime: 'image/png', bytes: 10 })).status === 401);
+  expectStatus('external unknown kind is refused', badKindExt, 400);
+  t('kind allow-list includes cover',
+    /cover/.test(badKindExt.data?.error || ''));
 
   console.log('\n--- external links need no bucket at all ---');
   const ext = track(await pl.req('POST', '/api/assets/external', {
@@ -336,224 +381,372 @@ async function teardown(gm, pl) {
   t('nobody received a 500 from the race',
     outcome.every((r) => r.status < 500), outcome.map((r) => r.status).join(','));
 
-  // ===================================================================
-  // THE CONTROLLED UPLOAD PATH (POST /api/assets/upload)
-  // These probes test routing, auth, validation and strict-mode — none of which
-  // needs a bucket. The actual byte WRITE + idempotency-dedup are exercised in
-  // the bucket-only section further down.
-  // ===================================================================
-  results.push('\n--- the controlled upload path: routing, auth, validation ---');
+
+  console.log('\n--- controlled upload, accounting and idempotency ---');
+
+  const budget = require('./src/services/storageBudget');
+  // An uninitialised ledger must refuse uploads before writing anything.
+  const savedLedger = await knex('storage_budget').where({ id: true }).first();
+  const rowsBefore = await knex('assets').count('* as n').first();
+  try {
+    await knex('storage_budget').where({ id: true }).update({
+      period_start: null,
+      period_end: null,
+    });
+    const refusedUpload = track(
+      await upload(pl, 'portrait', camp.id)
+    );
+    expectStatus('uninitialised ledger refuses upload', refusedUpload, 503);
+
+    const rowsAfter = await knex('assets').count('* as n').first();
+    t('refused upload creates no asset row',
+      Number(rowsAfter.n) === Number(rowsBefore.n));
+
+    const unavailable = await budget.snapshot();
+    t('refused upload commits no bytes',
+      unavailable.bytes.committed === Number(savedLedger.committed_bytes));
+    t('refused upload charges no PUT',
+      unavailable.class_a.used === Number(savedLedger.class_a_used));
+  } finally {
+    await knex('storage_budget').where({ id: true }).update({
+      period_start: savedLedger.period_start,
+      period_end: savedLedger.period_end,
+    });
+  }
+
+  const before = await budget.snapshot();
+  const idem = 'asset-test-' + require('node:crypto').randomUUID();
+
+  const first = track(
+    await upload(pl, 'portrait', camp.id, PNG, 'image/png', idem)
+  );
+  expectStatus('player portrait upload succeeds', first, 201);
+
+  const asset = first.data.asset;
+  const storedUpload = await knex('assets').where({ id: asset.id }).first();
+
+  t('uploaded asset is ready', storedUpload.status === 'ready');
+  t('uploaded asset has a URL',
+    typeof asset.url === 'string' && asset.url.length > 0);
+  t('server assigned campaign storage key',
+    storedUpload.storage_key.startsWith('c/' + camp.id + '/portrait/'));
+  t('actual byte count recorded', Number(storedUpload.bytes) === PNG.length);
+  t('bytes were accounted for', storedUpload.bytes_verified === true);
+  t('one write attempt recorded', Number(storedUpload.upload_attempts) === 1);
+
+  const after = await budget.snapshot();
+  t('actual bytes committed',
+    after.bytes.committed - before.bytes.committed === PNG.length);
+  t('reservation consumed', after.bytes.reserved === before.bytes.reserved);
+  t('one PUT charged', after.class_a.used - before.class_a.used === 1);
+  t('one HEAD charged', after.class_b.used - before.class_b.used === 1);
+
+  const repeated = await upload(pl, 'portrait', camp.id, PNG, 'image/png', idem);
+  expectStatus('repeated idempotency key returns existing asset', repeated, 200);
+  t('same asset returned', repeated.data.asset.id === asset.id);
+
+  const duplicateCount = await knex('assets')
+    .where({ user_id: pl.id, idempotency_key: idem })
+    .count('* as n').first();
+  t('only one row for idempotency key', Number(duplicateCount.n) === 1);
+
+  const afterRepeat = await budget.snapshot();
+  t('repeat commits no extra bytes',
+    afterRepeat.bytes.committed === after.bytes.committed);
+  t('repeat charges no extra PUT',
+    afterRepeat.class_a.used === after.class_a.used);
+  t('repeat charges no extra HEAD',
+    afterRepeat.class_b.used === after.class_b.used);
+
+  const map = track(await upload(gm, 'map', camp.id));
+  expectStatus('GM can upload a map', map, 201);
+
+  expectStatus('owner can delete uploaded portrait',
+    await pl.req('DELETE', '/api/assets/' + asset.id), 200);
+
+  const afterDelete = await budget.snapshot();
+  t('deleted portrait bytes released while map remains',
+    afterDelete.bytes.committed === before.bytes.committed + PNG.length);
+
+  console.log('\n--- exhausted Class B does not issue a HEAD ---');
+  const savedB = await budget.snapshot();
+  const statsBefore = await (await fetch(BASE + '/__test/identity')).json();
+  const bCeiling = budget.LIMITS.maxClassB - budget.LIMITS.maintClassB;
+  let noHeadUpload;
+
+  try {
+    await knex('storage_budget').where({ id: true }).update({
+      class_b_used: bCeiling,
+    });
+
+    noHeadUpload = track(await upload(gm, 'portrait', camp.id));
+    expectStatus('upload succeeds using known body length', noHeadUpload, 201);
+
+    const statsAfter = await (await fetch(BASE + '/__test/identity')).json();
+    t('no HEAD call when its permit is refused',
+      Number.isInteger(statsBefore.storageStats?.headCalls) &&
+      statsAfter.storageStats?.headCalls === statsBefore.storageStats.headCalls);
+
+    const capped = await budget.snapshot();
+    t('Class B counter stays at its ceiling', capped.class_b.used === bCeiling);
+    t('successful PUT is charged', capped.class_a.used === savedB.class_a.used + 1);
+    t('body bytes are committed',
+      capped.bytes.committed === savedB.bytes.committed + PNG.length);
+    t('no reservation is left behind',
+      capped.bytes.reserved === savedB.bytes.reserved);
+  } finally {
+    if (noHeadUpload?.data?.asset?.id) {
+      expectStatus('fallback upload is cleaned up',
+        await gm.req('DELETE', '/api/assets/' + noHeadUpload.data.asset.id), 200);
+    }
+    await knex('storage_budget').where({ id: true }).update({
+      class_b_used: savedB.class_b.used,
+    });
+  }
+
+  console.log('\n--- ambiguous PUT retains liability until cleanup ---');
+
+  const failureBase = await budget.snapshot();
+  const inventoryBefore = await (await fetch(BASE + '/__test/identity')).json();
+  const faultBody = Buffer.concat([
+    PNG, Buffer.from('\nVTT_TEST_AMBIGUOUS\n'),
+  ]);
+  const faultKey = 'ambiguous-' + require('node:crypto').randomUUID();
+  const aCeiling = budget.LIMITS.maxClassA - budget.LIMITS.maintClassA;
+
+  try {
+    await knex('storage_budget').where({ id: true }).update({
+      class_a_used: aCeiling - 1,
+    });
+
+    const failed = await upload(
+      pl, 'portrait', camp.id, faultBody, 'image/png', faultKey
+    );
+
+    // Track the rejected row even though the error response contains no asset.
+    const failedAsset = await knex('assets').where({
+      user_id: pl.id, idempotency_key: faultKey,
+    }).first();
+    if (failedAsset) created.push(failedAsset.id);
+
+    expectStatus('retry stops at the Class A ceiling', failed, 507);
+    if (!failedAsset) throw new Error('Failed upload row was not recorded');
+
+    const inventoryAfter = await (await fetch(BASE + '/__test/identity')).json();
+    t('only one PUT was attempted',
+      inventoryAfter.storageStats.putCalls === inventoryBefore.storageStats.putCalls + 1);
+    t('object exists despite the failed response',
+      inventoryAfter.storageInventory.bytes ===
+        inventoryBefore.storageInventory.bytes + faultBody.length);
+
+    const held = await budget.snapshot();
+    t('ambiguous bytes remain in live liability',
+      held.bytes.live === failureBase.bytes.live + faultBody.length);
+    t('reservation transferred to cleanup debt',
+      held.bytes.reserved === failureBase.bytes.reserved &&
+      held.bytes.cleanup_debt === failureBase.bytes.cleanup_debt + faultBody.length);
+    t('failed upload is rejected with no remaining row reservation',
+      failedAsset.status === 'rejected' && failedAsset.reserved_bytes == null);
+    t('Class A stops at its ceiling', held.class_a.used === aCeiling);
+
+    const queued = await knex('storage_cleanup')
+      .where({ storage_key: failedAsset.storage_key }).first();
+    if (!queued) throw new Error('Failed upload was not queued');
+    t('queue records the liable byte count', Number(queued.bytes) === faultBody.length);
+
+    const cleanupPath = '/__test/cleanup/' + queued.id;
+    const firstDelete = await gm.req('POST', cleanupPath);
+    expectStatus('worker deletion attempt completes', firstDelete, 200);
+    t('simulated deletion failure reaches the worker', firstDelete.data.first.ok === false);
+
+    const retained = await budget.snapshot();
+    t('failed deletion retains cleanup debt',
+      retained.bytes.cleanup_debt === held.bytes.cleanup_debt);
+    t('failed deletion retains queue row',
+      Boolean(await knex('storage_cleanup').where({ id: queued.id }).first()));
+
+    // Unrelated synthetic debt makes a duplicate release observable.
+    await knex('storage_budget').where({ id: true }).update({
+      cleanup_debt_bytes: retained.bytes.cleanup_debt + 37,
+    });
+    try {
+      const removed = await gm.req('POST', cleanupPath + '?repeat=1');
+      expectStatus('worker deletion and repeated callback complete', removed, 200);
+      t('second deletion succeeds', removed.data.first.ok === true);
+
+      const released = await budget.snapshot();
+      t('duplicate cleanup does not release unrelated debt',
+        released.bytes.cleanup_debt === failureBase.bytes.cleanup_debt + 37);
+      t('cleanup removes queue row',
+        !(await knex('storage_cleanup').where({ id: queued.id }).first()));
+
+      const inventoryFinal = await (await fetch(BASE + '/__test/identity')).json();
+      t('cleanup actually removes the stored bytes',
+        inventoryFinal.storageInventory.bytes === inventoryBefore.storageInventory.bytes);
+    } finally {
+      await knex('storage_budget').where({ id: true }).update({
+        cleanup_debt_bytes: knex.raw('cleanup_debt_bytes - LEAST(cleanup_debt_bytes, 37)'),
+      });
+    }
+  } finally {
+    await knex('storage_budget').where({ id: true }).update({
+      class_a_used: failureBase.class_a.used,
+    });
+  }
+
+
+  console.log('\n--- permanent image references survive delivery-token expiry ---');
   {
-    // Unauthenticated is refused before anything else.
-    const anon = agent();
-    const un = await anon.reqRaw('POST', '/api/assets/upload?kind=portrait&mime=image%2Fpng', PNG_MAGIC, { mime: 'image/png' });
-    t('an unauthenticated controlled upload is refused (401/403)',
-      un.status === 401 || un.status === 403, `got ${un.status}`);
+    let regressionActor = null;
+    let regressionScene = null;
 
-    // NOTE: campaign_id must be camp.id (the UUID), not the campaign object.
-    // pl is an active MEMBER of camp (it joined at setup), so these probes reach
-    // the validation/permission logic rather than the membership 404.
-    // An unknown kind fails kind-validation (before permission) -> 400.
-    const badKind = await pl.reqRaw('POST', `/api/assets/upload?kind=nonsense&mime=image%2Fpng&campaign_id=${camp.id}`, PNG_MAGIC, { mime: 'image/png' });
-    t('an unknown kind is refused (400/503)', badKind.status === 400 || badKind.status === 503, `got ${badKind.status}`);
-
-    // A player MAY upload a portrait, so permission passes and the SVG mime is
-    // caught at the allow-list -> 400. (Map would be a 403 before the mime check,
-    // which is why this probe uses portrait, not map.)
-    const svg = await pl.reqRaw('POST', `/api/assets/upload?kind=portrait&mime=image%2Fsvg%2Bxml&campaign_id=${camp.id}`, PNG_MAGIC, { mime: 'image/svg+xml' });
-    t('an SVG mime is refused (400/503) — no scriptable image reaches storage', svg.status === 400 || svg.status === 503, `got ${svg.status}`);
-
-    // A player may upload a portrait; an empty body is then refused -> 400.
-    const empty = await pl.reqRaw('POST', `/api/assets/upload?kind=portrait&mime=image%2Fpng&campaign_id=${camp.id}`, Buffer.alloc(0), { mime: 'image/png' });
-    t('an empty body is refused (400)', empty.status === 400 || empty.status === 503, `got ${empty.status}`);
-
-    // A player uploading a MAP is refused by PERMISSION (BFLA) -> 403. This probe
-    // must use a player (not the GM, who may upload maps) for the refusal to mean
-    // anything.
-    const playerMap = await pl.reqRaw('POST', `/api/assets/upload?kind=map&mime=image%2Fpng&campaign_id=${camp.id}`, PNG_MAGIC, { mime: 'image/png' });
-    t('a player cannot controlled-upload a map (403/503)',
-      playerMap.status === 403 || playerMap.status === 503, `got ${playerMap.status}`);
-
-    // A non-member is 404, not 403 (no campaign enumeration).
-    const outsiderAgent = await mk('outsider');
-    const nm = await outsiderAgent.reqRaw('POST', `/api/assets/upload?kind=portrait&mime=image%2Fpng&campaign_id=${camp.id}`, PNG_MAGIC, { mime: 'image/png' });
-    t('a non-member controlled upload is 404/503 (no enumeration)',
-      nm.status === 404 || nm.status === 503, `got ${nm.status}`);
-
-    // Strict mode disables legacy presign. Only assert when the server is in
-    // strict mode (env-driven); otherwise note it.
-    if (process.env.UPLOAD_MODE === 'strict') {
-      const pres = await pl.req('POST', '/api/assets/presign', { kind: 'portrait', mime: 'image/png', bytes: 100, campaign_id: camp.id });
-      t('strict mode: legacy presign is disabled (410)', pres.status === 410, `got ${pres.status}`);
-    } else {
-      note('strict mode', 'server not in UPLOAD_MODE=strict; presign still available for cutover');
+    function requireAssetResponse(response, label) {
+      t(label, response.status === 201 && !!response.data?.asset?.id,
+        'status=' + response.status);
+      if (response.status !== 201 || !response.data?.asset?.id) {
+        throw new Error(label + ' failed');
+      }
+      return response.data.asset;
     }
 
-    // Bytes that lie about their type are refused BEFORE any write (a text body
-    // claiming to be PNG). A player may upload a portrait, so this reaches the
-    // magic-byte check -> 400.
-    const liar = await pl.reqRaw('POST', `/api/assets/upload?kind=portrait&mime=image%2Fpng&campaign_id=${camp.id}`, Buffer.from('this is not a png'), { mime: 'image/png' });
-    t('bytes that are not the declared image type are refused (400/503)',
-      liar.status === 400 || liar.status === 503, `got ${liar.status}`);
+    function requireRecord(response, key, label) {
+      t(label, response.status === 201 && !!response.data?.[key]?.id,
+        'status=' + response.status);
+      if (response.status !== 201 || !response.data?.[key]?.id) {
+        throw new Error(label + ' failed');
+      }
+      return response.data[key];
+    }
+
+    function isGatewayUrl(value, assetId) {
+      try {
+        const url = new URL(value);
+        return url.origin === 'http://media.test:3001' &&
+          url.pathname === '/media/' + assetId &&
+          !!url.searchParams.get('t');
+      } catch {
+        return false;
+      }
+    }
+
+    try {
+      const uploaded = track(await gm.reqRaw(
+        'POST',
+        '/api/assets/upload?kind=portrait&mime=image%2Fpng&campaign_id=' + camp.id,
+        PNG,
+        { mime: 'image/png', idem: 'reference-regression-' + Date.now() }
+      ));
+      const image = requireAssetResponse(uploaded, 'reference fixture upload succeeds');
+      const storedAsset = await knex('assets').where({ id: image.id }).first();
+      const canonical = storedAsset.url;
+      t('fixture stores a permanent memory-storage URL',
+        canonical === 'https://storage.test.invalid/' +
+          storedAsset.storage_key.split('/').map(encodeURIComponent).join('/'));
+
+      t('upload response supplies a gateway URL', isGatewayUrl(image.url, image.id));
+
+      // Save an unusable delivery token. The current session must authorise
+      // the asset reference independently; the old token is not a credential.
+      const stale = new URL(image.url);
+      stale.searchParams.set('t', 'expired-delivery-token');
+
+      regressionActor = requireRecord(await gm.req(
+        'POST', '/api/campaigns/' + camp.id + '/actors',
+        { name: 'Reference regression actor', img_url: stale.href }
+      ), 'actor', 'actor create accepts an authorised image reference');
+
+      regressionScene = requireRecord(await gm.req(
+        'POST', '/api/campaigns/' + camp.id + '/scenes',
+        { name: 'Reference regression scene', img_url: stale.href }
+      ), 'scene', 'scene create accepts an authorised image reference');
+
+      const actorPath = '/api/campaigns/' + camp.id + '/actors/' + regressionActor.id;
+      const scenePath = '/api/campaigns/' + camp.id + '/scenes/' + regressionScene.id;
+
+      for (const [table, record] of [
+        ['actors', regressionActor], ['scenes', regressionScene],
+      ]) {
+        const saved = await knex(table).where({ id: record.id }).first();
+        t(table + ' create stores the permanent reference',
+          saved.img_url === canonical);
+      }
+
+      for (const [table, record, route] of [
+        ['actors', regressionActor, actorPath],
+        ['scenes', regressionScene, scenePath],
+      ]) {
+        const patched = await gm.req('PATCH', route, { img_url: stale.href });
+        t(table + ' patch accepts the authorised reference', patched.status === 200);
+        const saved = await knex(table).where({ id: record.id }).first();
+        t(table + ' patch stores no delivery token', saved.img_url === canonical);
+      }
+
+      const token = requireRecord(await gm.req(
+        'POST', scenePath + '/tokens',
+        { actor_id: regressionActor.id, x: 0, y: 0 }
+      ), 'token', 'actor-linked token is placed');
+
+      const opened = await gm.req('GET', scenePath);
+      t('scene detail loads', opened.status === 200);
+      t('scene detail rewrites the map URL',
+        isGatewayUrl(opened.data?.scene?.img_url, image.id));
+      t('scene detail rewrites inherited token art',
+        isGatewayUrl(opened.data?.tokens?.find((r) => r.id === token.id)?.img_url, image.id));
+      t('scene detail rewrites actor art',
+        isGatewayUrl(opened.data?.actors?.find((r) => r.id === regressionActor.id)?.img_url, image.id));
+
+      const missing = new URL(stale.href);
+      missing.pathname = '/media/00000000-0000-4000-8000-000000000000';
+      for (const [table, record, route] of [
+        ['actors', regressionActor, actorPath],
+        ['scenes', regressionScene, scenePath],
+      ]) {
+        const refused = await gm.req('PATCH', route, { img_url: missing.href });
+        t(table + ' refuses a nonexistent media reference', refused.status === 400);
+        const saved = await knex(table).where({ id: record.id }).first();
+        t(table + ' refusal preserves the existing picture', saved.img_url === canonical);
+      }
+    } finally {
+      if (regressionScene) {
+        const removed = await gm.req(
+          'DELETE', '/api/campaigns/' + camp.id + '/scenes/' + regressionScene.id
+        );
+        t('reference regression scene cleaned up', removed.status === 200);
+      }
+      if (regressionActor) {
+        const removed = await gm.req(
+          'DELETE', '/api/campaigns/' + camp.id + '/actors/' + regressionActor.id
+        );
+        t('reference regression actor cleaned up', removed.status === 200);
+      }
+    }
   }
 
-  // ===================================================================
-  // Everything below needs a real bucket.
-  // ===================================================================
-  if (!storageOn) {
-    note('storage probes', 'SKIPPED — no bucket configured. Set R2_* to exercise the upload path.');
-    note('teardown', `${await teardown(gm, pl)} asset(s) removed`);
-    console.log(results.join('\n'));
-    console.log(`\n${pass} passed, ${fail} failed  (storage path not exercised)`);
-    await knex.destroy();
-    process.exit(fail ? 1 : 0);
-  }
+  note('scope',
+    'Real HTTP routes and PostgreSQL; object storage is an in-memory fixture, not R2.');
+})()
+  .catch((error) => {
+    t('suite completed without an exception', false, error.message);
+    process.exitCode = 1;
+  })
+  .finally(async () => {
+    try {
+      if (gm && pl) await teardown(gm, pl);
 
-  console.log('\n--- the presigned url itself ---');
-  // [ADDED 2026-08-09] Two defects found by the first BROWSER upload, neither
-  // of which the Node probes could see:
-  //
-  //   - the SDK baked a CRC32 of an EMPTY body into the signature, so real
-  //     bytes never matched it. Node uploads happened to work because the
-  //     suite's PUT went through a path that recomputed it; a browser's did not.
-  //   - the signed header list is `content-length;host`. The content TYPE is
-  //     NOT pinned by the signature, contradicting a comment that said it was.
-  //
-  // Both are properties of the URL, so they are asserted on the URL.
-  const shape = await gm.req('POST', '/api/assets/presign', {
-    kind: 'portrait', campaign_id: camp.id, mime: 'image/png', bytes: PNG.length,
+      const remaining = created.length
+        ? await knex('assets').whereIn('id', created).count('* as n').first()
+        : { n: 0 };
+      t('tracked assets cleaned up', Number(remaining.n) === 0);
+
+      if (Number(remaining.n) === 0 && createdUsers.length) {
+        await knex('users').whereIn('id', createdUsers).del();
+      }
+    } catch (error) {
+      t('teardown completed', false, error.message);
+    } finally {
+      console.log(results.join('\n'));
+      console.log('\n' + pass + ' passed, ' + fail + ' failed');
+      if (fail) process.exitCode = 1;
+      await knex.destroy();
+    }
   });
-  const signed = new URL(shape.data.upload.url);
-  t('the presigned url carries NO precomputed checksum',
-    !signed.searchParams.get('x-amz-checksum-crc32'),
-    'a checksum computed at signing time is the checksum of an empty body');
-  t('the length IS signed', /content-length/.test(signed.searchParams.get('X-Amz-SignedHeaders') || ''),
-    signed.searchParams.get('X-Amz-SignedHeaders'));
-  t('the client is told to send Content-Type and nothing else',
-    Object.keys(shape.data.upload.headers).join(',') === 'Content-Type',
-    Object.keys(shape.data.upload.headers).join(','));
-  t('Content-Length is NOT handed to the client (fetch forbids setting it)',
-    !('Content-Length' in shape.data.upload.headers));
-  t('the url expires quickly', Number(signed.searchParams.get('X-Amz-Expires')) <= 900,
-    signed.searchParams.get('X-Amz-Expires'));
-  track(shape);
-
-  // [ADDED 2026-08-09] The presigned URL and the Content-Security-Policy are
-  // two independent parts of this system that MUST agree, and nothing checked
-  // that they did. They disagreed twice in a row for different reasons: first
-  // connect-src was absent entirely, then it named the wrong addressing style —
-  // the SDK uses virtual-hosted URLs (`bucket.account.r2...`) and the policy
-  // listed only the account host.
-  //
-  // Both failures were invisible to every Node probe, because CSP is enforced
-  // by a browser against a document and a test client has neither. Asserting
-  // the agreement here is the cheapest available substitute for a real browser.
-  const page = await fetch(`${BASE}/actors.html`);
-  const csp = page.headers.get('content-security-policy') || '';
-  const connectSrc = (csp.split(';').find((d) => d.trim().startsWith('connect-src')) || '');
-  t('the page sends a connect-src directive', !!connectSrc,
-    'without it the fallback is default-src, which refuses the upload origin');
-  t('...and it permits the origin the presigned url actually uses',
-    connectSrc.includes(signed.origin), `${signed.origin} not in "${connectSrc.trim()}"`);
-  t('...while still permitting the websocket transport',
-    /ws:|wss:|'self'/.test(connectSrc), connectSrc.trim());
-
-  console.log('\n--- the full upload path ---');
-  const pres = track(await gm.req('POST', '/api/assets/presign', {
-    kind: 'map', campaign_id: camp.id, mime: 'image/png', bytes: PNG.length,
-  }));
-  t('the GM is authorised for one upload', pres.status === 201, `${pres.status}`);
-  t('...the asset starts pending', pres.data.asset.status === 'pending');
-  t('...and the key was chosen by the SERVER, under the campaign',
-    (await knex('assets').where({ id: pres.data.asset.id }).first())
-      .storage_key.startsWith(`c/${camp.id}/map/`));
-
-  const putStatus = await putToPresigned(pres.data.upload, PNG);
-  t('the bytes go straight to R2, never through this server',
-    putStatus >= 200 && putStatus < 300, `PUT returned ${putStatus}`);
-
-  const confirmed = await gm.req('POST', `/api/assets/${pres.data.asset.id}/confirm`);
-  t('confirming verifies the bytes and marks it ready',
-    confirmed.status === 200 && confirmed.data.asset.status === 'ready', `${confirmed.status}`);
-  t('...recording the type established by INSPECTION', confirmed.data.asset.mime === 'image/png');
-  t('...and its real size', confirmed.data.asset.bytes === PNG.length);
-  t('confirming twice is refused',
-    (await gm.req('POST', `/api/assets/${pres.data.asset.id}/confirm`)).status === 409);
-
-  console.log('\n--- THE PROBE THAT MATTERS: bytes that lie about their type ---');
-  // R2 stores and serves exactly what it is given, unlike an image CDN that
-  // transcodes. The declared type is a claim; the bytes are the evidence.
-  const evil = track(await gm.req('POST', '/api/assets/presign', {
-    kind: 'map', campaign_id: camp.id, mime: 'image/png', bytes: NOT_AN_IMAGE.length,
-  }));
-  await putToPresigned(evil.data.upload, NOT_AN_IMAGE);
-  const rejected = await gm.req('POST', `/api/assets/${evil.data.asset.id}/confirm`);
-  t('HTML uploaded as image/png is REFUSED at confirm',
-    rejected.status === 400, `${rejected.status}`);
-  const evilRow = await knex('assets').where({ id: evil.data.asset.id }).first();
-  t('...the row is marked rejected, never ready', evilRow.status === 'rejected', evilRow.status);
-  t('...and it never becomes visible in the library',
-    !(await gm.req('GET', `/api/assets?campaign_id=${camp.id}`))
-      .data.assets.some((a) => a.id === evil.data.asset.id));
-
-  console.log('\n--- BOLA on confirm ---');
-  const victim = track(await gm.req('POST', '/api/assets/presign', {
-    kind: 'map', campaign_id: camp.id, mime: 'image/png', bytes: PNG.length,
-  }));
-  t('a different user cannot confirm somebody else upload -> 404',
-    (await pl.req('POST', `/api/assets/${victim.data.asset.id}/confirm`)).status === 404);
-  t('confirming an upload that never happened -> 409',
-    (await gm.req('POST', `/api/assets/${victim.data.asset.id}/confirm`)).status === 409);
-
-  console.log('\n--- the signature pins the size ---');
-  const small = track(await gm.req('POST', '/api/assets/presign', {
-    kind: 'portrait', campaign_id: camp.id, mime: 'image/png', bytes: PNG.length,
-  }));
-  const oversize = await fetch(small.data.upload.url, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'image/png' },
-    body: Buffer.concat([PNG, Buffer.alloc(50000)]),
-  });
-  t('R2 refuses a body larger than was signed, before our code runs',
-    oversize.status >= 400, `${oversize.status} — the length is part of the signature`);
-
-  console.log('\n--- the controlled upload actually writes, once, and is idempotent ---');
-  {
-    const idem = `test-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-    const up1 = await gm.reqRaw('POST', `/api/assets/upload?kind=portrait&mime=image%2Fpng&campaign_id=${camp.id}`, PNG, { mime: 'image/png', idem });
-    t('a controlled upload succeeds (201)', up1.status === 201, `got ${up1.status} ${JSON.stringify(up1.data)}`);
-    t('...and returns a ready asset with a url', up1.data && up1.data.asset && !!up1.data.asset.url);
-    const newId = up1.data && up1.data.asset && up1.data.asset.id;
-    t('...marked ready in the database',
-      newId && (await knex('assets').where({ id: newId }).first()).status === 'ready');
-    t('...with its real byte size recorded (not 16, not the declared max)',
-      newId && Number((await knex('assets').where({ id: newId }).first()).bytes) === PNG.length,
-      newId && `bytes=${(await knex('assets').where({ id: newId }).first()).bytes}`);
-    t('...and at least one write attempt recorded',
-      newId && Number((await knex('assets').where({ id: newId }).first()).upload_attempts) >= 1);
-
-    // Idempotency: the SAME key returns the SAME asset, no second row/object.
-    const before = Number((await knex('assets').where({ campaign_id: camp.id }).count({ n: '*' }).first()).n);
-    const up2 = await gm.reqRaw('POST', `/api/assets/upload?kind=portrait&mime=image%2Fpng&campaign_id=${camp.id}`, PNG, { mime: 'image/png', idem });
-    const after = Number((await knex('assets').where({ campaign_id: camp.id }).count({ n: '*' }).first()).n);
-    t('a repeat with the same idempotency key returns 200 (deduped)', up2.status === 200, `got ${up2.status}`);
-    t('...the SAME asset id', up2.data && up2.data.asset && up2.data.asset.id === newId);
-    t('...and creates NO second row', after === before, `before ${before}, after ${after}`);
-
-    // A liar reaches the server but never the bucket: 400, no object, no row.
-    const liar = await gm.reqRaw('POST', `/api/assets/upload?kind=portrait&mime=image%2Fpng&campaign_id=${camp.id}`, Buffer.from('definitely not a png'), { mime: 'image/png' });
-    t('bytes that lie about their type are refused at the server (400)', liar.status === 400, `got ${liar.status}`);
-  }
-
-  note('teardown', `${await teardown(gm, pl)} asset(s) removed from the bucket and the database`);
-
-  console.log(results.join('\n'));
-  console.log(`\n${pass} passed, ${fail} failed`);
-  await knex.destroy();
-  process.exit(fail ? 1 : 0);
-})().catch(async (e) => {
-  console.error('SUITE CRASHED:', e);
-  console.log(results.join('\n'));
-  await knex.destroy();
-  process.exit(1);
-});
