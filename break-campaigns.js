@@ -50,6 +50,18 @@ async function makeUser(name) {
   const creates = Array.from({ length: 40 }, (_, i) =>
     raceUser.req('POST', '/api/campaigns', { name: `Race ${i}`, is_public: true }));
   const createRes = await Promise.all(creates);
+  const statuses = {};
+  for (const r of createRes) {
+    statuses[r.status] = (statuses[r.status] || 0) + 1;
+  }
+  info('create response counts', JSON.stringify(statuses));
+  const unexpected = createRes.filter(r => ![201, 409].includes(r.status));
+  if (unexpected.length) {
+    vuln('unexpected create responses', JSON.stringify(unexpected));
+  } else {
+    ok('concurrent creates return only success or conflict');
+  }
+
   const created = createRes.filter((r) => r.status === 201).length;
   const liveCount = Number((await knex('campaigns').where({ owner_id: raceUser.id }).whereNull('deleted_at').count({ n: '*' }).first()).n);
   if (liveCount > 20) vuln('campaign cap TOCTOU', `cap is 20 but ${liveCount} rows exist (${created} creates returned 201) — read-count-then-insert race`);
@@ -209,5 +221,5 @@ async function makeUser(name) {
   console.log(`${findings.filter((f) => f.sev === 'OK').length} defended, ${vulns.length} VULNERABILITIES`);
   if (vulns.length) { console.log('\nFINDINGS:'); vulns.forEach((v) => console.log(`  • ${v.name}: ${v.detail}`)); }
   await knex.destroy();
-  process.exit(0);
+  process.exit(vulns.length ? 1 : 0);
 })().catch(async (e) => { console.error('SUITE ERROR:', e); await knex.destroy(); process.exit(1); });
