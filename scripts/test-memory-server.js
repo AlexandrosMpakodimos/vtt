@@ -20,6 +20,8 @@ if (storage.isConfigured()) {
 
 const objects = new Map();
 const failFirstDelete = new Set();
+const retryAttempts = new Map();
+const retryMarker = Buffer.from('\nVTT_TEST_RETRY_TWICE\n');
 const ambiguousMarker = Buffer.from('\nVTT_TEST_AMBIGUOUS\n');
 const maxBytes = 64 * 1024 * 1024;
 let storedBytes = 0;
@@ -47,6 +49,12 @@ Object.assign(storage, {
   async putObject({ key, mime, body }) {
     storage.testStats.putCalls += 1;
     if (!Buffer.isBuffer(body)) throw new Error('Expected a Buffer');
+    if (body.subarray(-retryMarker.length).equals(retryMarker)) {
+      const attempt = (retryAttempts.get(key) || 0) + 1;
+      retryAttempts.set(key, attempt);
+      if (attempt < 3) throw new Error('Simulated transient write failure');
+      retryAttempts.delete(key);
+    }
     const previous = objects.get(key);
     const nextBytes = storedBytes - (previous ? previous.bytes.length : 0)
       + body.length;
@@ -80,6 +88,7 @@ Object.assign(storage, {
   },
 
   async remove(key) {
+    retryAttempts.delete(key);
     if (failFirstDelete.delete(key)) return false;
     const object = objects.get(key);
     if (object) {

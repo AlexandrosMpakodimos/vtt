@@ -695,6 +695,91 @@ function upload(who, kind, campaignId, body = PNG, mime = 'image/png', idem) {
       t('scene detail rewrites actor art',
         isGatewayUrl(opened.data?.actors?.find((r) => r.id === regressionActor.id)?.img_url, image.id));
 
+
+      console.log('\n--- private images cannot cross campaign boundaries ---');
+      let foreignCampaign = null;
+      let foreignAsset = null;
+      let unexpectedActor = null;
+      try {
+        const createdCampaign = await gm.req('POST', '/api/campaigns', {
+          name: 'Private image boundary regression',
+          password: 'boundary-test-only-password-9',
+          is_public: false,
+        });
+        foreignCampaign = createdCampaign.data?.campaign;
+        if (!foreignCampaign?.id) {
+          throw new Error(
+            'Could not create boundary-test campaign: status=' +
+            createdCampaign.status + ', response=' +
+            JSON.stringify(createdCampaign.data)
+          );
+        }
+
+        const uploadedForeign = track(await gm.reqRaw(
+          'POST',
+          '/api/assets/upload?kind=portrait&mime=image%2Fpng&campaign_id=' +
+            foreignCampaign.id,
+          PNG,
+          { mime: 'image/png', idem: 'foreign-reference-' + Date.now() }
+        ));
+        foreignAsset = requireAssetResponse(
+          uploadedForeign, 'foreign campaign image uploaded'
+        );
+        const foreignStored = await knex('assets')
+          .where({ id: foreignAsset.id }).first();
+
+        // The GM owns both campaigns and can view the source image.
+        // That must not permit sharing private art across their audiences.
+        for (const reference of [foreignAsset.url, foreignStored.url]) {
+          const form = reference === foreignStored.url ? 'permanent' : 'gateway';
+          for (const [table, record, route] of [
+            ['actors', regressionActor, actorPath],
+            ['scenes', regressionScene, scenePath],
+          ]) {
+            const denied = await gm.req('PATCH', route, { img_url: reference });
+            t(table + ' rejects a foreign private ' + form + ' reference',
+              denied.status === 400, 'status=' + denied.status);
+            const saved = await knex(table).where({ id: record.id }).first();
+            t(table + ' keeps its original picture after foreign ' + form + ' refusal',
+              saved.img_url === canonical);
+          }
+        }
+
+        // The player belongs to the destination campaign but cannot view
+        // the private source campaign. Possessing its URL grants no access.
+        const deniedCreate = await pl.req(
+          'POST', '/api/campaigns/' + camp.id + '/actors',
+          {
+            name: 'Foreign image must be refused',
+            img_url: foreignAsset.url,
+          }
+        );
+        unexpectedActor = deniedCreate.data?.actor || null;
+        t('player cannot create an actor using an inaccessible image',
+          deniedCreate.status === 400, 'status=' + deniedCreate.status);
+        t('refused foreign-image create returns no actor', !unexpectedActor);
+      } finally {
+        if (unexpectedActor) {
+          const removed = await gm.req(
+            'DELETE', '/api/campaigns/' + camp.id + '/actors/' + unexpectedActor.id
+          );
+          t('unexpected boundary-test actor cleaned up', removed.status === 200);
+        }
+
+        let imageRemoved = !foreignAsset;
+        if (foreignAsset) {
+          const removed = await gm.req('DELETE', '/api/assets/' + foreignAsset.id);
+          imageRemoved = removed.status === 200;
+          t('foreign image fixture cleaned up', imageRemoved);
+        }
+        if (foreignCampaign && imageRemoved) {
+          const removed = await gm.req(
+            'DELETE', '/api/campaigns/' + foreignCampaign.id
+          );
+          t('foreign campaign fixture cleaned up', removed.status === 200);
+        }
+      }
+
       const missing = new URL(stale.href);
       missing.pathname = '/media/00000000-0000-4000-8000-000000000000';
       for (const [table, record, route] of [
@@ -720,6 +805,108 @@ function upload(who, kind, campaignId, body = PNG, mime = 'image/png', idem) {
         t('reference regression actor cleaned up', removed.status === 200);
       }
     }
+  }
+
+
+  console.log('\n--- real upload route: all retries are charged ---');
+  {
+    const retryBytes = Buffer.concat([
+      PNG, Buffer.from('\nVTT_TEST_RETRY_TWICE\n'),
+    ]);
+    const before = await budget.snapshot();
+    const statsBefore = await (await fetch(BASE + '/__test/identity')).json();
+
+    const result = track(await gm.reqRaw(
+      'POST',
+      '/api/assets/upload?kind=portrait&mime=image%2Fpng&campaign_id=' + camp.id,
+      retryBytes,
+      { mime: 'image/png', idem: 'retry-success-' + Date.now() }
+    ));
+    t('upload succeeds after two transient failures', result.status === 201,
+      'status=' + result.status);
+    if (!result.data?.asset?.id) throw new Error('Retry fixture upload failed');
+
+    const row = await knex('assets').where({ id: result.data.asset.id }).first();
+    const after = await budget.snapshot();
+    const statsAfter = await (await fetch(BASE + '/__test/identity')).json();
+
+    t('route records three write attempts', Number(row.upload_attempts) === 3);
+    t('fixture received exactly three PUT calls',
+      statsAfter.storageStats.putCalls - statsBefore.storageStats.putCalls === 3);
+    t('three Class A permits were charged',
+      after.class_a.used - before.class_a.used === 3);
+    t('successful retry commits the body exactly once',
+      after.bytes.committed - before.bytes.committed === retryBytes.length);
+    t('successful retry consumes its reservation',
+      after.bytes.reserved === before.bytes.reserved);
+    t('successful retry adds no cleanup debt',
+      after.bytes.cleanup_debt === before.bytes.cleanup_debt);
+  }
+
+  console.log('\n--- real upload route: three ambiguous failures retain liability ---');
+  {
+    const failedBytes = Buffer.concat([
+      PNG, Buffer.from('\nVTT_TEST_AMBIGUOUS\n'),
+    ]);
+    const idem = 'all-attempts-fail-' + Date.now();
+    const before = await budget.snapshot();
+    const inventoryBefore = await (await fetch(BASE + '/__test/identity')).json();
+
+    const result = await gm.reqRaw(
+      'POST',
+      '/api/assets/upload?kind=portrait&mime=image%2Fpng&campaign_id=' + camp.id,
+      failedBytes,
+      { mime: 'image/png', idem }
+    );
+    t('three ambiguous failures return 502', result.status === 502,
+      'status=' + result.status);
+
+    const row = await knex('assets')
+      .where({ user_id: gm.id, idempotency_key: idem }).first();
+    if (!row) throw new Error('Failed-upload asset row missing');
+    track({ data: { asset: row } });
+
+    const queued = await knex('storage_cleanup')
+      .where({ storage_key: row.storage_key }).first();
+    const after = await budget.snapshot();
+    const inventoryAfter = await (await fetch(BASE + '/__test/identity')).json();
+
+    t('failed route records all three attempts', Number(row.upload_attempts) === 3);
+    t('failed route made exactly three PUT calls',
+      inventoryAfter.storageStats.putCalls -
+        inventoryBefore.storageStats.putCalls === 3);
+    t('all failed PUT attempts are charged',
+      after.class_a.used - before.class_a.used === 3);
+    t('overwritten object occupies only one body worth of storage',
+      inventoryAfter.storageInventory.bytes -
+        inventoryBefore.storageInventory.bytes === failedBytes.length);
+    t('failed upload adds no committed bytes',
+      after.bytes.committed === before.bytes.committed);
+    t('failed reservation transfers entirely into cleanup debt',
+      after.bytes.reserved === before.bytes.reserved &&
+      after.bytes.cleanup_debt === before.bytes.cleanup_debt + failedBytes.length);
+    t('failed upload has a durable cleanup record',
+      !!queued && Number(queued.bytes) === failedBytes.length);
+
+    if (!queued) throw new Error('Failed-upload cleanup record missing');
+
+    // The fixture refuses the first delete, then succeeds.
+    const first = await gm.req('POST', '/__test/cleanup/' + queued.id, {});
+    t('first cleanup request completes', first.status === 200);
+    const held = await budget.snapshot();
+    t('failed deletion preserves all liability',
+      held.bytes.live === after.bytes.live);
+
+    const second = await gm.req('POST', '/__test/cleanup/' + queued.id, {});
+    t('second cleanup request completes', second.status === 200);
+    const cleaned = await budget.snapshot();
+    const inventoryFinal = await (await fetch(BASE + '/__test/identity')).json();
+    t('successful cleanup restores the prior byte liability',
+      cleaned.bytes.live === before.bytes.live);
+    t('successful cleanup removes the object',
+      inventoryFinal.storageInventory.bytes === inventoryBefore.storageInventory.bytes);
+    t('successful cleanup removes the queue record',
+      !(await knex('storage_cleanup').where({ id: queued.id }).first()));
   }
 
   note('scope',

@@ -53,7 +53,7 @@ const DB = [
   // Storage budget ledger + durable cleanup. DB-backed (real Postgres) but NOT
   // server-backed: they exercise the serialisable accounting directly, which is
   // where the money-safety property lives. Run with `SKIP_HIBP=1 node <suite>`.
-  'test-storage-budget.js', 'test-budget-lifecycle.js', 'test-storage-cleanup.js',
+  'test-upload-controlled.js', 'test-storage-budget.js', 'test-budget-lifecycle.js', 'test-storage-cleanup.js',
   'test-storage-reconcile.js', 'test-media-gateway.js', 'test-media-rewrite.js',
 ];
 
