@@ -160,7 +160,7 @@ router.post('/', async (req, res, next) => {
     // N parallel creates all read the same count before any insert commits and
     // all overrun the cap. The fix is to do the count and the insert inside one
     // SERIALIZABLE transaction, so concurrent creators are serialised by the DB
-    // and a loser is aborted (40011) rather than allowed through. We retry the
+    // and a loser is aborted (40001) rather than allowed through. We retry the
     // aborted transaction a bounded number of times.
     //
     // Columns are hand-listed, never spread from the body: this is what makes
@@ -209,9 +209,24 @@ router.post('/', async (req, res, next) => {
             error: `you can own at most ${MAX_CAMPAIGNS_PER_USER} campaigns — delete one first`,
           });
         }
-        // 40001 = serialization_failure: a concurrent create won the race and
-        // this one was aborted to preserve the cap. Retry a few times.
-        if (err.code === '40001' && attempt < 5) { attempt += 1; continue; }
+        // Retry the whole aborted transaction. Jitter separates competing
+        // requests; the six-attempt bound prevents unbounded work under load.
+        if (err.code === '40001') {
+          if (attempt < 5) {
+            const baseDelay = 10 * (2 ** attempt);
+            const delay = baseDelay + Math.floor(Math.random() * baseDelay);
+            attempt += 1;
+            await new Promise(resolve => setTimeout(resolve, delay));
+            continue;
+          }
+          // The last transaction rolled back. This is temporary contention,
+          // not evidence that the user's campaign quota has been reached.
+          return res.status(409).set('Retry-After', '1').json({
+            error: 'Campaign creation is busy. Please try again.',
+            code: 'campaign_create_busy',
+            retryable: true,
+          });
+        }
         throw err;
       }
     }
