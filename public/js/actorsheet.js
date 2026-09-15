@@ -100,7 +100,7 @@ window.VTTActorSheet = (function () {
         portraitImg.src = draft.img_url;
         portraitImg.style.display = '';
         // Apply the draft framing so the crop previews before save.
-        portraitImg.style.transform = `translate(${(draft.img_offset_x || 0) * 100}%, ${(draft.img_offset_y || 0) * 100}%) scale(${draft.img_scale || 1})`;
+        window.VTTImageFrame.apply(portraitImg, portraitBtn, draft.img_offset_x, draft.img_offset_y, draft.img_scale);
         portraitFallback.style.display = 'none';
       } else {
         portraitImg.style.display = 'none';

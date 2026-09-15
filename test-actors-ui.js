@@ -131,6 +131,7 @@ try {
   // Loading them here mirrors the real page's <script> order — and the first run
   // of this suite failed on exactly that omission, which is a fair illustration
   // of why an 800-line client file wants a load probe at all.
+  window.eval(fs.readFileSync('public/js/imageframe.js', 'utf8'));
   window.eval(fs.readFileSync('public/js/sheet.js', 'utf8'));
   window.eval(fs.readFileSync('public/js/itemsheet.js', 'utf8'));
   window.eval(fs.readFileSync('public/js/spellsheet.js', 'utf8'));
@@ -184,6 +185,14 @@ for (const id of [
   t('ownership/type badges have their own row', !!charCards()[0].querySelector('.char-status-row .char-badge'));
   t('Adjust HP uses the app button theme', !!charCards()[0].querySelector('.char-hp-toggle.btn.secondary'));
   const portraitImage = charCards()[0].querySelector('.char-portrait img');
+  Object.defineProperties(portraitImage, {
+    naturalWidth: { value: 440 }, naturalHeight: { value: 220 },
+  });
+  portraitImage.dispatchEvent(new window.Event('load'));
+  t('character cards keep the complete wide image for framing',
+    portraitImage.style.width === '200%' && portraitImage.style.height === '100%');
+  t('character cards use the same centring as the framing editor',
+    portraitImage.style.transform.startsWith('translate(-50%, -50%)'));
   portraitImage.dispatchEvent(new window.Event('error'));
   t('broken portrait falls back to initials', !charCards()[0].querySelector('.char-portrait img') && !!charCards()[0].querySelector('.char-portrait-fallback'));
 

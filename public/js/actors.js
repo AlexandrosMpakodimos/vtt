@@ -249,7 +249,7 @@ function renderActors() {
       const img = el('img'); img.alt = '';
       img.src = a.img_url;
       const ox = Number(a.img_offset_x) || 0, oy = Number(a.img_offset_y) || 0, sc = Number(a.img_scale) > 0 ? Number(a.img_scale) : 1;
-      img.style.transform = `translate(${ox * 100}%, ${oy * 100}%) scale(${sc})`;
+      window.VTTImageFrame.apply(img, portrait, ox, oy, sc);
       img.addEventListener('error', () => { img.remove(); if (!portrait.querySelector('.char-portrait-fallback')) portrait.appendChild(el('span', { cls: 'char-portrait-fallback', text: actorInitials(a.name) })); });
       portrait.appendChild(img);
     } else {
@@ -1336,8 +1336,7 @@ function renderItems() {
       const ox = Number(props.img_offset_x) || 0, oy = Number(props.img_offset_y) || 0;
       let sc = Number(props.img_scale) > 0 ? Number(props.img_scale) : 1;
       if (!known) sc *= 1.25;   // extra cover for the blur edge
-      im.style.transform = `translate(${ox * 100}%, ${oy * 100}%) scale(${sc})`;
-      im.style.transformOrigin = 'center';
+      window.VTTImageFrame.apply(im, art, ox, oy, sc);
       im.addEventListener('error', () => { im.remove(); art.appendChild(el('div', { cls: 'item-card-noart', text: '?' })); });
       art.appendChild(im);
     } else {

@@ -40,7 +40,7 @@ const UNIT = [
   'test-fog-ui.js', 'test-fog-validators.js', 'test-sheet-ui.js',
   'test-dice.js', 'test-dice3d.js',
   'test-combat-ui.js', 'test-align-ui.js', 'test-landing-ui.js', 'test-dashboard-ui.js', 'test-actors-ui.js', 'test-game-ui.js',
-  'test-storage.js', 'test-imagepicker.js', 'test-events.js', 'test-closednotice.js', 'test-frametool.js',
+  'test-storage.js', 'test-asset-delete.js', 'test-imagepicker.js', 'test-events.js', 'test-closednotice.js', 'test-frametool.js',
 ];
 
 // Functional. Real Postgres, server on npm run dev:test.

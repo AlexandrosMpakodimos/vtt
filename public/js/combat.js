@@ -219,8 +219,7 @@ function renderStrip() {
       const ox = Number(token.img_offset_x) || 0;
       const oy = Number(token.img_offset_y) || 0;
       const sc = Number(token.img_scale) > 0 ? Number(token.img_scale) : 1;
-      im.style.transform = `translate(${ox * 100}%, ${oy * 100}%) scale(${sc})`;
-      im.style.transformOrigin = 'center';
+      window.VTTImageFrame.apply(im, frame, ox, oy, sc);
       frame.appendChild(im);
       card.appendChild(frame);
     } else {

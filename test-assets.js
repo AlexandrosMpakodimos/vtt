@@ -461,6 +461,24 @@ function upload(who, kind, campaignId, body = PNG, mime = 'image/png', idem) {
   const map = track(await upload(gm, 'map', camp.id));
   expectStatus('GM can upload a map', map, 201);
 
+  // A paused ledger must refuse deletion before the object is touched.
+  const deletePeriod = await knex('storage_budget').where({ id: true })
+    .select('period_start', 'period_end').first();
+  const inventoryBeforeRefusal = await (await fetch(BASE + '/__test/identity')).json();
+  try {
+    await knex('storage_budget').where({ id: true }).update({ period_start: null, period_end: null });
+    expectStatus('uninitialised accounting refuses deletion',
+      await gm.req('DELETE', '/api/assets/' + map.data.asset.id), 503);
+    const retained = await knex('assets').where({ id: map.data.asset.id }).first();
+    t('refused deletion retains the ready asset', retained?.status === 'ready');
+    const inventoryAfterRefusal = await (await fetch(BASE + '/__test/identity')).json();
+    t('refused deletion preserves stored bytes and object count',
+      inventoryAfterRefusal.storageInventory.bytes === inventoryBeforeRefusal.storageInventory.bytes &&
+      inventoryAfterRefusal.storageInventory.count === inventoryBeforeRefusal.storageInventory.count);
+  } finally {
+    await knex('storage_budget').where({ id: true }).update(deletePeriod);
+  }
+
   expectStatus('owner can delete uploaded portrait',
     await pl.req('DELETE', '/api/assets/' + asset.id), 200);
 

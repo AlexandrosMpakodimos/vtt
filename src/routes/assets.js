@@ -926,12 +926,15 @@ router.delete('/:id', async (req, res, next) => {
     // retry and its bytes move from committed to cleanup debt until absence is
     // established. Deletes are free operations, so no permit is charged.
     if (asset.storage_key) {
-      const removed = await storage.remove(asset.storage_key);
       const committedBytes = (asset.bytes_verified && typeof asset.bytes === 'number')
         ? asset.bytes : null;
+      // Validate accounting before the irreversible object deletion. A refused
+      // request must leave both the image and its database record intact.
+      const active = committedBytes ? await budgetActive() : false;
+      const removed = await storage.remove(asset.storage_key);
       if (!removed) {
         // Could not delete. Keep the liability visible.
-        if (committedBytes && await budgetActive()) {
+        if (committedBytes && active) {
           await budget.moveToCleanupDebt(committedBytes).catch(() => {});
         }
         await knex('storage_cleanup').insert({
@@ -939,7 +942,7 @@ router.delete('/:id', async (req, res, next) => {
           bytes: committedBytes,
           reason: 'delete_failed',
         }).catch(() => {});
-      } else if (committedBytes && await budgetActive()) {
+      } else if (committedBytes && active) {
         // Deleted cleanly: release the committed bytes (operations are NOT
         // refunded — that read/write already happened and was billed).
         await budget.inSerializable(async (trx) => {

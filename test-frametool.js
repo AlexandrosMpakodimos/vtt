@@ -18,6 +18,7 @@ window.HTMLElement.prototype.releasePointerCapture = window.HTMLElement.prototyp
 // jsdom gives every element a 0x0 box; the drag maths divides by the stage size,
 // so give the stage a real rect.
 const STAGE = 220;
+window.eval(fs.readFileSync('public/js/imageframe.js', 'utf8'));
 window.eval(fs.readFileSync('public/js/frametool.js', 'utf8'));
 
 let pass = 0, fail = 0;
@@ -93,6 +94,31 @@ function els() {
     e.art.style.width === '100%' && e.art.style.height === '200%',
     e.art.style.width + ' / ' + e.art.style.height);
   t('...and scale second', /scale\(1\.4\)$/.test(tf), tf);
+
+  // Compare visible coverage, including the case that the old pre-cropped
+  // renderer left blank: a wide image panned right by a quarter of the frame.
+  const slot = document.createElement('div');
+  const fullImage = document.createElement('img');
+  slot.appendChild(fullImage); document.body.appendChild(slot);
+  Object.defineProperties(fullImage, {
+    naturalWidth: { configurable: true, value: 440 },
+    naturalHeight: { configurable: true, value: 220 },
+  });
+  window.VTTImageFrame.apply(fullImage, slot, 0.25, 0, 1);
+  const width = parseFloat(fullImage.style.width);
+  const centre = parseFloat(fullImage.style.left);
+  t('a panned wide image still covers the entire frame', centre - width / 2 <= 0 && centre + width / 2 >= 100);
+  t('the slot, not the image, owns clipping', slot.style.overflow === 'hidden' && parseFloat(fullImage.style.borderRadius) === 0);
+  window.VTTImageFrame.apply(fullImage, slot, -0.2, 0.1, 0.5);
+  fullImage.dispatchEvent(new window.Event('load'));
+  t('a delayed load uses the most recently saved framing',
+    fullImage.style.left === '30%' && fullImage.style.top === '60%' &&
+    fullImage.style.transform === 'translate(-50%, -50%) scale(0.5)');
+  Object.defineProperties(slot, { clientWidth: { value: 200 }, clientHeight: { value: 100 } });
+  window.VTTImageFrame.apply(fullImage, slot, 0, 0, 1);
+  t('rectangular slots preserve the image aspect ratio', fullImage.style.width === '100%' && fullImage.style.height === '100%');
+  slot.remove();
+
 
   console.log('\n--- dragging moves by a FRACTION of the frame ---');
   // The art is an <img>; native image drag / pointer capture on it would steal
