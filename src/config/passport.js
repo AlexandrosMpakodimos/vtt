@@ -2,7 +2,7 @@ const passport = require('passport');
 const { Strategy: LocalStrategy } = require('passport-local');
 const { verifyPassword } = require('../services/password');
 const knex = require('../db');
-const SAFE_COLUMNS = ['id','email','username','avatar_url','email_verified_at','created_at'];
+const SAFE_COLUMNS = ['id','email','username','avatar_url','email_verified_at','created_at', 'avatar_offset_x', 'avatar_offset_y', 'avatar_scale'];
 // Precomputed Argon2id hash used only to equalise login timing for a non-existent
 // user (argon2 has no synchronous hashing API, so this constant is hard-coded).
 // Its parameters (m=47104,t=3,p=1) match ARGON2_OPTS in services/password.js;
