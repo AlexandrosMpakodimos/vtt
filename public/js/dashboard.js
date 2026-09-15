@@ -143,7 +143,7 @@
         img.alt = '';
         img.style.width = '100%'; img.style.height = '100%';
         img.style.objectFit = 'cover'; img.style.borderRadius = '50%';
-        applyFrame(img, me.avatar_offset_x, me.avatar_offset_y, me.avatar_scale);
+        applyFrame(img, av, me.avatar_offset_x, me.avatar_offset_y, me.avatar_scale);
         av.appendChild(img);
       } else {
         av.classList.add('mask');
@@ -836,7 +836,7 @@
       row.className = 'member-row'; row.setAttribute('data-user', m.user_id);
       var who = document.createElement('div'); who.className = 'who';
       var av = document.createElement('span'); av.className = 'avatar';
-      if (m.avatar_url) { var i = document.createElement('img'); i.src = m.avatar_url; i.alt = ''; i.style.width = '100%'; i.style.height = '100%'; i.style.objectFit = 'cover'; i.style.borderRadius = '50%'; applyFrame(i, m.avatar_offset_x, m.avatar_offset_y, m.avatar_scale); av.appendChild(i); }
+      if (m.avatar_url) { var i = document.createElement('img'); i.src = m.avatar_url; i.alt = ''; i.style.width = '100%'; i.style.height = '100%'; i.style.objectFit = 'cover'; i.style.borderRadius = '50%'; applyFrame(i, av, m.avatar_offset_x, m.avatar_offset_y, m.avatar_scale); av.appendChild(i); }
       var col = document.createElement('div');
       var nm = document.createElement('div'); nm.className = 'name'; nm.textContent = m.username || m.user_id;
       var meta = document.createElement('div'); meta.className = 'meta'; meta.textContent = (m.is_gm ? 'GM' : 'Player') + (m.joined_at ? (' · joined ' + fmtDate(m.joined_at)) : '');
@@ -1645,13 +1645,9 @@
   // `me` on open; the frame tool updates it; savePf sends it.
   var pfFrame = { ox: 0, oy: 0, scale: 1 };
 
-  // Apply a framing transform to an avatar <img>. Mirrors how the canvas draws
-  // token art: translate (a fraction of the square) THEN scale. object-fit:cover
-  // is the identity case, so 0,0,1 renders exactly as before.
-  function applyFrame(img, ox, oy, scale) {
-    var o = Number(ox) || 0, p = Number(oy) || 0, s = Number(scale) > 0 ? Number(scale) : 1;
-    img.style.transform = 'translate(' + (o * 100) + '%, ' + (p * 100) + '%) scale(' + s + ')';
-    img.style.transformOrigin = 'center';
+  // Use the same full-image crop as the framing editor.
+  function applyFrame(img, slot, ox, oy, scale) {
+    window.VTTImageFrame.apply(img, slot, ox, oy, scale);
   }
 
   function previewAvatar(url) {
@@ -1661,7 +1657,7 @@
     av.classList.remove('mask');
     if (url) {
       var img = document.createElement('img'); img.src = url; img.alt = '';
-      applyFrame(img, pfFrame.ox, pfFrame.oy, pfFrame.scale);
+      applyFrame(img, av, pfFrame.ox, pfFrame.oy, pfFrame.scale);
       av.appendChild(img);
     } else av.classList.add('mask');
   }

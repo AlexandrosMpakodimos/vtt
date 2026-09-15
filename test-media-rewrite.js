@@ -15,6 +15,7 @@ process.env.R2_PUBLIC_BASE_URL = process.env.R2_PUBLIC_BASE_URL || 'https://pub.
 
 const knex = require('./src/db');
 const gw = require('./src/services/mediaGateway');
+if (!process.env.MEDIA_ORIGIN) throw new Error('Run through scripts/test-local.js');
 
 let pass = 0; let fail = 0;
 const t = (name, cond, extra = '') => {
@@ -62,7 +63,7 @@ async function main() {
   const id1 = a1.id || a1; const id2 = a2.id || a2;
 
   const rw1 = await gw.rewriteUrl(`${BASE}/c/rw/map/one.png`, u.id);
-  t('a hosted URL is rewritten to the media host', rw1.startsWith('https://media.test/media/'));
+  t('a hosted URL is rewritten to the media host', rw1.startsWith(process.env.MEDIA_ORIGIN.replace(/\/+$/, '') + '/media/'));
   t('...for the correct asset id', rw1.includes(`/media/${id1}?t=`));
   t('...with a token that verifies', (() => {
     const tok = rw1.split('t=')[1];
@@ -109,8 +110,8 @@ async function main() {
       body: `see ${BASE}/c/rw/map/one.png`,
     };
     await gw.rewritePayload(payload, u.id);
-    t('actor img_url is rewritten to the gateway', payload.actor.img_url.startsWith('https://media.test/media/'));
-    t('a nested token img_url is rewritten', payload.tokens[0].img_url.startsWith('https://media.test/media/'));
+    t('actor img_url is rewritten to the gateway', payload.actor.img_url.startsWith(process.env.MEDIA_ORIGIN.replace(/\/+$/, '') + '/media/'));
+    t('a nested token img_url is rewritten', payload.tokens[0].img_url.startsWith(process.env.MEDIA_ORIGIN.replace(/\/+$/, '') + '/media/'));
     t('an external token img_url is left alone', payload.tokens[1].img_url === 'https://imgur.com/external.png');
     t('a presign upload url is NOT rewritten (different host)',
       payload.upload.url.includes('r2.cloudflarestorage.com'));
@@ -126,13 +127,41 @@ async function main() {
   t('a pending asset URL passes through unchanged', notReady === `${BASE}/c/rw/map/one.png`);
   await knex('assets').where({ id: id1 }).update({ status: 'ready' });
 
-  console.log('\n--- the FLAG: MEDIA_HOST unset makes rewriting a no-op ---');
-  // Re-require with the flag off in a child to prove the gate. Simulate by
-  // checking isEnabled contract directly (module already loaded); instead assert
-  // the documented behaviour: rewriteBatch returns empty when disabled. We test
-  // this by temporarily clearing the cached MEDIA_HOST via a fresh require in a
-  // subprocess is heavy; assert the guard exists via isEnabled semantics.
-  t('isEnabled is true when MEDIA_HOST is set', gw.isEnabled() === true);
+  console.log('\n--- disabled gateway leaves URLs unchanged ---');
+  {
+    const modulePath = require.resolve('./src/services/mediaGateway');
+    const cachedModule = require.cache[modulePath];
+    const savedHost = process.env.MEDIA_HOST;
+    const savedOrigin = process.env.MEDIA_ORIGIN;
+
+    try {
+      process.env.MEDIA_HOST = '';
+      process.env.MEDIA_ORIGIN = '';
+      delete require.cache[modulePath];
+      const disabled = require('./src/services/mediaGateway');
+
+      t('gateway is disabled without MEDIA_HOST', disabled.isEnabled() === false);
+
+      const hosted = BASE + '/c/rw/map/one.png';
+      t('disabled single rewrite preserves the hosted URL',
+        await disabled.rewriteUrl(hosted, u.id) === hosted);
+
+      const batch = await disabled.rewriteBatch([hosted], u.id);
+      t('disabled batch returns no replacements', batch.size === 0);
+
+      const payload = { actor: { img_url: hosted } };
+      const originalPayload = JSON.stringify(payload);
+      await disabled.rewritePayload(payload, u.id);
+      t('disabled payload rewrite preserves every field',
+        JSON.stringify(payload) === originalPayload);
+    } finally {
+      if (savedHost === undefined) delete process.env.MEDIA_HOST;
+      else process.env.MEDIA_HOST = savedHost;
+      if (savedOrigin === undefined) delete process.env.MEDIA_ORIGIN;
+      else process.env.MEDIA_ORIGIN = savedOrigin;
+      require.cache[modulePath] = cachedModule;
+    }
+  }
 
   // cleanup
   await knex('assets').where({ campaign_id: cid }).del();

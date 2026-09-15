@@ -146,6 +146,7 @@ function installFakeIo(window) {
 function evalApp(window, beforeBoot) {
   let err = null;
   try {
+    window.eval(fs.readFileSync('public/js/imageframe.js', 'utf8'));
     window.eval(fs.readFileSync('public/js/theme.js', 'utf8'));
     window.eval(fs.readFileSync('public/js/common.js', 'utf8'));
     window.eval(fs.readFileSync('public/js/imagepicker.js', 'utf8'));

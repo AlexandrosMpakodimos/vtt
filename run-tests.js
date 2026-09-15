@@ -40,7 +40,7 @@ const UNIT = [
   'test-fog-ui.js', 'test-fog-validators.js', 'test-sheet-ui.js',
   'test-dice.js', 'test-dice3d.js',
   'test-combat-ui.js', 'test-align-ui.js', 'test-landing-ui.js', 'test-dashboard-ui.js', 'test-actors-ui.js', 'test-game-ui.js',
-  'test-storage.js', 'test-imagepicker.js', 'test-events.js', 'test-closednotice.js', 'test-frametool.js',
+  'test-storage.js', 'test-asset-delete.js', 'test-imagepicker.js', 'test-events.js', 'test-closednotice.js', 'test-frametool.js',
 ];
 
 // Functional. Real Postgres, server on npm run dev:test.
@@ -53,7 +53,7 @@ const DB = [
   // Storage budget ledger + durable cleanup. DB-backed (real Postgres) but NOT
   // server-backed: they exercise the serialisable accounting directly, which is
   // where the money-safety property lives. Run with `SKIP_HIBP=1 node <suite>`.
-  'test-storage-budget.js', 'test-budget-lifecycle.js', 'test-storage-cleanup.js',
+  'test-upload-controlled.js', 'test-storage-budget.js', 'test-budget-lifecycle.js', 'test-storage-cleanup.js',
   'test-storage-reconcile.js', 'test-media-gateway.js', 'test-media-rewrite.js',
 ];
 

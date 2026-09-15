@@ -5,7 +5,7 @@ let transportPromise = null;
 async function getTransport() {
   if (transportPromise) return transportPromise;
   transportPromise = (async () => {
-    if (process.env.SMTP_HOST) {
+    if (process.env.NODE_ENV !== 'test' && process.env.SMTP_HOST) {
       return nodemailer.createTransport({
         host: process.env.SMTP_HOST,
         port: Number(process.env.SMTP_PORT) || 587,
@@ -13,7 +13,7 @@ async function getTransport() {
         auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
       });
     }
-    if (process.env.MAIL_JSON === '1') {
+    if (process.env.NODE_ENV === 'test' || process.env.MAIL_JSON === '1') {
       return nodemailer.createTransport({ jsonTransport: true });
     }
     const test = await nodemailer.createTestAccount();

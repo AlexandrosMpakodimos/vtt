@@ -93,7 +93,27 @@ const STAT_FIELDS = [
   'strength', 'dexterity', 'constitution', 'intelligence', 'wisdom', 'charisma',
   'death_save_successes', 'death_save_failures', 'notes', 'data', 'class', 'race',
 ];
-const SECRET_ITEM_FIELDS = ['name', 'description', 'properties', 'weight'];
+const SECRET_ITEM_FIELDS = ['name', 'description', 'weight'];
+function itemLeaks(item) {
+  if (!item || typeof item !== 'object') return ['missing item'];
+  const leaks = SECRET_ITEM_FIELDS.filter((field) => field in item);
+  const props = item.properties;
+  if (props === undefined) return leaks;
+  if (!props || typeof props !== 'object' || Array.isArray(props)) {
+    return leaks.concat('invalid properties');
+  }
+  for (const [key, value] of Object.entries(props)) {
+    const offset = key === 'img_offset_x' || key === 'img_offset_y';
+    const scale = key === 'img_scale';
+    if ((!offset && !scale) ||
+        typeof value !== 'number' || !Number.isFinite(value) ||
+        (offset && (value < -2 || value > 2)) ||
+        (scale && (value < 0.1 || value > 5))) {
+      leaks.push('properties.' + key);
+    }
+  }
+  return leaks;
+}
 
 (async () => {
   const gm = await mk('gm');
@@ -123,7 +143,7 @@ const SECRET_ITEM_FIELDS = ['name', 'description', 'properties', 'weight'];
   await gm.req('PATCH', `${A}/${pc.id}`, { hp_max: 12 });
   const relic = (await gm.req('POST', I, {
     name: 'Staff of the Magi', type: 'weapon', description: 'Absorbs spells.',
-    properties: { charges: 50 },
+    properties: { charges: 50, img_offset_x: 0.25, img_offset_y: -0.1, img_scale: 1.5 },
   })).data.item;
 
   // ============ API1: BOLA — object level ============
@@ -207,7 +227,11 @@ const SECRET_ITEM_FIELDS = ['name', 'description', 'properties', 'weight'];
   await knex('tokens').where({ actor_id: boss.id }).update({ hidden: false });
 
   const plRelic = (await player.req('GET', `${I}/${relic.id}`)).data.item;
-  const itemLeak = SECRET_ITEM_FIELDS.filter((f) => f in plRelic);
+  const itemLeak = itemLeaks(plRelic);
+  ok('control: HTTP preserves permitted image framing',
+    plRelic.properties?.img_offset_x === 0.25 &&
+    plRelic.properties?.img_offset_y === -0.1 &&
+    plRelic.properties?.img_scale === 1.5);
   ok('BOPLA: an unidentified item discloses nothing to a player over HTTP', itemLeak.length === 0, `leaked: ${itemLeak.join(', ')}`);
   ok('BOPLA: not even its name', JSON.stringify(plRelic).indexOf('Staff of the Magi') === -1, JSON.stringify(plRelic));
 
@@ -263,10 +287,15 @@ const SECRET_ITEM_FIELDS = ['name', 'description', 'properties', 'weight'];
 
   // L4 — the same question for an unidentified item.
   const l4 = recorder(plSock, ['item:updated', 'item:created']);
-  await gm.req('PATCH', `${I}/${relic.id}`, { description: 'Absorbs up to 50 spell levels.', properties: { charges: 50, secret: true } });
+  await gm.req('PATCH', `${I}/${relic.id}`, { description: 'Absorbs up to 50 spell levels.', properties: { charges: 50, secret: true, img_offset_x: 0.25, img_offset_y: -0.1, img_scale: 1.5 } });
   await gm.req('POST', I, { name: 'Cursed Idol', type: 'misc', description: 'It watches.' });
   await settle();
-  const l4Leak = l4.filter((h) => SECRET_ITEM_FIELDS.some((f) => f in h.d));
+  const l4Leak = l4.filter((h) => itemLeaks(h.d).length > 0);
+  ok('control: socket preserves permitted image framing',
+    l4.some((h) => h.d.id === relic.id &&
+      h.d.properties?.img_offset_x === 0.25 &&
+      h.d.properties?.img_offset_y === -0.1 &&
+      h.d.properties?.img_scale === 1.5));
   ok('L4: no unidentified item detail reaches the player over the socket', l4Leak.length === 0, JSON.stringify(l4Leak.map((h) => h.d)));
   ok('L5: not even the item NAME, which is usually the spoiler',
     JSON.stringify(l4).indexOf('Staff of the Magi') === -1 && JSON.stringify(l4).indexOf('Cursed Idol') === -1,

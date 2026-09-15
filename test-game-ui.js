@@ -44,7 +44,7 @@ const USER = { id: 'u-self', username: 'selene', avatar_url: null };
 // on the page; here it is faked below, so it is not eval'd as a classic script).
 const SCRIPTS = [
   'theme.js', 'common.js', 'imagepicker.js', 'closednotice.js',
-  'scene.js', 'combat.js', 'actors.js', 'sheet.js', 'itemsheet.js', 'spellsheet.js', 'actorsheet.js', 'align.js', 'game.js',
+  'imageframe.js', 'scene.js', 'combat.js', 'actors.js', 'sheet.js', 'itemsheet.js', 'spellsheet.js', 'actorsheet.js', 'align.js', 'game.js',
 ];
 
 // A URL-dispatching fake API. Records every call; returns canned game state.

@@ -43,6 +43,7 @@ window.HTMLElement.prototype.scrollIntoView = window.HTMLElement.prototype.scrol
 // Rarity / Armour lists use. Loading it here means those custom dropdowns are
 // tested for real (not the degraded fallback), so a wrong initDropdown call
 // signature is caught instead of silently showing an empty list.
+window.eval(fs.readFileSync('public/js/imageframe.js', 'utf8'));
 window.eval(fs.readFileSync('public/js/common.js', 'utf8'));
 window.eval(fs.readFileSync('public/js/sheet.js', 'utf8'));
 window.eval(fs.readFileSync('public/js/itemsheet.js', 'utf8'));
@@ -466,6 +467,15 @@ async function clickSave(container) {
     check('and no inline URL popover is shown when a picker is wired', cc.querySelector('.ie-imgedit-overlay') === null);
     // Choose a new image WITH a crop.
     choose('new.png', { offsetX: 0.3, offsetY: -0.2, scale: 1.6 });
+    const framedThumb = cc.querySelector('.ie-thumb img');
+    Object.defineProperties(framedThumb, { naturalWidth: { value: 440 }, naturalHeight: { value: 220 } });
+    framedThumb.dispatchEvent(new window.Event('load'));
+    check('item thumbnails retain the full wide image',
+      framedThumb.style.width === '200%' && framedThumb.style.height === '100%');
+    check('item thumbnails apply the saved pan and zoom to the full image',
+      framedThumb.style.left === '80%' && framedThumb.style.top === '30%' &&
+      framedThumb.style.transform === 'translate(-50%, -50%) scale(1.6)');
+
     await clickSave(cc);
     check('the chosen image is saved', sentImg && sentImg.img_url === 'new.png', JSON.stringify(sentImg));
     check('the item framing is stored in properties', sentImg && sentImg.properties

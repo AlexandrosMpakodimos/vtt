@@ -68,7 +68,7 @@ const PUBLIC_BASE = (process.env.R2_PUBLIC_BASE_URL || '').replace(/\/+$/, '');
 // must pass, on a machine with no bucket configured — a thesis artefact that
 // cannot be run without the author's cloud credentials is not reproducible.
 // Routes check this and answer 503 rather than throwing.
-const configured = !!(ACCOUNT_ID && BUCKET && PUBLIC_BASE
+const configured = process.env.NODE_ENV !== 'test' && !!(ACCOUNT_ID && BUCKET && PUBLIC_BASE
   && process.env.R2_ACCESS_KEY_ID && process.env.R2_SECRET_ACCESS_KEY);
 
 const client = configured

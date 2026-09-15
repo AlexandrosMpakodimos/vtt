@@ -4,11 +4,8 @@
 // (character portraits, token art overrides, avatars, item art, …) can reuse
 // exactly one implementation instead of copy-pasting the stage/drag/zoom logic.
 //
-// The transform is `translate(ox*100%, oy*100%) scale(scale)`, and the ORDER is
-// load-bearing: CSS applies the rightmost first, so the art is scaled and THEN
-// shifted by a fraction of the UNSCALED frame. That is what makes an offset of
-// 0.25 mean "a quarter of the square" at any zoom and any footprint — identical
-// to how the canvas draws token art, so the preview here matches the result.
+// The shared renderer moves the full image inside the square clipping slot.
+// Offsets are fractions of the unscaled frame, so editor and saved images agree.
 //
 // Bounds mirror the server (scale 0.1–5, offsets -2..2). Defaults (0,0,1) are
 // the identity transform, i.e. `object-fit: cover`.
@@ -116,7 +113,7 @@ window.VTTFrameTool = (function () {
 
   function paint() {
     if (!state) return;
-    root.art.style.transform = 'translate(' + (state.ox * 100) + '%, ' + (state.oy * 100) + '%) scale(' + state.scale + ')';
+    window.VTTImageFrame.apply(root.art, root.stage, state.ox, state.oy, state.scale);
     root.scale.value = String(round3(state.scale));
     root.x.value = String(round3(state.ox));
     root.y.value = String(round3(state.oy));

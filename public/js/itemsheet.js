@@ -165,8 +165,7 @@ window.VTTItemSheet = (function () {
         const ox = Number(draft.properties.img_offset_x) || 0;
         const oy = Number(draft.properties.img_offset_y) || 0;
         const sc = Number(draft.properties.img_scale) > 0 ? Number(draft.properties.img_scale) : 1;
-        thumbImg.style.transform = 'translate(' + (ox * 100) + '%, ' + (oy * 100) + '%) scale(' + sc + ')';
-        thumbImg.style.transformOrigin = 'center';
+        window.VTTImageFrame.apply(thumbImg, thumb, ox, oy, sc);
       } else { thumbImg.removeAttribute('src'); thumbImg.style.display = 'none'; thumbEmpty.style.display = 'grid'; }
     }
     identity.appendChild(thumbBtn);
@@ -695,8 +694,7 @@ window.VTTItemSheet = (function () {
       const ox = Number(fr.img_offset_x) || 0, oy = Number(fr.img_offset_y) || 0;
       let sc = Number(fr.img_scale) > 0 ? Number(fr.img_scale) : 1;
       if (!identified) sc *= 1.25;   // extra cover for the blur edge
-      im.style.transform = 'translate(' + (ox * 100) + '%, ' + (oy * 100) + '%) scale(' + sc + ')';
-      im.style.transformOrigin = 'center';
+      window.VTTImageFrame.apply(im, hero, ox, oy, sc);
       im.addEventListener('error', () => { im.remove(); hero.appendChild(el('div', { cls: 'ir-hero-empty', text: '?' })); });
       hero.appendChild(im);
     } else {

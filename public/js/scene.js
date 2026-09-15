@@ -587,12 +587,70 @@ function upsertToken(row) {
 function paintArt(el, row) {
   const art = el.querySelector('.art');
   if (!art) return;
-  art.style.backgroundImage = row.img_url ? `url("${CSS.escape(row.img_url)}")` : 'none';
+
+  // This layer stays the size of the token. The full image moves inside it.
+  art.style.backgroundImage = 'none';
+  art.style.transform = 'none';
+  art.style.overflow = 'visible';
+
+  let image = art.querySelector('img.vtt-token-full-art');
+  if (!row.img_url) {
+    if (image) image.remove();
+    return;
+  }
+
+  if (!image) {
+    image = document.createElement('img');
+    image.className = 'vtt-token-full-art';
+    image.alt = '';
+    image.draggable = false;
+    Object.assign(image.style, {
+      position: 'absolute',
+      display: 'block',
+      maxWidth: 'none',
+      maxHeight: 'none',
+      margin: '0',
+      padding: '0',
+      border: '0',
+      objectFit: 'fill',
+      transformOrigin: 'center',
+      pointerEvents: 'none',
+    });
+    art.appendChild(image);
+  }
+
   const ox = Number(row.img_offset_x) || 0;
   const oy = Number(row.img_offset_y) || 0;
   const sc = Number(row.img_scale);
   const scale = Number.isFinite(sc) && sc > 0 ? sc : 1;
-  art.style.transform = `translate(${ox * 100}%, ${oy * 100}%) scale(${scale})`;
+
+  const layout = () => {
+    if (!image.naturalWidth || !image.naturalHeight) return;
+
+    const fw = art.clientWidth;
+    const fh = art.clientHeight;
+    if (!fw || !fh) return;
+
+    const cover = Math.max(
+      fw / image.naturalWidth,
+      fh / image.naturalHeight
+    );
+    image.style.width = (image.naturalWidth * cover / fw * 100) + '%';
+    image.style.height = (image.naturalHeight * cover / fh * 100) + '%';
+    image.style.left = (50 + ox * 100) + '%';
+    image.style.top = (50 + oy * 100) + '%';
+    image.style.transform = 'translate(-50%, -50%) scale(' + scale + ')';
+    image.style.visibility = 'visible';
+  };
+
+  image.onload = layout;
+  if (image.getAttribute('src') !== row.img_url) {
+    image.style.visibility = 'hidden';
+    image.src = row.img_url;
+  }
+  layout();
+  // Placement can paint before the token has been attached to the document.
+  requestAnimationFrame(layout);
 }
 
 function paintToken({ row, el }) {

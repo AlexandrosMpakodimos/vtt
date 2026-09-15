@@ -145,6 +145,7 @@ document.body.appendChild(document.importNode(gameDom.window.document.getElement
 // ---- load ------------------------------------------------------------------
 let loadError = null;
 try {
+  window.eval(fs.readFileSync('public/js/imageframe.js', 'utf8'));
   window.eval(fs.readFileSync('public/js/common.js', 'utf8') + '\n' + fs.readFileSync('public/js/combat.js', 'utf8').replace(/\}\)\(\);\s*$/, 'Object.assign(window, { renderPresence, renderMessage, whisperTargets, renderWhisperTargets }); window.testPlayerSpeakers = async () => { const previousMe = me; const previousGm = isGm; me = { id: "U2" }; isGm = false; await loadSpeakable(); me = previousMe; isGm = previousGm; };\n})();'));
 } catch (err) {
   loadError = err;
@@ -368,7 +369,8 @@ console.log('\n--- the entry points run without throwing ---');
   const portrait = card && card.querySelector('img');
   t('the card carries a portrait', !!portrait);
   t('the portrait honors the token framing (translate + scale)',
-    portrait && /translate\(20%,\s*-10%\)\s*scale\(1\.5\)/.test(portrait.style.transform),
+    portrait && portrait.style.left === '70%' && portrait.style.top === '40%' &&
+      /translate\(-50%, -50%\) scale\(1\.5\)/.test(portrait.style.transform),
     portrait && portrait.style.transform);
   t('the portrait is clipped by a wrapper so a zoom stays in its slot',
     portrait && portrait.parentElement && portrait.parentElement.classList.contains('portrait'));

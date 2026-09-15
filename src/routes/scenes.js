@@ -16,6 +16,8 @@
 
 const express = require('express');
 const knex = require('../db');
+const canonicalImageReference = require('../services/canonicalImageReference');
+
 const { requireMember, requireOwner, validCampaignId } = require('../middleware/campaignAuth');
 const gateway = require('../services/mediaGateway');
 const {
@@ -325,6 +327,10 @@ router.post('/', requireOwner, async (req, res, next) => {
 
     const img = validateImageUrl(body.img_url, 'img_url');
     if (img.error) return res.status(400).json({ error: img.error });
+    img.value = await canonicalImageReference(img.value, {
+      viewerId: req.user.id,
+      campaignId: req.campaign.id,
+    });
 
     const g = validateGrid(body.grid);
     if (g.error) return res.status(400).json({ error: g.error });
@@ -484,7 +490,7 @@ router.get('/:sceneId', requireMember, async (req, res, next) => {
       actors = rows.map((a) => shapeActorFor(isOwner, a));
     }
 
-    return res.json({
+    return gateway.sendJson(req, res, {
       scene: publicScene(scene),
       tokens: await shapeTokens(tokens),
       fog: fog.map(publicFog),
@@ -539,6 +545,10 @@ router.patch('/:sceneId', requireOwner, async (req, res, next) => {
     if (body.img_url !== undefined) {
       const img = validateImageUrl(body.img_url, 'img_url');
       if (img.error) return res.status(400).json({ error: img.error });
+      img.value = await canonicalImageReference(img.value, {
+        viewerId: req.user.id,
+        campaignId: req.campaign.id,
+      });
       updates.img_url = img.value;
     }
     if (body.width !== undefined) {
@@ -696,6 +706,10 @@ router.post('/:sceneId/tokens', requireMember, async (req, res, next) => {
 
     const img = validateImageUrl(body.img_url, 'img_url');
     if (img.error) return res.status(400).json({ error: img.error });
+    img.value = await canonicalImageReference(img.value, {
+      viewerId: req.user.id,
+      campaignId: req.campaign.id,
+    });
 
     // Position/size default sensibly so a bare {name, img_url} places at origin.
     const x = validateGridCoord(body.x === undefined ? 0 : body.x, 'x');
@@ -1218,6 +1232,10 @@ router.post('/:sceneId/tokens/copy', requireOwner, async (req, res, next) => {
       if (name.error) return res.status(400).json({ error: name.error });
       const img = validateImageUrl(spec.img_url, 'img_url');
       if (img.error) return res.status(400).json({ error: img.error });
+      img.value = await canonicalImageReference(img.value, {
+        viewerId: req.user.id,
+        campaignId: req.campaign.id,
+      });
       const x = validateGridCoord(spec.x === undefined ? 0 : spec.x, 'x');
       if (x.error) return res.status(400).json({ error: x.error });
       const y = validateGridCoord(spec.y === undefined ? 0 : spec.y, 'y');
