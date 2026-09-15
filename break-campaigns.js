@@ -75,6 +75,54 @@ async function makeUser(name) {
   const capCampaign = capGmRes.data.campaign;
   const joiners = await Promise.all(Array.from({ length: 30 }, () => makeUser('j')));
   const joinRes = await Promise.all(joiners.map((j) => j.req('POST', `/api/campaigns/${capCampaign.id}/join`, {})));
+
+  const joinStatuses = {};
+  for (const result of joinRes) {
+    joinStatuses[result.status] = (joinStatuses[result.status] || 0) + 1;
+  }
+  info('join response counts', JSON.stringify(joinStatuses));
+  const unexpectedJoins = joinRes.filter(r => ![200, 409].includes(r.status));
+  if (unexpectedJoins.length) {
+    vuln('unexpected join responses', JSON.stringify(unexpectedJoins));
+  } else {
+    ok('concurrent joins return only success or conflict');
+  }
+
+  // Multiple requests from one user must converge on one active membership.
+  const duplicateUser = await makeUser('dup');
+  const duplicateSetup = await gm.req('POST', '/api/campaigns', {
+    name: 'Duplicate join race', is_public: true,
+  });
+  if (duplicateSetup.status !== 201 || !duplicateSetup.data?.campaign?.id) {
+    throw new Error('Duplicate-join campaign setup failed: ' +
+      JSON.stringify(duplicateSetup));
+  }
+  const duplicateId = duplicateSetup.data.campaign.id;
+  const duplicateResults = await Promise.all(
+    Array.from({ length: 20 }, () =>
+      duplicateUser.req('POST', '/api/campaigns/' + duplicateId + '/join', {}))
+  );
+  const duplicateStatuses = {};
+  for (const result of duplicateResults) {
+    duplicateStatuses[result.status] =
+      (duplicateStatuses[result.status] || 0) + 1;
+  }
+  info('same-user join response counts', JSON.stringify(duplicateStatuses));
+  if (duplicateResults.every(r => r.status === 200)) {
+    ok('concurrent same-user joins all succeed');
+  } else {
+    vuln('concurrent same-user joins fail', JSON.stringify(
+      duplicateResults.filter(r => r.status !== 200)));
+  }
+  const duplicateRows = await knex('campaign_members').where({
+    campaign_id: duplicateId, user_id: duplicateUser.id,
+  });
+  if (duplicateRows.length === 1 && duplicateRows[0].status === 'active') {
+    ok('same-user join race leaves exactly one active membership');
+  } else {
+    vuln('same-user membership state', JSON.stringify(duplicateRows));
+  }
+
   const joined200 = joinRes.filter((r) => r.status === 200).length;
   const activeCount = Number((await knex('campaign_members').where({ campaign_id: capCampaign.id, status: 'active' }).count({ n: '*' }).first()).n);
   // 8 includes the GM, so at most 8 active total.
