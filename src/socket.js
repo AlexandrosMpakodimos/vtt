@@ -86,6 +86,23 @@ function initSockets(io) {
     return evicted;
   }
 
+  // Remove game and dashboard subscriptions when the campaign is deleted.
+  // Snapshot the union: leave() mutates the adapter's room sets.
+  function evictCampaign(campaignId) {
+    const game = roomName(campaignId), lobby = lobbyName(campaignId);
+    const ids = new Set([
+      ...(io.sockets.adapter.rooms.get(game) || []),
+      ...(io.sockets.adapter.rooms.get(lobby) || []),
+    ]);
+    for (const sid of ids) {
+      const socket = io.sockets.sockets.get(sid);
+      if (!socket) continue;
+      socket.leave(game);
+      socket.leave(lobby);
+      socket.emit('campaign:evicted', { campaign_id: campaignId, reason: 'deleted' });
+    }
+  }
+
   // How many DISTINCT users have a socket in the campaign's GAME room. "At the
   // table" means the game page, not the dashboard — lobby-only sockets are not
   // counted. Reads socket.data.userId set at connection.
@@ -740,7 +757,7 @@ function initSockets(io) {
 
   return {
     disconnectSessions: socketSessions.disconnectSessions,
-    evictUser, roomName, socketsByUser,
+    evictUser, evictCampaign, roomName, socketsByUser,
     broadcastToken, broadcastToOwner, broadcastToPlayers,
     broadcastScene, broadcastScenePlayers,
     // §7 lobby: the dashboard's presence/state channel. broadcastLobby is called

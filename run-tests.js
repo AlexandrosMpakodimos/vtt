@@ -49,6 +49,7 @@ const UNIT = [
 
 // Functional. Real Postgres, server on npm run dev:test.
 const DB = [
+  'test-campaign-access-transitions.js',
   'test-account-recovery.js',
   'test-session-invalidation.js',
   'test-campaign-ownership-races.js',
