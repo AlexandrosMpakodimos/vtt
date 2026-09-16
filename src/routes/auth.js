@@ -71,7 +71,7 @@ async function issuePasswordResetEmail(user) {
 async function destroyUserSessions(trx, userId, exceptSid) {
   const q = trx('session').whereRaw("sess -> 'passport' ->> 'user' = ?", [userId]);
   if (exceptSid) q.andWhereNot('sid', exceptSid);
-  await q.del();
+  return q.del().returning('sid');
 }
 
 // POST /api/auth/register — creates an UNVERIFIED account; does NOT log in.
@@ -163,9 +163,13 @@ router.post('/forgot-password', async (req, res, next) => {
 });
 
 router.post('/logout', (req, res, next) => {
+  // Passport regenerates the session during logout; capture the old SID first.
+  const sessionId = req.sessionID;
   req.logout((err) => {
+    req.app.get('campaignSockets')?.disconnectSessions([sessionId]);
     if (err) return next(err);
-    req.session.destroy(() => {
+    req.session.destroy((destroyErr) => {
+      if (destroyErr) return next(destroyErr);
       res.clearCookie('connect.sid');
       res.json({ ok: true });
     });
@@ -234,12 +238,14 @@ router.post('/reset-password', async (req, res, next) => {
     }
 
     const password_hash = await hashPassword(p.value);
-    await knex.transaction(async (trx) => {
+    const revoked = await knex.transaction(async (trx) => {
       await trx('users').where({ id: row.user_id }).update({ password_hash });
       await trx('password_reset_tokens').where({ id: row.id }).update({ used_at: trx.fn.now() });
       await trx('password_reset_tokens').where({ user_id: row.user_id }).whereNull('used_at').del();
-      await destroyUserSessions(trx, row.user_id);
+      return destroyUserSessions(trx, row.user_id);
     });
+
+    req.app.get('campaignSockets')?.disconnectSessions(revoked.map(session => session.sid));
 
     return res.json({ ok: true, message: 'Password reset. You can now log in with your new password.' });
   } catch (err) {
@@ -334,11 +340,13 @@ router.post('/change-password', requireAuth, async (req, res, next) => {
     }
 
     const password_hash = await hashPassword(p.value);
-    await knex.transaction(async (trx) => {
+    const revoked = await knex.transaction(async (trx) => {
       await trx('users').where({ id: req.user.id }).update({ password_hash });
       // Keep this session; log out the user's other devices.
-      await destroyUserSessions(trx, req.user.id, req.sessionID);
+      return destroyUserSessions(trx, req.user.id, req.sessionID);
     });
+
+    req.app.get('campaignSockets')?.disconnectSessions(revoked.map(session => session.sid));
 
     return res.json({ ok: true, message: 'Password changed. Other sessions have been logged out.' });
   } catch (err) {
