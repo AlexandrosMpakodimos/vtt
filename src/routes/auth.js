@@ -117,16 +117,47 @@ router.post('/register', async (req, res, next) => {
 // POST /api/auth/login — blocked until the email is verified.
 router.post('/login', (req, res, next) => {
   if (req.body) req.body.email = normalizeEmail(req.body.email);
-  passport.authenticate('local', (err, user, info) => {
+  passport.authenticate('local', async (err, user, info) => {
     if (err) return next(err);
     if (!user) return res.status(401).json({ error: (info && info.message) || 'Invalid email or password' });
-    if (!user.email_verified_at) {
-      return res.status(403).json({ error: 'Please verify your email before logging in', email_verified: false });
+    let loginStarted = false;
+    try {
+      const result = await knex.transaction(async (trx) => {
+        // Password verification used a snapshot. Share the recovery routes' lock
+        // and retain it through the response's final session save.
+        const current = await trx('users').where({ id: user.id }).forUpdate().first();
+        if (!current || current.password_hash !== user.password_hash || current.email !== user.email) {
+          return { status: 401, body: { error: 'Invalid email or password' } };
+        }
+        if (!current.email_verified_at) {
+          return { status: 403, body: { error: 'Please verify your email before logging in', email_verified: false } };
+        }
+        loginStarted = true;
+        await new Promise((resolve, reject) => req.login(current, error => error ? reject(error) : resolve()));
+        // express-session can save the regenerated session again at response end.
+        // Keep revocation serialized until that final save has completed too.
+        await new Promise((resolve, reject) => {
+          const cleanup = () => { res.removeListener('finish', finish); res.removeListener('close', close); };
+          const finish = () => { cleanup(); resolve(); };
+          const close = () => { cleanup(); reject(new Error('Login response closed before completion')); };
+          res.once('finish', finish);
+          res.once('close', close);
+          Promise.resolve().then(() => gateway.sendJson(req, res, { user: publicUser(current) }))
+            .catch(error => { cleanup(); reject(error); });
+        });
+        return {};
+
+      });
+      if (result.status) return res.status(result.status).json(result.body);
+      return;
+    } catch (error) {
+      // The session store uses a separate connection: a transaction failure
+      // cannot roll back a saved session. Remove it before returning an error.
+      if (loginStarted && req.session) {
+        return req.session.destroy(destroyError => next(destroyError || error));
+      }
+      return next(error);
     }
-    req.login(user, (loginErr) => {
-      if (loginErr) return next(loginErr);
-      return gateway.sendJson(req, res, { user: publicUser(user) });
-    });
   })(req, res, next);
 });
 
