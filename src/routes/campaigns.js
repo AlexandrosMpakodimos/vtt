@@ -579,6 +579,9 @@ router.post('/:id/leave', requireMemberAnyState, async (req, res, next) => {
       .where({ campaign_id: req.campaign.id, user_id: req.user.id })
       .update({ status: 'left' });
 
+    // Revoke passive broadcasts on every open tab after membership changes.
+    req.app.get('campaignSockets')?.evictUser(req.campaign.id, req.user.id, 'left');
+
     return res.json({ ok: true, status: 'left' });
   } catch (err) {
     return next(err);
@@ -716,6 +719,9 @@ router.delete('/:id', requireOwner, async (req, res, next) => {
     await knex('campaigns')
       .where({ id: req.campaign.id })
       .update({ deleted_at: knex.fn.now(), updated_at: knex.fn.now() });
+
+    // A later restore must not revive stale game/lobby subscriptions.
+    req.app.get('campaignSockets')?.evictCampaign(req.campaign.id);
 
     return res.json({
       ok: true,
