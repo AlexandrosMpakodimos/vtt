@@ -568,16 +568,21 @@ router.patch('/:id/me', requireMemberAnyState, contentWriteLimiter, async (req, 
 // POST /api/campaigns/:id/leave — status -> 'left'. The owner cannot leave.
 router.post('/:id/leave', requireMemberAnyState, async (req, res, next) => {
   try {
-    // Deliberate: this kills the orphaned-campaign bug at the source.
-    if (req.isOwner) {
-      return res.status(409).json({
-        error: 'the owner cannot leave — transfer ownership or delete the campaign',
-      });
-    }
-
-    await knex('campaign_members')
-      .where({ campaign_id: req.campaign.id, user_id: req.user.id })
-      .update({ status: 'left' });
+    const result = await knex.transaction(async (trx) => {
+      // Same lock order as transfer: campaign first, then membership.
+      const campaign = await trx('campaigns').where({ id: req.campaign.id }).forUpdate().first();
+      if (!campaign || campaign.deleted_at) return { status: 404, error: 'campaign not found' };
+      if (campaign.owner_id === req.user.id) {
+        return { status: 409, error: 'the owner cannot leave — transfer ownership or delete the campaign' };
+      }
+      const member = await trx('campaign_members')
+        .where({ campaign_id: campaign.id, user_id: req.user.id }).forUpdate().first();
+      if (!member || member.status !== 'active') return { status: 404, error: 'campaign not found' };
+      await trx('campaign_members').where({ campaign_id: campaign.id, user_id: req.user.id })
+        .update({ status: 'left' });
+      return {};
+    });
+    if (result.status) return res.status(result.status).json({ error: result.error });
 
     // Revoke passive broadcasts on every open tab after membership changes.
     req.app.get('campaignSockets')?.evictUser(req.campaign.id, req.user.id, 'left');
@@ -832,14 +837,26 @@ function moderationRoute(nextStatus) {
         return res.status(409).json({ error: `you cannot ${nextStatus === 'banned' ? 'ban' : 'kick'} yourself` });
       }
 
-      const member = await knex('campaign_members')
-        .where({ campaign_id: req.campaign.id, user_id: targetId })
-        .first();
-      if (!member) return res.status(404).json({ error: 'member not found' });
-
-      await knex('campaign_members')
-        .where({ campaign_id: req.campaign.id, user_id: targetId })
-        .update({ status: nextStatus });
+      const result = await knex.transaction(async (trx) => {
+        // Middleware authorized a snapshot. Serialize with ownership transfer and
+        // check the current owner before changing any membership.
+        const campaign = await trx('campaigns').where({ id: req.campaign.id }).forUpdate().first();
+        if (!campaign || campaign.deleted_at) return { status: 404, error: 'campaign not found' };
+        if (campaign.owner_id !== req.user.id) {
+          const caller = await trx('campaign_members')
+            .where({ campaign_id: campaign.id, user_id: req.user.id }).first();
+          return caller && caller.status === 'active'
+            ? { status: 403, error: 'only the campaign owner can do that' }
+            : { status: 404, error: 'campaign not found' };
+        }
+        const member = await trx('campaign_members')
+          .where({ campaign_id: campaign.id, user_id: targetId }).forUpdate().first();
+        if (!member) return { status: 404, error: 'member not found' };
+        await trx('campaign_members').where({ campaign_id: campaign.id, user_id: targetId })
+          .update({ status: nextStatus });
+        return {};
+      });
+      if (result.status) return res.status(result.status).json({ error: result.error });
 
       req.app.get('campaignSockets')?.evictUser(req.campaign.id, targetId);
 
