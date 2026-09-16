@@ -16,10 +16,12 @@
 // The consequence worth internalising: socket.request is a SNAPSHOT of the
 // handshake. It is not re-evaluated. A socket that connected while logged in
 // stays "logged in" from its own point of view even after the session row is
-// deleted — which is why authorisation is re-checked on every join below
-// against the live database, never against a value cached at connect time.
+// deleted. socketSessions checks the live session store on connection and each
+// incoming packet; auth routes disconnect revoked sessions after deletion.
+// Campaign membership is a separate check performed by the handlers below.
 
 const knex = require('./db');
+const { createSocketSessions } = require('./services/socketSessions');
 const { isActiveMember } = require('./middleware/campaignAuth');
 const gateway = require('./services/mediaGateway');
 const {
@@ -40,6 +42,7 @@ const roomName = (campaignId) => `campaign:${campaignId}`;
 const lobbyName = (campaignId) => `lobby:${campaignId}`;
 
 function initSockets(io) {
+  const socketSessions = createSocketSessions(io);
   // user_id -> Set of socket ids. Lets a kick/ban evict a live socket, and lets
   // a user hold several sockets (two tabs) without one closing the other.
   const socketsByUser = new Map();
@@ -256,6 +259,8 @@ function initSockets(io) {
       socket.disconnect(true);
       return;
     }
+
+    if (!socketSessions.attach(socket)) return;
 
     track(user.id, socket.id);
     // Presence counts DISTINCT users among a room's sockets, so each socket
@@ -734,6 +739,7 @@ function initSockets(io) {
   });
 
   return {
+    disconnectSessions: socketSessions.disconnectSessions,
     evictUser, roomName, socketsByUser,
     broadcastToken, broadcastToOwner, broadcastToPlayers,
     broadcastScene, broadcastScenePlayers,
