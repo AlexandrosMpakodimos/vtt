@@ -10,13 +10,20 @@ async function run(route, options = {}) {
   const calls = [];
   const user = { id: 'user', password_hash: 'old-hash' };
   const token = { id: 'token', user_id: 'user', used_at: null, expires_at: new Date(Date.now() + 10000) };
-  function query(table) {
+  function query(table, transaction = false) {
     const q = {
+      forUpdate() { calls.push('lock:' + table); return q; },
       where() { return q; }, whereRaw() { return q; }, whereNull() { return q; },
       andWhereNot(column, value) { queryExcept = value; return q; },
-      async first() { return table === 'users' ? user : token; },
-      async update() {},
-      del() { return { then(resolve) { return Promise.resolve().then(resolve); },
+      async first() {
+        if (table === 'users') return transaction && options.changedPassword ? { ...user, password_hash: 'racing-hash' } : user;
+        if (transaction && options.missingToken) return null;
+        if (transaction && options.usedToken) return { ...token, used_at: new Date() };
+        if (transaction && options.expiredToken) return { ...token, expires_at: new Date(0) };
+        return token;
+      },
+      async update() { calls.push('write:' + table); },
+      del() { calls.push('delete:' + table); return { then(resolve) { return Promise.resolve().then(resolve); },
         async returning() { return [{ sid: 'old-a' }, { sid: 'old-b' }]; } }; },
     };
     return q;
@@ -24,7 +31,7 @@ async function run(route, options = {}) {
   const knex = table => query(table);
   knex.fn = { now: () => 'now' };
   knex.transaction = async work => {
-    const trx = table => query(table); trx.fn = knex.fn;
+    const trx = table => query(table, true); trx.fn = knex.fn;
     const value = await work(trx);
     if (options.failCommit) throw new Error('commit failed');
     committed = true; calls.push('commit'); return value;
@@ -46,7 +53,7 @@ async function run(route, options = {}) {
     logout(callback) { calls.push('logout'); req.sessionID = 'regenerated'; callback(options.logoutError); },
     session: { destroy(callback) { calls.push('destroy'); callback(options.destroyError); } },
   };
-  const res = { clearCookie() { calls.push('clearCookie'); }, json(body) { calls.push('response'); response = body; } };
+  const res = { status(n) { calls.push('status:' + n); return this; }, clearCookie() { calls.push('clearCookie'); }, json(body) { calls.push('response'); response = body; } };
   await handler(req, res, err => { forwarded = err; });
   return { response, forwarded, revoked, committed, queryExcept, calls };
 }
@@ -68,5 +75,15 @@ async function run(route, options = {}) {
     r = await run(route, { failCommit: true });
     check(r.forwarded && !r.response && r.revoked.length === 0, route + ' failed commit does not revoke sockets');
   }
+  for (const option of ['missingToken', 'usedToken', 'expiredToken']) {
+    r = await run('reset-password', { [option]: true });
+    check(!r.forwarded && r.calls.includes('status:400'), option + ' is checked after locking');
+    check(r.revoked.length === 0 && !r.calls.some(c => c.startsWith('write:') || c.startsWith('delete:')), option + ' changes no password, tokens, or sessions');
+  }
+  r = await run('change-password', { changedPassword: true });
+  check(!r.forwarded && r.calls.includes('status:409') && r.revoked.length === 0, 'stale authenticated password change refused');
+  check(!r.calls.some(c => c.startsWith('write:') || c.startsWith('delete:')), 'stale credentials cannot overwrite a winning change');
+  r = await run('change-password');
+  check(r.calls.includes('delete:password_reset_tokens'), 'password change invalidates outstanding reset links');
   console.log(`${passed} passed, 0 failed`);
 })().catch(err => { console.error(err); console.log(`${passed} passed, 1 failed`); process.exitCode=1; });

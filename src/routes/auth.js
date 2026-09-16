@@ -49,14 +49,19 @@ async function issueVerificationEmail(user) {
 }
 
 async function issuePasswordResetEmail(user) {
-  // Invalidate any earlier reset tokens so only the newest link works.
-  await knex('password_reset_tokens').where({ user_id: user.id }).del();
   const rawToken = crypto.randomBytes(32).toString('hex');
-  await knex('password_reset_tokens').insert({
-    user_id: user.id,
-    token_hash: sha256(rawToken),
-    expires_at: knex.raw("now() + interval '1 hour'"),
+  const issued = await knex.transaction(async (trx) => {
+    // All recovery operations lock the user before touching their tokens.
+    const current = await trx('users').where({ id: user.id }).forUpdate().first();
+    if (!current || current.email !== user.email) return false;
+    await trx('password_reset_tokens').where({ user_id: user.id }).del();
+    await trx('password_reset_tokens').insert({
+      user_id: user.id, token_hash: sha256(rawToken),
+      expires_at: trx.raw("now() + interval '1 hour'"),
+    });
+    return true;
   });
+  if (!issued) return;
   const base = process.env.BASE_URL || 'http://localhost:3000';
   const link = `${base}/api/auth/reset-password?token=${rawToken}`;
   try {
@@ -239,11 +244,19 @@ router.post('/reset-password', async (req, res, next) => {
 
     const password_hash = await hashPassword(p.value);
     const revoked = await knex.transaction(async (trx) => {
+      const user = await trx('users').where({ id: row.user_id }).forUpdate().first();
+      if (!user) return null;
+      // The earlier lookup is only a hint. A competing reset or password change
+      // may have consumed/deleted this token while hashing or waiting for the lock.
+      const current = await trx('password_reset_tokens')
+        .where({ id: row.id, user_id: row.user_id, token_hash: sha256(String(token)) }).first();
+      if (!current || current.used_at || new Date(current.expires_at).getTime() <= Date.now()) return null;
       await trx('users').where({ id: row.user_id }).update({ password_hash });
-      await trx('password_reset_tokens').where({ id: row.id }).update({ used_at: trx.fn.now() });
+      await trx('password_reset_tokens').where({ id: current.id }).update({ used_at: trx.fn.now() });
       await trx('password_reset_tokens').where({ user_id: row.user_id }).whereNull('used_at').del();
       return destroyUserSessions(trx, row.user_id);
     });
+    if (!revoked) return res.status(400).json({ error: 'Reset link is invalid or expired' });
 
     req.app.get('campaignSockets')?.disconnectSessions(revoked.map(session => session.sid));
 
@@ -341,10 +354,16 @@ router.post('/change-password', requireAuth, async (req, res, next) => {
 
     const password_hash = await hashPassword(p.value);
     const revoked = await knex.transaction(async (trx) => {
+      const current = await trx('users').where({ id: req.user.id }).forUpdate().first();
+      // Do not let a request authenticated with an older password overwrite a
+      // password reset/change that committed while this request was hashing.
+      if (!current || current.password_hash !== row.password_hash) return null;
       await trx('users').where({ id: req.user.id }).update({ password_hash });
+      await trx('password_reset_tokens').where({ user_id: req.user.id }).del();
       // Keep this session; log out the user's other devices.
       return destroyUserSessions(trx, req.user.id, req.sessionID);
     });
+    if (!revoked) return res.status(409).json({ error: 'Your password changed during this request. Please sign in again.' });
 
     req.app.get('campaignSockets')?.disconnectSessions(revoked.map(session => session.sid));
 
@@ -355,15 +374,21 @@ router.post('/change-password', requireAuth, async (req, res, next) => {
 });
 
 async function issueEmailChangeEmail(user, newEmail) {
-  // Invalidate prior email-change tokens so only the newest change link works.
-  await knex('email_verification_tokens').where({ user_id: user.id, purpose: 'email_change' }).del();
   const rawToken = crypto.randomBytes(32).toString('hex');
-  await knex('email_verification_tokens').insert({
-    user_id: user.id,
-    token_hash: sha256(rawToken),
-    purpose: 'email_change',
-    expires_at: knex.raw("now() + interval '1 hour'"),
+  const issued = await knex.transaction(async (trx) => {
+    const current = await trx('users').where({ id: user.id }).forUpdate().first();
+    if (!current || current.password_hash !== user.password_hash || current.email !== user.email) return false;
+    // Bind the sole outstanding link to its pending address atomically. The
+    // confirmation route takes the same user lock before re-reading its token.
+    await trx('users').where({ id: user.id }).update({ pending_email: newEmail });
+    await trx('email_verification_tokens').where({ user_id: user.id, purpose: 'email_change' }).del();
+    await trx('email_verification_tokens').insert({
+      user_id: user.id, token_hash: sha256(rawToken), purpose: 'email_change',
+      expires_at: trx.raw("now() + interval '1 hour'"),
+    });
+    return true;
   });
+  if (!issued) return false;
   const base = process.env.BASE_URL || 'http://localhost:3000';
   const link = `${base}/api/auth/verify-email-change?token=${rawToken}`;
   try {
@@ -371,6 +396,7 @@ async function issueEmailChangeEmail(user, newEmail) {
   } catch (err) {
     console.error('Failed to send email-change email:', err.message);
   }
+  return true;
 }
 
 // POST /api/auth/change-email — request an email change; confirm link goes to the NEW address.
@@ -391,8 +417,9 @@ router.post('/change-email', requireAuth, async (req, res, next) => {
     const taken = await knex('users').where({ email: e.value }).first();
     if (taken) return res.status(409).json({ error: 'email is already in use' });
 
-    await knex('users').where({ id: row.id }).update({ pending_email: e.value });
-    await issueEmailChangeEmail(row, e.value);
+    if (!(await issueEmailChangeEmail(row, e.value))) {
+      return res.status(409).json({ error: 'Your account changed during this request. Please try again.' });
+    }
 
     return res.json({ ok: true, message: 'Check your new email address to confirm the change.' });
   } catch (err) {
@@ -413,27 +440,24 @@ router.get('/verify-email-change', async (req, res, next) => {
       return res.redirect('/?email_changed=invalid');
     }
 
-    const user = await knex('users').where({ id: tok.user_id }).first();
-    if (!user || !user.pending_email) {
-      return res.redirect('/?email_changed=nothing');
-    }
+    const outcome = await knex.transaction(async (trx) => {
+      const user = await trx('users').where({ id: tok.user_id }).forUpdate().first();
+      const current = await trx('email_verification_tokens')
+        .where({ id: tok.id, user_id: tok.user_id, token_hash: sha256(String(token)), purpose: 'email_change' }).first();
+      if (!current || current.used_at || new Date(current.expires_at).getTime() <= Date.now()) return 'invalid';
+      if (!user || !user.pending_email) return 'nothing';
 
-    // The address may have been taken in the gap between request and confirmation.
-    const taken = await knex('users').where({ email: user.pending_email }).whereNot({ id: user.id }).first();
-    if (taken) {
-      return res.redirect('/?email_changed=taken');
-    }
-
-    await knex.transaction(async (trx) => {
+      const taken = await trx('users').where({ email: user.pending_email }).whereNot({ id: user.id }).first();
+      if (taken) return 'taken';
       await trx('users').where({ id: user.id }).update({
-        email: user.pending_email,
-        pending_email: null,
-        email_verified_at: trx.fn.now(),
+        email: user.pending_email, pending_email: null, email_verified_at: trx.fn.now(),
       });
-      await trx('email_verification_tokens').where({ id: tok.id }).update({ used_at: trx.fn.now() });
+      await trx('email_verification_tokens').where({ id: current.id }).update({ used_at: trx.fn.now() });
+      // Recovery links sent to the former email must not survive the change.
+      await trx('password_reset_tokens').where({ user_id: user.id }).del();
+      return '1';
     });
-
-    return res.redirect('/?email_changed=1');
+    return res.redirect(`/?email_changed=${outcome}`);
   } catch (err) {
     if (err.code === '23505') return res.redirect('/?email_changed=taken');
     return next(err);
