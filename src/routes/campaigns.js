@@ -726,6 +726,38 @@ router.delete('/:id', requireOwner, async (req, res, next) => {
   }
 });
 
+// Ownership-cap transaction helpers. Restore and transfer add to the same live
+// ownership set as create, so their count and write must also be serializable.
+// The callback must have no external side effects: it may run up to six times.
+async function withOwnershipCapTransaction(work) {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await knex.transaction(async (trx) => {
+        await trx.raw('SET TRANSACTION ISOLATION LEVEL SERIALIZABLE');
+        return work(trx);
+      });
+    } catch (err) {
+      if (err.code !== '40001') throw err;
+      if (attempt === 5) {
+        return { status: 409, error: 'Campaign ownership is busy. Please try again.',
+          code: 'campaign_ownership_busy', retryable: true };
+      }
+      const baseDelay = 10 * (2 ** attempt);
+      await new Promise(resolve => setTimeout(resolve,
+        baseDelay + Math.floor(Math.random() * baseDelay)));
+    }
+  }
+}
+
+function sendOwnershipResult(req, res, result) {
+  if (result.error) {
+    if (result.retryable) res.set('Retry-After', '1');
+    return res.status(result.status).json({ error: result.error,
+      ...(result.retryable ? { code: result.code, retryable: true } : {}) });
+  }
+  return gateway.sendJson(req, res, { campaign: publicCampaign(result.row, req.user.id) });
+}
+
 // POST /api/campaigns/:id/restore — owner restores within the window.
 // requireOwner is bypassed on purpose: it filters out deleted_at IS NOT NULL,
 // which is exactly the row this route needs. Ownership is checked inline.
@@ -734,36 +766,29 @@ router.post('/:id/restore', async (req, res, next) => {
     const { id } = req.params;
     if (!validCampaignId(id)) return res.status(404).json({ error: 'campaign not found' });
 
-    const campaign = await knex('campaigns').where({ id }).first();
-    if (!campaign || !campaign.deleted_at) {
-      return res.status(404).json({ error: 'no deleted campaign with that id' });
-    }
-    if (campaign.owner_id !== req.user.id) {
-      return res.status(404).json({ error: 'no deleted campaign with that id' });
-    }
+    const result = await withOwnershipCapTransaction(async (trx) => {
+      const campaign = await trx('campaigns').where({ id }).forUpdate().first();
+      if (!campaign || !campaign.deleted_at || campaign.owner_id !== req.user.id) {
+        return { status: 404, error: 'no deleted campaign with that id' };
+      }
+      const expiry = new Date(campaign.deleted_at).getTime() + SOFT_DELETE_DAYS * 86400000;
+      if (Date.now() > expiry) {
+        return { status: 410, error: 'the 30-day recovery window has passed' };
+      }
 
-    const expiry = new Date(campaign.deleted_at).getTime() + SOFT_DELETE_DAYS * 86400000;
-    if (Date.now() > expiry) {
-      return res.status(410).json({ error: 'the 30-day recovery window has passed' });
-    }
-
-    // Restoring must respect the cap, or delete/create/restore would be a way
-    // around it.
-    const owned = await knex('campaigns')
-      .where({ owner_id: req.user.id }).whereNull('deleted_at')
-      .count({ n: '*' }).first();
-    if (Number(owned.n) >= MAX_CAMPAIGNS_PER_USER) {
-      return res.status(409).json({
-        error: `you already own ${MAX_CAMPAIGNS_PER_USER} campaigns — delete one before restoring`,
-      });
-    }
-
-    const [row] = await knex('campaigns')
-      .where({ id })
-      .update({ deleted_at: null, updated_at: knex.fn.now() })
-      .returning([...SAFE_COLUMNS, 'password_hash']);
-
-    return gateway.sendJson(req, res, { campaign: publicCampaign(row, req.user.id) });
+      const owned = await trx('campaigns')
+        .where({ owner_id: req.user.id }).whereNull('deleted_at')
+        .count({ n: '*' }).first();
+      if (Number(owned.n) >= MAX_CAMPAIGNS_PER_USER) {
+        return { status: 409,
+          error: `you already own ${MAX_CAMPAIGNS_PER_USER} campaigns — delete one before restoring` };
+      }
+      const [row] = await trx('campaigns').where({ id })
+        .update({ deleted_at: null, updated_at: trx.fn.now() })
+        .returning([...SAFE_COLUMNS, 'password_hash']);
+      return { row };
+    });
+    return sendOwnershipResult(req, res, result);
   } catch (err) {
     return next(err);
   }
@@ -861,21 +886,31 @@ router.post('/:id/transfer', requireOwner, async (req, res, next) => {
       return res.status(409).json({ error: 'you already own this campaign' });
     }
 
-    const member = await knex('campaign_members')
-      .where({ campaign_id: req.campaign.id, user_id: targetId })
-      .first();
-    if (!member || member.status !== 'active') {
-      return res.status(409).json({ error: 'ownership can only be transferred to an active member' });
-    }
-
-    const [row] = await knex('campaigns')
-      .where({ id: req.campaign.id })
-      .update({ owner_id: targetId, updated_at: knex.fn.now() })
-      .returning([...SAFE_COLUMNS, 'password_hash']);
-
-    // The old owner keeps their (already existing) membership row and stays an
-    // active member — now an ordinary player.
-    return gateway.sendJson(req, res, { campaign: publicCampaign(row, req.user.id) });
+    const result = await withOwnershipCapTransaction(async (trx) => {
+      // Middleware checked an earlier snapshot. Recheck ownership on every
+      // attempt and hold the campaign row until the transfer commits.
+      const campaign = await trx('campaigns').where({ id: req.campaign.id }).forUpdate().first();
+      if (!campaign || campaign.deleted_at || campaign.owner_id !== req.user.id) {
+        return { status: 404, error: 'campaign not found' };
+      }
+      const member = await trx('campaign_members')
+        .where({ campaign_id: campaign.id, user_id: targetId }).forUpdate().first();
+      if (!member || member.status !== 'active') {
+        return { status: 409, error: 'ownership can only be transferred to an active member' };
+      }
+      const owned = await trx('campaigns')
+        .where({ owner_id: targetId }).whereNull('deleted_at')
+        .count({ n: '*' }).first();
+      if (Number(owned.n) >= MAX_CAMPAIGNS_PER_USER) {
+        return { status: 409, error: `the recipient already owns ${MAX_CAMPAIGNS_PER_USER} campaigns` };
+      }
+      const [row] = await trx('campaigns').where({ id: campaign.id })
+        .update({ owner_id: targetId, updated_at: trx.fn.now() })
+        .returning([...SAFE_COLUMNS, 'password_hash']);
+      return { row };
+    });
+    // Membership rows remain intact; GM status follows the committed owner_id.
+    return sendOwnershipResult(req, res, result);
   } catch (err) {
     return next(err);
   }

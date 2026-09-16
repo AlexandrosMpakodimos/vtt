@@ -132,6 +132,80 @@ async function makeUser(name) {
   // ============================================================
   // H2 — BOLA/IDOR: horizontal access to another user's campaign
   // ============================================================
+
+  // ownership-cap probes
+  info('ownership cap', 'transfer to an owner already at capacity');
+  const transferSetup = await gm.req('POST', '/api/campaigns', {
+    name: 'Transfer cap probe', is_public: true,
+  });
+  if (transferSetup.status !== 201) {
+    throw new Error('Transfer fixture failed: ' + JSON.stringify(transferSetup));
+  }
+  const transferId = transferSetup.data.campaign.id;
+  const transferJoin = await raceUser.req(
+    'POST', '/api/campaigns/' + transferId + '/join', {});
+  if (transferJoin.status !== 200) {
+    throw new Error('Transfer membership setup failed');
+  }
+  const beforeTransfer = Number((await knex('campaigns')
+    .where({ owner_id: raceUser.id }).whereNull('deleted_at')
+    .count({ n: '*' }).first()).n);
+  if (beforeTransfer !== 20) {
+    throw new Error('Transfer probe requires exactly 20 owned campaigns');
+  }
+  const transferResult = await gm.req(
+    'POST', '/api/campaigns/' + transferId + '/transfer',
+    { user_id: raceUser.id });
+  const transferRow = await knex('campaigns').where({ id: transferId }).first();
+  if (transferResult.status === 409 && transferRow.owner_id === gm.id) {
+    ok('transfer respects recipient ownership cap');
+  } else {
+    vuln('transfer bypasses ownership cap', JSON.stringify({
+      status: transferResult.status,
+      transferred: transferRow.owner_id === raceUser.id,
+    }));
+  }
+
+  info('ownership cap', 'three simultaneous restores with one available slot');
+  const restoreUser = await makeUser('rest');
+  const restoreIds = [];
+  for (let i = 0; i < 3; i++) {
+    const made = await restoreUser.req('POST', '/api/campaigns', {
+      name: 'Restore candidate ' + i, is_public: true,
+    });
+    if (made.status !== 201) throw new Error('Restore fixture creation failed');
+    const candidateId = made.data.campaign.id;
+    restoreIds.push(candidateId);
+    const removed = await restoreUser.req(
+      'DELETE', '/api/campaigns/' + candidateId);
+    if (removed.status !== 200) throw new Error('Restore fixture deletion failed');
+  }
+  for (let i = 0; i < 19; i++) {
+    const made = await restoreUser.req('POST', '/api/campaigns', {
+      name: 'Restore capacity ' + i, is_public: true,
+    });
+    if (made.status !== 201) throw new Error('Capacity fixture creation failed');
+  }
+  const restoreResults = await Promise.all(restoreIds.map(id =>
+    restoreUser.req('POST', '/api/campaigns/' + id + '/restore', {})));
+  const restoreStatuses = {};
+  for (const result of restoreResults) {
+    restoreStatuses[result.status] = (restoreStatuses[result.status] || 0) + 1;
+  }
+  const afterRestore = Number((await knex('campaigns')
+    .where({ owner_id: restoreUser.id }).whereNull('deleted_at')
+    .count({ n: '*' }).first()).n);
+  info('restore response counts', JSON.stringify(restoreStatuses));
+  if (afterRestore === 20 &&
+      restoreResults.filter(r => r.status === 200).length === 1 &&
+      restoreResults.every(r => [200, 409].includes(r.status))) {
+    ok('parallel restores respect ownership cap');
+  } else {
+    vuln('parallel restore cap or response failure', JSON.stringify({
+      owned: afterRestore, statuses: restoreStatuses,
+    }));
+  }
+
   const vCampRes = await victim.req('POST', '/api/campaigns', { name: 'Victim Private', is_public: false, password: 'sekret123' });
   const vCamp = vCampRes.data.campaign;
 
