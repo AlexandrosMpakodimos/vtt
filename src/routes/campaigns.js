@@ -632,74 +632,87 @@ router.post('/:id/unarchive', requireMemberAnyState, async (req, res, next) => {
 // PATCH /api/campaigns/:id — owner edits.
 router.patch('/:id', requireOwner, async (req, res, next) => {
   try {
-    const body = req.body || {};
-    const updates = {};
-
-    if (body.name !== undefined) {
-      const n = validateCampaignName(body.name);
-      if (n.error) return res.status(400).json({ error: n.error });
-      updates.name = n.value;
-    }
-
-    if (body.is_open !== undefined) {
-      // Open or close the table. GM-only by virtue of requireOwner on this
-      // route — the same guard that governs the map, the NPCs and the fog.
-      //
-      // Strict boolean, not truthiness: `is_open: "false"` is a string and
-      // therefore true, which would silently open a campaign somebody meant to
-      // close. The one direction that matters is the one that grants access.
-      const b = validateBool(body.is_open, 'is_open');
-      if (b.error) return res.status(400).json({ error: b.error });
-      updates.is_open = b.value;
-    }
-
-    if (body.description !== undefined) {
-      const d = validateCampaignDescription(body.description);
-      if (d.error) return res.status(400).json({ error: d.error });
-      updates.description = d.value;
-    }
-
-    if (body.img_url !== undefined) {
-      const img = validateImageUrl(body.img_url, 'img_url');
-      if (img.error) return res.status(400).json({ error: img.error });
-      updates.img_url = img.value;
-    }
-
-    // Visibility and password interact, so they are resolved together.
-    const nextIsPublic = body.is_public === undefined
-      ? req.campaign.is_public
-      : (body.is_public === true || body.is_public === 'true');
-
-    if (body.is_public !== undefined) updates.is_public = nextIsPublic;
-
-    if (nextIsPublic) {
-      // Going public drops the password: a public campaign has no secret to keep.
-      if (body.password) {
-        return res.status(400).json({ error: 'a public campaign cannot have a password' });
+    const result = await knex.transaction(async (trx) => {
+      const campaign = await trx('campaigns').where({ id: req.campaign.id }).forUpdate().first();
+      if (!campaign || campaign.deleted_at || campaign.owner_id !== req.user.id) {
+        return { status: 404, error: 'campaign not found' };
       }
-      if (!req.campaign.is_public) updates.password_hash = null;
-    } else {
-      if (body.password !== undefined) {
-        const p = validateCampaignPassword(body.password);
-        if (p.error) return res.status(400).json({ error: p.error });
-        updates.password_hash = await hashPassword(p.value);
-      } else if (req.campaign.is_public && body.is_public !== undefined) {
-        // Going private requires a password in the same request; otherwise the
-        // campaign would sit private with a NULL hash and be unjoinable.
-        return res.status(400).json({ error: 'a password is required to make a campaign private' });
+      const body = req.body || {};
+      const updates = {};
+
+      if (body.name !== undefined) {
+        const n = validateCampaignName(body.name);
+        if (n.error) return { status: 400, error: n.error };
+        updates.name = n.value;
       }
+
+      if (body.is_open !== undefined) {
+        // Open or close the table. GM-only by virtue of requireOwner on this
+        // route — the same guard that governs the map, the NPCs and the fog.
+        //
+        // Strict boolean, not truthiness: `is_open: "false"` is a string and
+        // therefore true, which would silently open a campaign somebody meant to
+        // close. The one direction that matters is the one that grants access.
+        const b = validateBool(body.is_open, 'is_open');
+        if (b.error) return { status: 400, error: b.error };
+        updates.is_open = b.value;
+      }
+
+      if (body.description !== undefined) {
+        const d = validateCampaignDescription(body.description);
+        if (d.error) return { status: 400, error: d.error };
+        updates.description = d.value;
+      }
+
+      if (body.img_url !== undefined) {
+        const img = validateImageUrl(body.img_url, 'img_url');
+        if (img.error) return { status: 400, error: img.error };
+        updates.img_url = img.value;
+      }
+
+      // Visibility and password interact, so they are resolved together.
+      const nextIsPublic = body.is_public === undefined
+        ? campaign.is_public
+        : (body.is_public === true || body.is_public === 'true');
+
+      if (body.is_public !== undefined) updates.is_public = nextIsPublic;
+
+      if (nextIsPublic) {
+        // Going public drops the password: a public campaign has no secret to keep.
+        if (body.password) {
+          return { status: 400, error: 'a public campaign cannot have a password' };
+        }
+        if (!campaign.is_public) updates.password_hash = null;
+      } else {
+        if (body.password !== undefined) {
+          const p = validateCampaignPassword(body.password);
+          if (p.error) return { status: 400, error: p.error };
+          updates.password_hash = await hashPassword(p.value);
+        } else if (campaign.is_public && body.is_public !== undefined) {
+          // Going private requires a password in the same request; otherwise the
+          // campaign would sit private with a NULL hash and be unjoinable.
+          return { status: 400, error: 'a password is required to make a campaign private' };
+        }
+      }
+
+      if (Object.keys(updates).length === 0) {
+        return { status: 400, error: 'nothing to update' };
+      }
+
+      updates.updated_at = trx.fn.now();
+
+      const [row] = await trx('campaigns')
+        .where({ id: campaign.id })
+        .update(updates)
+        .returning([...SAFE_COLUMNS, 'password_hash']);
+
+      return { row, updates };
+    });
+    if (result.status) return res.status(result.status).json({ error: result.error });
+    const { row, updates } = result;
+    if (updates.is_open === false) {
+      req.app.get('campaignSockets')?.evictGamePlayers(row.id, row.owner_id);
     }
-
-    if (Object.keys(updates).length === 0) {
-      return res.status(400).json({ error: 'nothing to update' });
-    }
-
-    updates.updated_at = knex.fn.now();
-
-    const [row] = await knex('campaigns')
-      .where({ id: req.campaign.id })
-      .update(updates)
-      .returning([...SAFE_COLUMNS, 'password_hash']);
 
     // Tell the lobby when the table's open/closed state changed, so every
     // dashboard watching this campaign flips its pill and Enter affordance
@@ -721,9 +734,11 @@ router.patch('/:id', requireOwner, async (req, res, next) => {
 // DELETE /api/campaigns/:id — owner soft-deletes (recoverable for 30 days).
 router.delete('/:id', requireOwner, async (req, res, next) => {
   try {
-    await knex('campaigns')
-      .where({ id: req.campaign.id })
+    const changed = await knex('campaigns')
+      .where({ id: req.campaign.id, owner_id: req.user.id }).whereNull('deleted_at')
       .update({ deleted_at: knex.fn.now(), updated_at: knex.fn.now() });
+
+    if (!changed) return res.status(404).json({ error: 'campaign not found' });
 
     // A later restore must not revive stale game/lobby subscriptions.
     req.app.get('campaignSockets')?.evictCampaign(req.campaign.id);
@@ -881,17 +896,26 @@ router.post('/:id/members/:userId/unban', requireOwner, async (req, res, next) =
     const targetId = req.params.userId;
     if (!validCampaignId(targetId)) return res.status(404).json({ error: 'member not found' });
 
-    const member = await knex('campaign_members')
-      .where({ campaign_id: req.campaign.id, user_id: targetId })
-      .first();
-    if (!member) return res.status(404).json({ error: 'member not found' });
-    if (member.status !== 'banned') {
-      return res.status(409).json({ error: 'that member is not banned' });
-    }
+    const result = await knex.transaction(async (trx) => {
+      const campaign = await trx('campaigns').where({ id: req.campaign.id }).forUpdate().first();
+      if (!campaign || campaign.deleted_at || campaign.owner_id !== req.user.id) {
+        return { status: 404, error: 'campaign not found' };
+      }
+      const member = await trx('campaign_members')
+        .where({ campaign_id: req.campaign.id, user_id: targetId })
+        .first();
+      if (!member) return { status: 404, error: 'member not found' };
+      if (member.status !== 'banned') {
+        return { status: 409, error: 'that member is not banned' };
+      }
 
-    await knex('campaign_members')
-      .where({ campaign_id: req.campaign.id, user_id: targetId })
-      .update({ status: 'left' });
+      await trx('campaign_members')
+        .where({ campaign_id: req.campaign.id, user_id: targetId })
+        .update({ status: 'left' });
+
+      return {};
+    });
+    if (result.status) return res.status(result.status).json({ error: result.error });
 
     return res.json({ ok: true, user_id: targetId, status: 'left' });
   } catch (err) {
@@ -932,6 +956,9 @@ router.post('/:id/transfer', requireOwner, async (req, res, next) => {
         .returning([...SAFE_COLUMNS, 'password_hash']);
       return { row };
     });
+    if (result.row && result.row.is_open === false) {
+      req.app.get('campaignSockets')?.evictGamePlayers(result.row.id, result.row.owner_id);
+    }
     // Membership rows remain intact; GM status follows the committed owner_id.
     return sendOwnershipResult(req, res, result);
   } catch (err) {

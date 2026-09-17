@@ -36,6 +36,7 @@ const fs = require('fs');
 
 // No server, no database. Fast enough to run on every edit.
 const UNIT = [
+  'test-final-owner-boundaries.js', 'test-final-room-admission.js',
   'test-campaign-permission-races.js',
   'test-login-session-races.js',
   'test-email-recovery-transactions.js',
@@ -51,6 +52,7 @@ const UNIT = [
 
 // Functional. Real Postgres, server on npm run dev:test.
 const DB = [
+  'test-final-closed-broadcasts.js',
   'test-campaign-permission-races-db.js',
   'test-login-session-races-db.js',
   'test-campaign-access-transitions.js',
