@@ -1,9 +1,12 @@
 // Test runner.
 //
-//   npm test            the 11 suites needing NO server and NO database
-//   npm run test:db     the 12 functional suites (server + Postgres required)
-//   npm run test:sec    the 8 adversarial suites (server + Postgres required)
-//   npm run test:all    everything, as one observed pass
+//   npm test            registered unit suites (no external server or database)
+//   npm run test:db     registered database/integration suites (isolated wrapper)
+//   npm run test:sec    registered adversarial suites (isolated wrapper)
+//   npm run test:all    all registered groups, sequentially
+//
+// The arrays below are the authoritative suite lists and order. See
+// docs/testing.md for the recorded baseline, setup, and isolation requirements.
 //
 // ---------------------------------------------------------------------------
 // WHY A RUNNER RATHER THAN A SHELL ONE-LINER
@@ -27,14 +30,14 @@
 // They are therefore run STRICTLY SEQUENTIALLY, and this comment exists so that
 // nobody "speeds up" the runner by parallelising it.
 //
-// The suites themselves are unchanged and still run directly:
-//     SKIP_HIBP=1 node break-m6.js
-// which is what you want while iterating on one of them.
+// For an individual database/server-backed suite, use the isolated wrapper:
+//     node scripts/test-local.js break-m6.js
+// Unit suites can also run directly with Node from the repository root.
 
 const { spawnSync } = require('child_process');
 const fs = require('fs');
 
-// No server, no database. Fast enough to run on every edit.
+// No external server or database. Some suites start their own loopback server.
 const UNIT = [
   'test-final-owner-boundaries.js', 'test-final-room-admission.js',
   'test-campaign-permission-races.js',
@@ -66,7 +69,8 @@ const DB = [
   'test-campaign-open.js', 'test-lobby.js',
   // Storage budget ledger + durable cleanup. DB-backed (real Postgres) but NOT
   // server-backed: they exercise the serialisable accounting directly, which is
-  // where the money-safety property lives. Run with `SKIP_HIBP=1 node <suite>`.
+  // where the money-safety property lives. Use the isolated wrapper for these
+  // suites too; the DB group also contains tests that require the test server.
   'test-upload-controlled.js', 'test-storage-budget.js', 'test-budget-lifecycle.js', 'test-storage-cleanup.js',
   'test-storage-reconcile.js', 'test-media-gateway.js', 'test-media-rewrite.js',
 ];
@@ -131,20 +135,13 @@ function runOne(file) {
 }
 
 // Preflight for the groups that need a server. Failing here with an explanation
-// beats twelve identical connection-refused stack traces.
+// beats repeated connection-refused stack traces.
 async function serverIsUp() {
   try {
-    // [FIXED 2026-08-07] Probe a route that touches POSTGRES, not just the
-    // process. This checked /api/auth/me, which answers 401 from the session
-    // alone and cannot distinguish a live database from a dead one — so on
-    // 2026-08-07, with Postgres down after a reboot, the preflight passed and
-    // twenty suites ran straight into it. Exactly the outcome the preflight
-    // exists to prevent, and the runner's own crash reporting is the only
-    // reason it was legible.
-    //
-    // Campaign search queries the database on every call. Unauthenticated it
-    // answers 401, which is still "reachable"; a dead database produces a 500,
-    // which is not.
+    // Reachability only: an unauthenticated request can return 401 before the
+    // campaign query, so this does not establish database health or isolation.
+    // scripts/test-local.js first checks /__test/identity, which queries Postgres
+    // and verifies the dedicated database/role, memory storage, and upload mode.
     const res = await fetch(`${BASE}/api/campaigns/search?q=preflight`);
     return res.status < 500;
   } catch {
@@ -174,7 +171,7 @@ function pad(s, n) { return String(s).padEnd(n); }
     console.error('  terminal 1:  npm run dev:test');
     console.error('  terminal 2:  npm run test:' + (group === 'all' ? 'all' : group) + '\n');
     console.error('If Postgres is also down after a reboot:  brew services start postgresql@17\n');
-    // Exit non-zero rather than running twelve suites that will all fail the
+    // Exit non-zero rather than running suites that will all fail the
     // same way: a preflight that cannot pass is a failure, not a skip.
     process.exit(1);
   }

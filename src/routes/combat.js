@@ -3,10 +3,9 @@
 // they do to the campaign, scene, actor and item routes.
 //
 // A combat is a per-scene OVERLAY on the tokens already standing on that scene:
-// an ordered roster with per-instance hit points. It is not a turn engine. Turn
-// sequencing (combat.round, combat.turn_index, combatants.initiative) was cut
-// from scope by explicit decision — the order is a visual aid the GM arranges by
-// hand, and nothing on the server advances it.
+// an ordered roster with per-instance hit points. The GM can update round and
+// turn_index through PATCH; the server validates their bounds. Roster order is
+// maintained separately. This does not automatically resolve game rules.
 //
 // ---------------------------------------------------------------------------
 // THE DOORS PROBLEM — why this file is mostly filtering
