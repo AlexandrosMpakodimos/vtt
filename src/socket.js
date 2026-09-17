@@ -59,6 +59,24 @@ function initSockets(io) {
     if (set.size === 0) socketsByUser.delete(userId);
   }
 
+  // Per-socket generations invalidate authorization reads already in flight.
+  // They need no persistent map and are discarded with the socket.
+  const generation = socket => socket.data.admissionGeneration || 0;
+  const invalidateAdmission = socket => { socket.data.admissionGeneration = generation(socket) + 1; };
+  const admissionCurrent = (socket, version) => socket.connected && generation(socket) === version;
+
+  // Closing preserves dashboard subscriptions but removes non-owner game access.
+  function evictGamePlayers(campaignId, ownerId) {
+    for (const socket of io.sockets.sockets.values()) {
+      if (socket.data.userId === ownerId) continue;
+      invalidateAdmission(socket);
+      if (!socket.rooms.has(roomName(campaignId))) continue;
+      socket.leave(roomName(campaignId));
+      socket.emit('campaign:evicted', { campaign_id: campaignId, reason: 'closed' });
+    }
+    pushPresence(campaignId);
+  }
+
   // Called by the kick/ban routes. The DB write alone is not enough: a socket
   // already sitting in the room would keep receiving broadcasts.
   function evictUser(campaignId, userId, reason = 'removed') {
@@ -68,6 +86,7 @@ function initSockets(io) {
     for (const sid of ids) {
       const socket = io.sockets.sockets.get(sid);
       if (!socket) continue;
+      invalidateAdmission(socket);
       // Remove the target from the LOBBY room too, and tell them there: a
       // dashboard viewer who was kicked should see the card vanish even though
       // they never joined the game room. The returned count still reflects only
@@ -89,6 +108,8 @@ function initSockets(io) {
   // Remove game and dashboard subscriptions when the campaign is deleted.
   // Snapshot the union: leave() mutates the adapter's room sets.
   function evictCampaign(campaignId) {
+    // Pending subscribers may not yet appear in either room.
+    for (const socket of io.sockets.sockets.values()) invalidateAdmission(socket);
     const game = roomName(campaignId), lobby = lobbyName(campaignId);
     const ids = new Set([
       ...(io.sockets.adapter.rooms.get(game) || []),
@@ -297,13 +318,19 @@ function initSockets(io) {
     socket.on('campaign:join', async (payload, ack) => {
       const respond = (result) => { if (typeof ack === 'function') ack(result); };
       try {
+        const version = generation(socket);
         const campaignId = payload && payload.campaign_id;
         if (!(await isActiveMember(campaignId, user.id))) {
           socket.emit('campaign:join:error', { error: 'not a member of that campaign' });
           return respond({ ok: false, error: 'not a member of that campaign' });
         }
 
-        socket.join(roomName(campaignId));
+        if (!admissionCurrent(socket, version)) return respond({ ok: false, error: 'membership changed; retry' });
+        await socket.join(roomName(campaignId));
+        if (!admissionCurrent(socket, version)) {
+          socket.leave(roomName(campaignId));
+          return respond({ ok: false, error: 'membership changed; retry' });
+        }
         socket.to(roomName(campaignId)).emit('campaign:user-joined', {
           campaign_id: campaignId, user_id: user.id, username: user.username,
         });
@@ -323,6 +350,7 @@ function initSockets(io) {
     });
 
     socket.on('campaign:leave', (payload, ack) => {
+      invalidateAdmission(socket);
       const campaignId = payload && payload.campaign_id;
       if (campaignId) {
         socket.leave(roomName(campaignId));
@@ -343,6 +371,7 @@ function initSockets(io) {
     socket.on('lobby:subscribe', async (payload, ack) => {
       const respond = (result) => { if (typeof ack === 'function') ack(result); };
       try {
+        const version = generation(socket);
         // Leave every lobby room this socket currently sits in.
         for (const r of Array.from(socket.rooms)) {
           if (typeof r === 'string' && r.indexOf('lobby:') === 0) socket.leave(r);
@@ -354,9 +383,15 @@ function initSockets(io) {
           .andWhere('m.status', 'active')
           .whereNull('c.deleted_at')
           .select('c.id');
+        if (!admissionCurrent(socket, version)) return respond({ ok: false, error: 'membership changed; retry' });
         const campaigns = [];
         for (const row of rows) {
-          socket.join(lobbyName(row.id));
+          await socket.join(lobbyName(row.id));
+          if (!admissionCurrent(socket, version)) {
+            socket.leave(lobbyName(row.id));
+            for (const joined of campaigns) socket.leave(lobbyName(joined.campaign_id));
+            return respond({ ok: false, error: 'membership changed; retry' });
+          }
           campaigns.push({ campaign_id: row.id, online: onlineCount(row.id) });
         }
         return respond({ ok: true, campaigns });
@@ -757,7 +792,7 @@ function initSockets(io) {
 
   return {
     disconnectSessions: socketSessions.disconnectSessions,
-    evictUser, evictCampaign, roomName, socketsByUser,
+    evictUser, evictCampaign, evictGamePlayers, roomName, socketsByUser,
     broadcastToken, broadcastToOwner, broadcastToPlayers,
     broadcastScene, broadcastScenePlayers,
     // §7 lobby: the dashboard's presence/state channel. broadcastLobby is called
