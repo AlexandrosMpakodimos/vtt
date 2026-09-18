@@ -19,8 +19,9 @@ production-readiness certification.
 its final automated-verification section supersedes earlier pending results.
 The browser result and merge status above come from the handoff.
 
-The first organization PR adds documentation and corrects stale comments.
-Campaign-operation and socket-lifecycle extraction are planned, not implemented.
+The documentation PR is merged. Campaign mutations now use importable operations
+and HTTP handlers, with the affected controlled tests importing production code.
+Socket-lifecycle extraction remains planned; authentication is unchanged.
 See [the bounded plan](docs/architecture.md#bounded-refactoring-plan).
 
 ## Local development

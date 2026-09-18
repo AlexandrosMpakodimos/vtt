@@ -1,17 +1,13 @@
 // Controlled failures exercise the actual join handler; HTTP races live in break-campaigns.js.
-const fs = require('node:fs');
-const vm = require('node:vm');
+const { createCampaignOperations } = require('./src/services/campaigns/operations');
+const { createCampaignMutationHandlers } = require('./src/routes/campaignMutations');
 const assert = require('node:assert/strict');
-const source = fs.readFileSync(require.resolve('./src/routes/campaigns'), 'utf8');
-const start = source.indexOf("router.post('/:id/join'");
-const end = source.indexOf('// PATCH /api/campaigns/:id/me', start);
-assert(start >= 0 && end > start);
 let passed = 0;
 function check(value, message) { assert(value, message); passed++; }
 const unique = constraint => Object.assign(new Error('duplicate'), { code: '23505', constraint });
 const serial = () => Object.assign(new Error('serialization'), { code: '40001' });
 async function run(options = {}) {
-  let handler, attempts = 0, writes = [], waits = [], forwarded;
+  let attempts = 0, writes = [], waits = [], forwarded;
   const campaign = { id: 'camp', owner_id: 'owner', is_public: true };
   const existing = options.existing;
   function builder(table, transactional) {
@@ -39,13 +35,13 @@ async function run(options = {}) {
   };
   const res = { statusCode: 200, headers: {}, status(n) { this.statusCode = n; return this; },
     set(k, v) { this.headers[k] = v; return this; }, json(body) { this.body = body; return this; } };
-  vm.runInNewContext(source.slice(start, end), {
-    router: { post(path, fn) { handler = fn; } }, knex,
-    validCampaignId: () => true, validateColor: value => ({ value }),
-    verifyPassword: async () => true, publicCampaign: c => c,
-    gateway: { sendJson(req, response, body) { return response.json(body); } },
-    MAX_PLAYERS_PER_CAMPAIGN: 8, Math: { random: () => 0.5, floor: Math.floor },
-    setTimeout(fn, ms) { waits.push(ms); fn(); },
+  const operations = createCampaignOperations({
+    knex, validCampaignId: () => true, verifyPassword: async () => true,
+    MAX_PLAYERS_PER_CAMPAIGN: 8,
+    random: () => 0.5, sleep: async ms => { waits.push(ms); },
+  });
+  const { join: handler } = createCampaignMutationHandlers({
+    operations, gateway: { sendJson(req, response, body) { return response.json(body); } },
   });
   await handler({ params: { id: 'camp' }, user: { id: 'user' }, body: { color: options.color } }, res, e => { forwarded = e; });
   return { res, attempts, writes, waits, forwarded };

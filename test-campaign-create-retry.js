@@ -1,16 +1,12 @@
 // Real route handler, deterministic transaction failures. No database/server.
-const fs = require('node:fs');
-const vm = require('node:vm');
+const { createCampaignOperations } = require('./src/services/campaigns/operations');
+const { createCampaignMutationHandlers } = require('./src/routes/campaignMutations');
 const assert = require('node:assert/strict');
-const source = fs.readFileSync('src/routes/campaigns.js', 'utf8');
-const start = source.indexOf("router.post('/', async");
-const end = source.indexOf('// GET /api/campaigns/mine', start);
-assert(start >= 0 && end > start, 'campaign create handler must be found');
 let passed = 0;
 function check(value, label) { assert(value, label); passed++; }
 
 async function run({ failures = 0, phase = 'commit', code = '40001', full = false, fullOnRetry = false } = {}) {
-  let handler, attempts = 0, campaigns = 0, memberships = 0, forwarded = null;
+  let attempts = 0, campaigns = 0, memberships = 0, forwarded = null;
   const waits = [], headers = {}, isolation = [];
   const failure = Object.assign(new Error('simulated database failure'), { code });
   const response = {
@@ -49,14 +45,13 @@ async function run({ failures = 0, phase = 'commit', code = '40001', full = fals
       return result;
     },
   };
-  const valid = value => ({ value });
-  vm.runInNewContext(source.slice(start, end), {
-    router: { post(path, fn) { handler = fn; } }, knex,
-    validateCampaignName: valid, validateCampaignDescription: valid, validateImageUrl: valid,
-    MAX_CAMPAIGNS_PER_USER: 20, SAFE_COLUMNS: ['id'], publicCampaign: row => row,
+  const operations = createCampaignOperations({
+    knex, MAX_CAMPAIGNS_PER_USER: 20,
+    random: () => 0.5, sleep: async ms => { waits.push(ms); },
+  });
+  const { create: handler } = createCampaignMutationHandlers({
+    operations,
     gateway: { sendJson(req, res, body, status) { return res.status(status).json(body); } },
-    Math: Object.assign(Object.create(Math), { random: () => 0.5 }),
-    setTimeout(fn, ms) { waits.push(ms); fn(); },
   });
   await handler({ user: { id: 'owner' }, body: { name: 'Race', is_public: true } }, response,
     error => { forwarded = error; });

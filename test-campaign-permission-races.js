@@ -1,8 +1,9 @@
 // Controlled scheduling test: actual middleware and leave/moderation handlers,
 // simulated database. Ownership changes between authorization and handler entry.
 // No app server, PostgreSQL, or user data is touched.
-const fs = require('node:fs');
-const vm = require('node:vm');
+const { createCampaignOperations } = require('./src/services/campaigns/operations');
+const { createCampaignMutationHandlers } = require('./src/routes/campaignMutations');
+const { createCampaignAuth } = require('./src/middleware/campaignAuthFactory');
 const assert = require('node:assert/strict');
 const CID = '10000000-0000-4000-8000-000000000001';
 const OLD = '20000000-0000-4000-8000-000000000001';
@@ -29,22 +30,11 @@ async function scenario(action, transfer, target) {
     return q;
   }
   knex.transaction = async work => work(knex);
-  const module = {exports: {}};
-  vm.runInNewContext(fs.readFileSync(__dirname + '/src/middleware/campaignAuth.js', 'utf8'), {
-    module, require(name) { assert.equal(name, '../db'); return knex; },
-  }, {filename: 'campaignAuth.js'});
-  const guards = module.exports;
-  const routes = new Map();
-  const router = {post(path, ...handlers) {routes.set(path, handlers.at(-1));}};
-  const source = fs.readFileSync(__dirname + '/src/routes/campaigns.js', 'utf8');
-  const leaveStart = source.indexOf("router.post('/:id/leave',");
-  const leaveEnd = source.indexOf('\n});', leaveStart) + 4;
-  const modStart = source.indexOf('function moderationRoute(');
-  const modEnd = source.indexOf('// POST /api/campaigns/:id/members/:userId/kick', modStart);
-  assert(leaveStart >= 0 && leaveEnd > leaveStart && modStart >= 0 && modEnd > modStart, 'source boundaries');
-  const context = {router, knex, ...guards};
-  vm.createContext(context);
-  vm.runInContext(source.slice(leaveStart, leaveEnd) + '\n' + source.slice(modStart, modEnd), context);
+  const guards = createCampaignAuth(knex);
+  const operations = createCampaignOperations({ knex, validCampaignId: guards.validCampaignId });
+  const handlers = createCampaignMutationHandlers({
+    operations, gateway: { sendJson: (req, res, body) => res.json(body) },
+  });
   const req = {params: {id: CID, userId: target}, user: {id: action === 'leave' ? NEW : OLD},
     app: {get(name) {assert.equal(name, 'campaignSockets'); return {evictUser(...args) {evictions.push(args);}};}}};
   const res = {code: 200, status(code) {this.code = code; return this;}, json(body) {this.body = body; return this;}};
@@ -54,7 +44,7 @@ async function scenario(action, transfer, target) {
   // Simulate a successful transfer committing during the await between the
   // middleware query and route execution. req.campaign remains the old snapshot.
   if (transfer) campaign.owner_id = NEW;
-  const handler = action === 'leave' ? routes.get('/:id/leave') : context.moderationRoute(action === 'kick' ? 'left' : 'banned');
+  const handler = action === 'leave' ? handlers.leave : handlers.moderationRoute(action === 'kick' ? 'left' : 'banned');
   await handler(req, res, err => {throw err;});
   const member = members.find(row => row.user_id === target);
   console.log(`  NOTE  HTTP=${res.code}, target membership=${member.status}, evictions=${evictions.length}`);

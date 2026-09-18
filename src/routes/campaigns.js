@@ -7,10 +7,11 @@ const { contentWriteLimiter } = require('../middleware/rateLimit');
 const {
   requireMember, requireMemberAnyState, requireOwner, validCampaignId,
 } = require('../middleware/campaignAuth');
-const {
-  validateCampaignName, validateCampaignDescription,
-  validateImageUrl, validateCampaignPassword, validateColor, validateBool,
-} = require('../services/validators');
+const { validateColor } = require('../services/validators');
+const { publicCampaign, publicMember, searchResult } = require('../services/campaigns/presentation');
+const { createCampaignOperations } = require('../services/campaigns/operations');
+const { createCampaignMutationHandlers } = require('./campaignMutations');
+const { SOFT_DELETE_DAYS } = require('../services/campaigns/constants');
 
 const { router: sceneRoutes } = require('./scenes');
 const { router: actorRoutes } = require('./actors');
@@ -51,76 +52,12 @@ router.use('/:id/spells', spellRoutes);
 const MAX_CAMPAIGNS_PER_USER = Number(process.env.MAX_CAMPAIGNS_PER_USER) || 20;
 const MAX_PLAYERS_PER_CAMPAIGN = Number(process.env.MAX_PLAYERS_PER_CAMPAIGN) || 8; // includes the GM
 
-// Soft-deleted campaigns are recoverable for this long, then hard-swept.
-const SOFT_DELETE_DAYS = 30;
-
-// Explicit allow-list. password_hash is absent by construction, so no response
-// can leak it — the same discipline as SAFE_COLUMNS in routes/auth.js.
-const SAFE_COLUMNS = [
-  'id', 'owner_id', 'name', 'description', 'img_url',
-  'is_public', 'is_open', 'active_scene_id', 'settings', 'created_at', 'updated_at',
-];
-
-// Shapes a campaign for the client. has_password is exposed as a BOOLEAN (never
-// the hash) so the UI knows whether to prompt; is_gm is derived per-viewer.
-function publicCampaign(c, viewerId) {
-  if (!c) return null;
-  return {
-    id: c.id,
-    owner_id: c.owner_id,
-    name: c.name,
-    description: c.description,
-    img_url: c.img_url,
-    is_public: c.is_public,
-    // Whether the game is open. Sent to EVERY member, not just the GM: a player
-    // needs to know why the table is unreachable, and a dashboard that shows a
-    // campaign but cannot say it is closed is worse than one that hides it.
-    is_open: c.is_open !== false,
-    has_password: !!c.password_hash,
-    is_gm: viewerId != null && c.owner_id === viewerId,
-    // The GM's display name, present only when the query joined users in (the
-    // list and search do; detail does not). Lets a card show whose game it is.
-    ...(c.owner_username !== undefined ? { owner_username: c.owner_username } : {}),
-    active_scene_id: c.active_scene_id,
-    settings: c.settings,
-    created_at: c.created_at,
-    updated_at: c.updated_at,
-    // archived is the VIEWER's own dashboard state (from their campaign_members
-    // row), not a property of the campaign — two viewers can disagree on it.
-    // Only present when this campaign was loaded with a membership row joined in.
-    ...(c.archived_at !== undefined ? { archived: c.archived_at !== null } : {}),
-    ...(c.deleted_at !== undefined && c.deleted_at !== null ? { deleted_at: c.deleted_at } : {}),
-  };
-}
-
-function publicMember(m) {
-  return {
-    user_id: m.user_id,
-    username: m.username,
-    avatar_url: m.avatar_url,
-    status: m.status,
-    color: m.color,
-    joined_at: m.joined_at,
-    is_gm: m.is_gm === true,
-  };
-}
-
-// Search results are seen by non-members, so they get a narrower shape: enough
-// to decide whether to join, nothing about who is inside.
-function searchResult(c) {
-  return {
-    id: c.id,
-    name: c.name,
-    description: c.description,
-    img_url: c.img_url,
-    is_public: c.is_public,
-    is_open: c.is_open !== false,
-    has_password: !!c.password_hash,
-    owner_username: c.owner_username,
-    member_count: Number(c.member_count) || 0,
-    created_at: c.created_at,
-  };
-}
+// Keep production dependencies explicit; tests import these same factories.
+const operations = createCampaignOperations({
+  knex, hashPassword, verifyPassword, validCampaignId,
+  MAX_CAMPAIGNS_PER_USER, MAX_PLAYERS_PER_CAMPAIGN,
+});
+const mutations = createCampaignMutationHandlers({ operations, gateway });
 
 const countActiveMembers = (campaignId) =>
   knex('campaign_members')
@@ -130,112 +67,7 @@ const countActiveMembers = (campaignId) =>
     .then((r) => Number(r.n));
 
 // POST /api/campaigns — create. Private campaigns require a password.
-router.post('/', async (req, res, next) => {
-  try {
-    const body = req.body || {};
-
-    const n = validateCampaignName(body.name);
-    if (n.error) return res.status(400).json({ error: n.error });
-
-    const d = validateCampaignDescription(body.description);
-    if (d.error) return res.status(400).json({ error: d.error });
-
-    const img = validateImageUrl(body.img_url, 'img_url');
-    if (img.error) return res.status(400).json({ error: img.error });
-
-    const isPublic = body.is_public === true || body.is_public === 'true';
-
-    // public = listed, no password. private = listed, password required.
-    let password_hash = null;
-    if (!isPublic) {
-      const p = validateCampaignPassword(body.password);
-      if (p.error) return res.status(400).json({ error: p.error });
-      password_hash = await hashPassword(p.value);
-    } else if (body.password) {
-      return res.status(400).json({ error: 'a public campaign cannot have a password' });
-    }
-
-    // Cap enforcement must be ATOMIC, not read-then-write: a plain
-    // "count >= MAX ? reject : insert" is a TOCTOU race (OWASP A08:2025) —
-    // N parallel creates all read the same count before any insert commits and
-    // all overrun the cap. The fix is to do the count and the insert inside one
-    // SERIALIZABLE transaction, so concurrent creators are serialised by the DB
-    // and a loser is aborted (40001) rather than allowed through. We retry the
-    // aborted transaction a bounded number of times.
-    //
-    // Columns are hand-listed, never spread from the body: this is what makes
-    // the write structurally immune to mass assignment.
-    let campaign;
-    let attempt = 0;
-    // eslint-disable-next-line no-constant-condition
-    while (true) {
-      try {
-        campaign = await knex.transaction(async (trx) => {
-          await trx.raw('SET TRANSACTION ISOLATION LEVEL SERIALIZABLE');
-
-          const owned = await trx('campaigns')
-            .where({ owner_id: req.user.id }).whereNull('deleted_at')
-            .count({ n: '*' }).first();
-          if (Number(owned.n) >= MAX_CAMPAIGNS_PER_USER) {
-            const e = new Error('cap'); e.capExceeded = true; throw e;
-          }
-
-          const [row] = await trx('campaigns')
-            .insert({
-              owner_id: req.user.id,
-              name: n.value,
-              description: d.value,
-              img_url: img.value,
-              is_public: isPublic,
-              password_hash,
-            })
-            .returning([...SAFE_COLUMNS, 'password_hash']);
-
-          // The owner gets a membership row at creation. Access is still derived
-          // from owner_id (see campaignAuth), but the row keeps the member list
-          // complete and survives an ownership transfer.
-          await trx('campaign_members').insert({
-            campaign_id: row.id,
-            user_id: req.user.id,
-            status: 'active',
-          });
-
-          return row;
-        });
-        break;
-      } catch (err) {
-        if (err.capExceeded) {
-          return res.status(409).json({
-            error: `you can own at most ${MAX_CAMPAIGNS_PER_USER} campaigns — delete one first`,
-          });
-        }
-        // Retry the whole aborted transaction. Jitter separates competing
-        // requests; the six-attempt bound prevents unbounded work under load.
-        if (err.code === '40001') {
-          if (attempt < 5) {
-            const baseDelay = 10 * (2 ** attempt);
-            const delay = baseDelay + Math.floor(Math.random() * baseDelay);
-            attempt += 1;
-            await new Promise(resolve => setTimeout(resolve, delay));
-            continue;
-          }
-          // The last transaction rolled back. This is temporary contention,
-          // not evidence that the user's campaign quota has been reached.
-          return res.status(409).set('Retry-After', '1').json({
-            error: 'Campaign creation is busy. Please try again.',
-            code: 'campaign_create_busy',
-            retryable: true,
-          });
-        }
-        throw err;
-      }
-    }
-
-    return gateway.sendJson(req, res, { campaign: publicCampaign(campaign, req.user.id) }, 201);
-  } catch (err) {
-    return next(err);
-  }
-});
+router.post('/', mutations.create);
 
 // GET /api/campaigns/mine?role=all|owner|player&filter=active|archived|all
 // The dashboard: campaigns I'm an active member of (owned or joined).
@@ -373,123 +205,7 @@ router.get('/:id', requireMemberAnyState, async (req, res, next) => {
 //      reconnect free (disconnect != leave).
 //   3. A 'left' member and a brand-new user take the SAME path: a returning
 //      member is not privileged over a newcomer.
-router.post('/:id/join', async (req, res, next) => {
-  try {
-    const { id } = req.params;
-    if (!validCampaignId(id)) return res.status(404).json({ error: 'campaign not found' });
-
-    const campaign = await knex('campaigns').where({ id }).whereNull('deleted_at').first();
-    if (!campaign) return res.status(404).json({ error: 'campaign not found' });
-
-    const existing = await knex('campaign_members')
-      .where({ campaign_id: id, user_id: req.user.id })
-      .first();
-
-    // 1. Banned — before any password work.
-    if (existing && existing.status === 'banned') {
-      return res.status(403).json({ error: 'you are banned from this campaign' });
-    }
-
-    // 2. Already active (includes the owner) — no password, no write.
-    if (campaign.owner_id === req.user.id || (existing && existing.status === 'active')) {
-      return gateway.sendJson(req, res, { campaign: publicCampaign(campaign, req.user.id), status: 'active' });
-    }
-
-    // 3. 'left' or brand new — private campaigns verify the password here.
-    if (!campaign.is_public) {
-      const supplied = req.body && req.body.password;
-      // Bound before hashing: mirrors the pre-hash guard in config/passport.js
-      // so an oversized body can't force expensive Argon2id work.
-      if (typeof supplied !== 'string' || supplied.length === 0 || supplied.length > 128) {
-        return res.status(401).json({ error: 'incorrect campaign password' });
-      }
-      const ok = campaign.password_hash && (await verifyPassword(campaign.password_hash, supplied));
-      if (!ok) return res.status(401).json({ error: 'incorrect campaign password' });
-    }
-
-    // `let`, not `const`: the retry below clears it if the colour is taken.
-    const colour = validateColor(req.body && req.body.color);
-    if (colour.error) return res.status(400).json({ error: colour.error });
-    const c = { value: colour.value, dropped: false };
-
-    // Cap + membership write, made ATOMIC to close the same TOCTOU race as
-    // create (OWASP A08:2025): without this, N parallel joiners all read
-    // "count < MAX" before any insert commits and overrun the player cap.
-    // SERIALIZABLE serialises concurrent joiners; a loser aborts (40001) and
-    // retries, re-reading a now-accurate count. The cap is still checked AFTER
-    // the password (above) so it can't probe how full a private campaign is.
-    let attempt = 0;
-    // eslint-disable-next-line no-constant-condition
-    while (true) {
-      try {
-        await knex.transaction(async (trx) => {
-          await trx.raw('SET TRANSACTION ISOLATION LEVEL SERIALIZABLE');
-
-          // Retry from the current membership, not the pre-password snapshot.
-          // A concurrent join may already have succeeded, or a ban may have landed.
-          const member = await trx('campaign_members')
-            .where({ campaign_id: id, user_id: req.user.id }).first();
-          if (member && member.status === 'banned') {
-            const e = new Error('banned'); e.memberBanned = true; throw e;
-          }
-          if (member && member.status === 'active') return;
-
-          const cur = await trx('campaign_members')
-            .where({ campaign_id: id, status: 'active' })
-            .count({ n: '*' }).first();
-          if (Number(cur.n) >= MAX_PLAYERS_PER_CAMPAIGN) {
-            const e = new Error('full'); e.campaignFull = true; throw e;
-          }
-
-          // Rows are never deleted — a returning member is an UPDATE of the
-          // existing row, so their history (and original joined_at) survives.
-          if (member) {
-            await trx('campaign_members')
-              .where({ campaign_id: id, user_id: req.user.id })
-              .update({ status: 'active', ...(c.dropped ? { color: null } : c.value ? { color: c.value } : {}) });
-          } else {
-            await trx('campaign_members').insert({
-              campaign_id: id,
-              user_id: req.user.id,
-              status: 'active',
-              color: c.value,
-            });
-          }
-        });
-        break;
-      } catch (err) {
-        if (err.campaignFull) return res.status(409).json({ error: 'this campaign is full' });
-        if (err.memberBanned) return res.status(403).json({ error: 'you are banned from this campaign' });
-        // Only these two known uniqueness conflicts are recoverable. A duplicate
-        // membership retries the lookup; a color collision drops the color,
-        // including a returning member's retained color, before retrying.
-        const duplicateMember = err.code === '23505' && err.constraint === 'campaign_members_pkey';
-        const duplicateColor = err.code === '23505'
-          && err.constraint === 'campaign_members_campaign_color_unique' && !c.dropped;
-        if (duplicateColor) { c.value = null; c.dropped = true; }
-        if (err.code === '40001' || duplicateMember || duplicateColor) {
-          if (attempt < 5) {
-            const baseDelay = 10 * (2 ** attempt);
-            const delay = baseDelay + Math.floor(Math.random() * baseDelay);
-            attempt += 1;
-            await new Promise(resolve => setTimeout(resolve, delay));
-            continue;
-          }
-          return res.status(409).set('Retry-After', '1').json({
-            error: 'Campaign joining is busy. Please try again.',
-            code: 'campaign_join_busy',
-            retryable: true,
-          });
-        }
-        throw err;
-      }
-    }
-
-    return gateway.sendJson(req, res, { campaign: publicCampaign(campaign, req.user.id), status: 'active' });
-  } catch (err) {
-    return next(err);
-  }
-});
+router.post('/:id/join', mutations.join);
 
 // PATCH /api/campaigns/:id/me — a member sets their own display colour.
 //
@@ -566,32 +282,7 @@ router.patch('/:id/me', requireMemberAnyState, contentWriteLimiter, async (req, 
 });
 
 // POST /api/campaigns/:id/leave — status -> 'left'. The owner cannot leave.
-router.post('/:id/leave', requireMemberAnyState, async (req, res, next) => {
-  try {
-    const result = await knex.transaction(async (trx) => {
-      // Same lock order as transfer: campaign first, then membership.
-      const campaign = await trx('campaigns').where({ id: req.campaign.id }).forUpdate().first();
-      if (!campaign || campaign.deleted_at) return { status: 404, error: 'campaign not found' };
-      if (campaign.owner_id === req.user.id) {
-        return { status: 409, error: 'the owner cannot leave — transfer ownership or delete the campaign' };
-      }
-      const member = await trx('campaign_members')
-        .where({ campaign_id: campaign.id, user_id: req.user.id }).forUpdate().first();
-      if (!member || member.status !== 'active') return { status: 404, error: 'campaign not found' };
-      await trx('campaign_members').where({ campaign_id: campaign.id, user_id: req.user.id })
-        .update({ status: 'left' });
-      return {};
-    });
-    if (result.status) return res.status(result.status).json({ error: result.error });
-
-    // Revoke passive broadcasts on every open tab after membership changes.
-    req.app.get('campaignSockets')?.evictUser(req.campaign.id, req.user.id, 'left');
-
-    return res.json({ ok: true, status: 'left' });
-  } catch (err) {
-    return next(err);
-  }
-});
+router.post('/:id/leave', requireMemberAnyState, mutations.leave);
 
 // POST /api/campaigns/:id/archive — hide this campaign from MY active dashboard.
 // Per-user and purely visual: it sets my own membership's archived_at and touches
@@ -630,195 +321,15 @@ router.post('/:id/unarchive', requireMemberAnyState, async (req, res, next) => {
 });
 
 // PATCH /api/campaigns/:id — owner edits.
-router.patch('/:id', requireOwner, async (req, res, next) => {
-  try {
-    const result = await knex.transaction(async (trx) => {
-      const campaign = await trx('campaigns').where({ id: req.campaign.id }).forUpdate().first();
-      if (!campaign || campaign.deleted_at || campaign.owner_id !== req.user.id) {
-        return { status: 404, error: 'campaign not found' };
-      }
-      const body = req.body || {};
-      const updates = {};
-
-      if (body.name !== undefined) {
-        const n = validateCampaignName(body.name);
-        if (n.error) return { status: 400, error: n.error };
-        updates.name = n.value;
-      }
-
-      if (body.is_open !== undefined) {
-        // Open or close the table. GM-only by virtue of requireOwner on this
-        // route — the same guard that governs the map, the NPCs and the fog.
-        //
-        // Strict boolean, not truthiness: `is_open: "false"` is a string and
-        // therefore true, which would silently open a campaign somebody meant to
-        // close. The one direction that matters is the one that grants access.
-        const b = validateBool(body.is_open, 'is_open');
-        if (b.error) return { status: 400, error: b.error };
-        updates.is_open = b.value;
-      }
-
-      if (body.description !== undefined) {
-        const d = validateCampaignDescription(body.description);
-        if (d.error) return { status: 400, error: d.error };
-        updates.description = d.value;
-      }
-
-      if (body.img_url !== undefined) {
-        const img = validateImageUrl(body.img_url, 'img_url');
-        if (img.error) return { status: 400, error: img.error };
-        updates.img_url = img.value;
-      }
-
-      // Visibility and password interact, so they are resolved together.
-      const nextIsPublic = body.is_public === undefined
-        ? campaign.is_public
-        : (body.is_public === true || body.is_public === 'true');
-
-      if (body.is_public !== undefined) updates.is_public = nextIsPublic;
-
-      if (nextIsPublic) {
-        // Going public drops the password: a public campaign has no secret to keep.
-        if (body.password) {
-          return { status: 400, error: 'a public campaign cannot have a password' };
-        }
-        if (!campaign.is_public) updates.password_hash = null;
-      } else {
-        if (body.password !== undefined) {
-          const p = validateCampaignPassword(body.password);
-          if (p.error) return { status: 400, error: p.error };
-          updates.password_hash = await hashPassword(p.value);
-        } else if (campaign.is_public && body.is_public !== undefined) {
-          // Going private requires a password in the same request; otherwise the
-          // campaign would sit private with a NULL hash and be unjoinable.
-          return { status: 400, error: 'a password is required to make a campaign private' };
-        }
-      }
-
-      if (Object.keys(updates).length === 0) {
-        return { status: 400, error: 'nothing to update' };
-      }
-
-      updates.updated_at = trx.fn.now();
-
-      const [row] = await trx('campaigns')
-        .where({ id: campaign.id })
-        .update(updates)
-        .returning([...SAFE_COLUMNS, 'password_hash']);
-
-      return { row, updates };
-    });
-    if (result.status) return res.status(result.status).json({ error: result.error });
-    const { row, updates } = result;
-    if (updates.is_open === false) {
-      req.app.get('campaignSockets')?.evictGamePlayers(row.id, row.owner_id);
-    }
-
-    // Tell the lobby when the table's open/closed state changed, so every
-    // dashboard watching this campaign flips its pill and Enter affordance
-    // without a refetch. Only on an is_open change — a rename or new cover is
-    // not a lobby concern. The game room is not told in this build (page 3).
-    if (updates.is_open !== undefined) {
-      req.app.get('campaignSockets')?.broadcastLobby(
-        req.campaign.id, 'campaign:state',
-        { campaign_id: req.campaign.id, is_open: updates.is_open },
-      );
-    }
-
-    return gateway.sendJson(req, res, { campaign: publicCampaign(row, req.user.id) });
-  } catch (err) {
-    return next(err);
-  }
-});
+router.patch('/:id', requireOwner, mutations.patch);
 
 // DELETE /api/campaigns/:id — owner soft-deletes (recoverable for 30 days).
-router.delete('/:id', requireOwner, async (req, res, next) => {
-  try {
-    const changed = await knex('campaigns')
-      .where({ id: req.campaign.id, owner_id: req.user.id }).whereNull('deleted_at')
-      .update({ deleted_at: knex.fn.now(), updated_at: knex.fn.now() });
-
-    if (!changed) return res.status(404).json({ error: 'campaign not found' });
-
-    // A later restore must not revive stale game/lobby subscriptions.
-    req.app.get('campaignSockets')?.evictCampaign(req.campaign.id);
-
-    return res.json({
-      ok: true,
-      message: `campaign deleted — recoverable for ${SOFT_DELETE_DAYS} days`,
-    });
-  } catch (err) {
-    return next(err);
-  }
-});
-
-// Ownership-cap transaction helpers. Restore and transfer add to the same live
-// ownership set as create, so their count and write must also be serializable.
-// The callback must have no external side effects: it may run up to six times.
-async function withOwnershipCapTransaction(work) {
-  for (let attempt = 0; ; attempt += 1) {
-    try {
-      return await knex.transaction(async (trx) => {
-        await trx.raw('SET TRANSACTION ISOLATION LEVEL SERIALIZABLE');
-        return work(trx);
-      });
-    } catch (err) {
-      if (err.code !== '40001') throw err;
-      if (attempt === 5) {
-        return { status: 409, error: 'Campaign ownership is busy. Please try again.',
-          code: 'campaign_ownership_busy', retryable: true };
-      }
-      const baseDelay = 10 * (2 ** attempt);
-      await new Promise(resolve => setTimeout(resolve,
-        baseDelay + Math.floor(Math.random() * baseDelay)));
-    }
-  }
-}
-
-function sendOwnershipResult(req, res, result) {
-  if (result.error) {
-    if (result.retryable) res.set('Retry-After', '1');
-    return res.status(result.status).json({ error: result.error,
-      ...(result.retryable ? { code: result.code, retryable: true } : {}) });
-  }
-  return gateway.sendJson(req, res, { campaign: publicCampaign(result.row, req.user.id) });
-}
+router.delete('/:id', requireOwner, mutations.remove);
 
 // POST /api/campaigns/:id/restore — owner restores within the window.
 // requireOwner is bypassed on purpose: it filters out deleted_at IS NOT NULL,
-// which is exactly the row this route needs. Ownership is checked inline.
-router.post('/:id/restore', async (req, res, next) => {
-  try {
-    const { id } = req.params;
-    if (!validCampaignId(id)) return res.status(404).json({ error: 'campaign not found' });
-
-    const result = await withOwnershipCapTransaction(async (trx) => {
-      const campaign = await trx('campaigns').where({ id }).forUpdate().first();
-      if (!campaign || !campaign.deleted_at || campaign.owner_id !== req.user.id) {
-        return { status: 404, error: 'no deleted campaign with that id' };
-      }
-      const expiry = new Date(campaign.deleted_at).getTime() + SOFT_DELETE_DAYS * 86400000;
-      if (Date.now() > expiry) {
-        return { status: 410, error: 'the 30-day recovery window has passed' };
-      }
-
-      const owned = await trx('campaigns')
-        .where({ owner_id: req.user.id }).whereNull('deleted_at')
-        .count({ n: '*' }).first();
-      if (Number(owned.n) >= MAX_CAMPAIGNS_PER_USER) {
-        return { status: 409,
-          error: `you already own ${MAX_CAMPAIGNS_PER_USER} campaigns — delete one before restoring` };
-      }
-      const [row] = await trx('campaigns').where({ id })
-        .update({ deleted_at: null, updated_at: trx.fn.now() })
-        .returning([...SAFE_COLUMNS, 'password_hash']);
-      return { row };
-    });
-    return sendOwnershipResult(req, res, result);
-  } catch (err) {
-    return next(err);
-  }
-});
+// which is exactly the row this route needs. Ownership is checked inside the operation.
+router.post('/:id/restore', mutations.restore);
 
 // GET /api/campaigns/:id/members — the owner's manage-players view: ALL statuses.
 router.get('/:id/members', requireOwner, async (req, res, next) => {
@@ -843,127 +354,19 @@ router.get('/:id/members', requireOwner, async (req, res, next) => {
 // share a helper. Both disconnect the target's sockets — enforcement lives in
 // the socket layer (see socket.js); the DB write alone would leave an already
 // connected socket sitting in the room.
-function moderationRoute(nextStatus) {
-  return async (req, res, next) => {
-    try {
-      const targetId = req.params.userId;
-      if (!validCampaignId(targetId)) return res.status(404).json({ error: 'member not found' });
-      if (targetId === req.user.id) {
-        return res.status(409).json({ error: `you cannot ${nextStatus === 'banned' ? 'ban' : 'kick'} yourself` });
-      }
-
-      const result = await knex.transaction(async (trx) => {
-        // Middleware authorized a snapshot. Serialize with ownership transfer and
-        // check the current owner before changing any membership.
-        const campaign = await trx('campaigns').where({ id: req.campaign.id }).forUpdate().first();
-        if (!campaign || campaign.deleted_at) return { status: 404, error: 'campaign not found' };
-        if (campaign.owner_id !== req.user.id) {
-          const caller = await trx('campaign_members')
-            .where({ campaign_id: campaign.id, user_id: req.user.id }).first();
-          return caller && caller.status === 'active'
-            ? { status: 403, error: 'only the campaign owner can do that' }
-            : { status: 404, error: 'campaign not found' };
-        }
-        const member = await trx('campaign_members')
-          .where({ campaign_id: campaign.id, user_id: targetId }).forUpdate().first();
-        if (!member) return { status: 404, error: 'member not found' };
-        await trx('campaign_members').where({ campaign_id: campaign.id, user_id: targetId })
-          .update({ status: nextStatus });
-        return {};
-      });
-      if (result.status) return res.status(result.status).json({ error: result.error });
-
-      req.app.get('campaignSockets')?.evictUser(req.campaign.id, targetId);
-
-      return res.json({ ok: true, user_id: targetId, status: nextStatus });
-    } catch (err) {
-      return next(err);
-    }
-  };
-}
-
 // POST /api/campaigns/:id/members/:userId/kick — status 'left'; they may rejoin.
-router.post('/:id/members/:userId/kick', requireOwner, moderationRoute('left'));
+router.post('/:id/members/:userId/kick', requireOwner, mutations.moderationRoute('left'));
 
 // POST /api/campaigns/:id/members/:userId/ban — status 'banned'; owner-reversible only.
-router.post('/:id/members/:userId/ban', requireOwner, moderationRoute('banned'));
+router.post('/:id/members/:userId/ban', requireOwner, mutations.moderationRoute('banned'));
 
 // POST /api/campaigns/:id/members/:userId/unban — back to 'left', not 'active':
 // un-banning restores the right to ask, not membership itself. They rejoin
 // through the normal flow (and re-enter the password if the campaign is private).
-router.post('/:id/members/:userId/unban', requireOwner, async (req, res, next) => {
-  try {
-    const targetId = req.params.userId;
-    if (!validCampaignId(targetId)) return res.status(404).json({ error: 'member not found' });
-
-    const result = await knex.transaction(async (trx) => {
-      const campaign = await trx('campaigns').where({ id: req.campaign.id }).forUpdate().first();
-      if (!campaign || campaign.deleted_at || campaign.owner_id !== req.user.id) {
-        return { status: 404, error: 'campaign not found' };
-      }
-      const member = await trx('campaign_members')
-        .where({ campaign_id: req.campaign.id, user_id: targetId })
-        .first();
-      if (!member) return { status: 404, error: 'member not found' };
-      if (member.status !== 'banned') {
-        return { status: 409, error: 'that member is not banned' };
-      }
-
-      await trx('campaign_members')
-        .where({ campaign_id: req.campaign.id, user_id: targetId })
-        .update({ status: 'left' });
-
-      return {};
-    });
-    if (result.status) return res.status(result.status).json({ error: result.error });
-
-    return res.json({ ok: true, user_id: targetId, status: 'left' });
-  } catch (err) {
-    return next(err);
-  }
-});
+router.post('/:id/members/:userId/unban', requireOwner, mutations.unban);
 
 // POST /api/campaigns/:id/transfer — hand ownership to another ACTIVE member.
 // GM-ness follows automatically because it is derived from owner_id.
-router.post('/:id/transfer', requireOwner, async (req, res, next) => {
-  try {
-    const targetId = req.body && req.body.user_id;
-    if (!validCampaignId(targetId)) return res.status(400).json({ error: 'user_id is required' });
-    if (targetId === req.user.id) {
-      return res.status(409).json({ error: 'you already own this campaign' });
-    }
-
-    const result = await withOwnershipCapTransaction(async (trx) => {
-      // Middleware checked an earlier snapshot. Recheck ownership on every
-      // attempt and hold the campaign row until the transfer commits.
-      const campaign = await trx('campaigns').where({ id: req.campaign.id }).forUpdate().first();
-      if (!campaign || campaign.deleted_at || campaign.owner_id !== req.user.id) {
-        return { status: 404, error: 'campaign not found' };
-      }
-      const member = await trx('campaign_members')
-        .where({ campaign_id: campaign.id, user_id: targetId }).forUpdate().first();
-      if (!member || member.status !== 'active') {
-        return { status: 409, error: 'ownership can only be transferred to an active member' };
-      }
-      const owned = await trx('campaigns')
-        .where({ owner_id: targetId }).whereNull('deleted_at')
-        .count({ n: '*' }).first();
-      if (Number(owned.n) >= MAX_CAMPAIGNS_PER_USER) {
-        return { status: 409, error: `the recipient already owns ${MAX_CAMPAIGNS_PER_USER} campaigns` };
-      }
-      const [row] = await trx('campaigns').where({ id: campaign.id })
-        .update({ owner_id: targetId, updated_at: trx.fn.now() })
-        .returning([...SAFE_COLUMNS, 'password_hash']);
-      return { row };
-    });
-    if (result.row && result.row.is_open === false) {
-      req.app.get('campaignSockets')?.evictGamePlayers(result.row.id, result.row.owner_id);
-    }
-    // Membership rows remain intact; GM status follows the committed owner_id.
-    return sendOwnershipResult(req, res, result);
-  } catch (err) {
-    return next(err);
-  }
-});
+router.post('/:id/transfer', requireOwner, mutations.transfer);
 
 module.exports = { router, SOFT_DELETE_DAYS, MAX_CAMPAIGNS_PER_USER, MAX_PLAYERS_PER_CAMPAIGN };

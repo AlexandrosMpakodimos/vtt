@@ -1,8 +1,9 @@
-// Controlled scheduling test: actual middleware and leave/moderation handlers,
+// Controlled scheduling test: imported middleware and owner mutation handlers,
 // simulated database. Ownership changes between authorization and handler entry.
 // No app server, PostgreSQL, or user data is touched.
-const fs = require('node:fs');
-const vm = require('node:vm');
+const { createCampaignOperations } = require('./src/services/campaigns/operations');
+const { createCampaignMutationHandlers } = require('./src/routes/campaignMutations');
+const { createCampaignAuth } = require('./src/middleware/campaignAuthFactory');
 const assert = require('node:assert/strict');
 const CID = '10000000-0000-4000-8000-000000000001';
 const OLD = '20000000-0000-4000-8000-000000000001';
@@ -32,23 +33,11 @@ async function scenario(action, transfer, target) {
   }
   knex.transaction = async work => work(knex);
   knex.fn = {now: () => "2026-09-16"};
-  const module = {exports: {}};
-  vm.runInNewContext(fs.readFileSync(__dirname + '/src/middleware/campaignAuth.js', 'utf8'), {
-    module, require(name) { assert.equal(name, '../db'); return knex; },
-  }, {filename: 'campaignAuth.js'});
-  const guards = module.exports;
-  const routes = new Map();
-  const router = {};
-  for (const method of ['post','patch','delete']) router[method] = (path,...handlers) => routes.set(method+path,handlers.at(-1));
-  const source = fs.readFileSync(__dirname + '/src/routes/campaigns.js','utf8');
-  const snippets = ["router.patch('/:id',", "router.delete('/:id',", "router.post('/:id/members/:userId/unban',"].map(marker => {
-    const start=source.indexOf(marker),end=source.indexOf('\n});',start)+4;
-    assert(start>=0&&end>start,'source boundaries');return source.slice(start,end);
+  const guards = createCampaignAuth(knex);
+  const operations = createCampaignOperations({ knex, validCampaignId: guards.validCampaignId });
+  const handlers = createCampaignMutationHandlers({
+    operations, gateway: { sendJson: (req, res, body) => res.json(body) },
   });
-  const context = {router, knex, ...guards, SAFE_COLUMNS:[], SOFT_DELETE_DAYS:30,
-    validateCampaignName:value=>({value}), publicCampaign:value=>value,
-    gateway:{sendJson:(req,res,body)=>res.json(body)}};
-  vm.createContext(context);vm.runInContext(snippets.join('\n'),context);
   const req = {params: {id: CID, userId: target}, user: {id: OLD}, body:{name:'Changed'},
     app: {get(name) {assert.equal(name, 'campaignSockets'); return {evictUser(...args) {evictions.push(args);}, evictCampaign(...args) {evictions.push(args);}, broadcastLobby(...args) {evictions.push(args);}};}}};
   const res = {code: 200, status(code) {this.code = code; return this;}, json(body) {this.body = body; return this;}};
@@ -59,7 +48,7 @@ async function scenario(action, transfer, target) {
   // middleware query and route execution. req.campaign remains the old snapshot.
   if (transfer) campaign.owner_id = NEW;
   const before = JSON.stringify({campaign,members});
-  const handler = routes.get(action === 'patch' ? 'patch/:id' : action === 'delete' ? 'delete/:id' : 'post/:id/members/:userId/unban');
+  const handler = handlers[action === 'delete' ? 'remove' : action];
   await handler(req,res,err=>{throw err;});
   const member=members.find(row=>row.user_id===target);
   console.log(`  NOTE  HTTP=${res.code}, target membership=${member.status}, evictions=${evictions.length}`);
