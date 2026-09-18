@@ -100,7 +100,7 @@ plus explicit player re-entry restores game updates. Use isolated fixtures.
 - The unit group needs no external server/database. Some tests create their own
   loopback HTTP server. Do not equate "unit" with "no network socket ever opened".
 
-## Campaign extraction and later socket work
+## Campaign and socket extraction checks
 
 The create-retry, join-retry, ownership, permission-race, and final-owner-boundary
 suites now import production operations and HTTP handlers. Their original
@@ -111,13 +111,16 @@ checking response/effect timing, lock sequence, and public serialization. These
 are controlled doubles, not proof of PostgreSQL isolation. Keep the existing
 PostgreSQL suites and the wrapper's sequential execution.
 
-During socket extraction, retain all current admission cases and add the focused
-case that delays `socket.join()` itself, invalidates admission, then completes
-the join and verifies cleanup/refusal. The current admission fake delays the
-authorization read but joins synchronously.
+The admission suite imports `createRoomLifecycle` directly. Its original seven
+controlled authorization-read scenarios remain; new cases hold `socket.join()`
+open, invalidate admission, and verify refusal, room cleanup and no success
+emission after completion. A partially completed multi-campaign lobby subscription
+must also be cleaned up. Multi-tab tracking, disconnect presence and game/lobby
+separation are covered by the same suite. These controlled adapters supplement
+the real HTTP/socket suites; they do not replace the endpoint browser check.
 
-`test-events.js` scans `src/routes` and `src/socket.js`; the new campaign HTTP
-handlers stay within that scan. If emitters move elsewhere later, update
-the concrete scan paths in the same PR so the check does not lose coverage.
+`test-events.js` scans `src/routes`, `src/socket.js`, and
+`src/socket/roomLifecycle.js`. The server-handler check includes both socket
+files too, so relocation does not silently remove coverage.
 Whole-script JSDOM loading is distinct from backend source snippets; frontend
 test restructuring and auth test extraction are outside this pass.

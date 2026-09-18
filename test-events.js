@@ -45,6 +45,7 @@ const strip = (src) => src.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//
 const serverFiles = [
   ...fs.readdirSync('src/routes').filter((f) => f.endsWith('.js')).map((f) => path.join('src/routes', f)),
   'src/socket.js',
+  'src/socket/roomLifecycle.js',
 ];
 const emitted = new Set();
 for (const f of serverFiles) {
@@ -156,7 +157,7 @@ t('every client-to-server name is actually sent by a client',
   staleClientSends.length === 0, staleClientSends.join(', '));
 
 console.log('\n--- server handlers nothing calls ---');
-const socketJs = strip(read('src/socket.js'));
+const socketJs = strip(read('src/socket.js') + '\n' + read('src/socket/roomLifecycle.js'));
 for (const [ev, why] of Object.entries(SERVER_HANDLERS_WITH_NO_CALLER)) {
   t(`${ev} is still handled server-side (${why})`, socketJs.includes(`socket.on('${ev}'`));
   t(`...and still has no client caller, as recorded`, !clientEmits.has(ev),

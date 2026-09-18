@@ -21,7 +21,10 @@ The browser result and merge status above come from the handoff.
 
 The documentation PR is merged. Campaign mutations now use importable operations
 and HTTP handlers, with the affected controlled tests importing production code.
-Socket-lifecycle extraction remains planned; authentication is unchanged.
+Campaign extraction is merged in PR #13 (18 targeted suites / 594 assertions
+passed, as reported by the maintainer). Room admission, eviction, tracking and
+presence now share one lifecycle module; authentication is unchanged. Final
+full-regression and independent GM/player browser closeout remain required.
 See [the bounded plan](docs/architecture.md#bounded-refactoring-plan).
 
 ## Local development
