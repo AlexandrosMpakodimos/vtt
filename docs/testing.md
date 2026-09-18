@@ -9,8 +9,11 @@ GM/player open/close/reopen checks also passed according to the handoff.
 Do not rerun that audit merely to establish context.
 
 The authoritative registration and order are the `UNIT`, `DB`, and `SEC` arrays
-in `run-tests.js`. They are explicit lists, not automatic discovery. This PR
-moves no tests and changes no commands, paths, registrations, or execution logic.
+in `run-tests.js`. They are explicit lists, not automatic discovery. The campaign
+extraction adds `test-campaign-mutation-contracts.js` to UNIT: registration is
+now 31/30/9. This is not a claim of a new full regression pass. All original suite
+entries retain their relative order; no files move and commands/isolation stay
+unchanged.
 
 `test-media-integration.js` is present but not registered. Its historical usage
 comment is not the current isolated setup procedure. Its prerequisites and
@@ -97,19 +100,24 @@ plus explicit player re-entry restores game updates. Use isolated fixtures.
 - The unit group needs no external server/database. Some tests create their own
   loopback HTTP server. Do not equate "unit" with "no network socket ever opened".
 
-## Direct-testability work in the later PRs
+## Campaign extraction and later socket work
 
-Replace campaign source slicing with imports while retaining retry-exhaustion,
-commit-failure, permission-transition, response, and post-commit-effect scenarios.
-Keep controlled latches and PostgreSQL tests; do not substitute timing sleeps
-or mocks asserting only query method names.
+The create-retry, join-retry, ownership, permission-race, and final-owner-boundary
+suites now import production operations and HTTP handlers. Their original
+scenario/assertion sections remain intact. The latter two also run the imported
+campaign guards before changing ownership; this is not simulated authorization.
+The new contract suite pauses commit completion and injects commit failure,
+checking response/effect timing, lock sequence, and public serialization. These
+are controlled doubles, not proof of PostgreSQL isolation. Keep the existing
+PostgreSQL suites and the wrapper's sequential execution.
 
 During socket extraction, retain all current admission cases and add the focused
 case that delays `socket.join()` itself, invalidates admission, then completes
 the join and verifies cleanup/refusal. The current admission fake delays the
 authorization read but joins synchronously.
 
-`test-events.js` scans `src/routes` and `src/socket.js`. If emitters move, update
+`test-events.js` scans `src/routes` and `src/socket.js`; the new campaign HTTP
+handlers stay within that scan. If emitters move elsewhere later, update
 the concrete scan paths in the same PR so the check does not lose coverage.
 Whole-script JSDOM loading is distinct from backend source snippets; frontend
 test restructuring and auth test extraction are outside this pass.

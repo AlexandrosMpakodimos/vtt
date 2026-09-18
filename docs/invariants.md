@@ -111,6 +111,7 @@ database/server-backed suites as described in [testing](testing.md).
 
 | Contract | Existing representative coverage |
 | --- | --- |
+| Mutation commit timing, effects, public response shapes | `test-campaign-mutation-contracts.js` (controlled operation/HTTP-handler imports) |
 | Creation/join retry behavior | `test-campaign-create-retry.js`, `test-campaign-join-retry.js`, `break-campaigns.js` |
 | Shared ownership cap | `test-campaign-ownership.js`, `test-campaign-ownership-races.js` |
 | Transfer versus leave/moderation | `test-campaign-permission-races.js`, `test-campaign-permission-races-db.js` |

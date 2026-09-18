@@ -1,8 +1,7 @@
 // Controlled transaction tests. Real PostgreSQL races are covered separately.
-const fs = require('node:fs');
-const vm = require('node:vm');
+const { createCampaignOperations } = require('./src/services/campaigns/operations');
+const { createCampaignMutationHandlers } = require('./src/routes/campaignMutations');
 const assert = require('node:assert/strict');
-const source = fs.readFileSync(require.resolve('./src/routes/campaigns'), 'utf8');
 let passed = 0;
 function check(value, message) { assert(value, message); passed++; }
 const serialization = () => Object.assign(new Error('serialization failure'), { code: '40001' });
@@ -55,25 +54,18 @@ async function run(mode, options = {}) {
       return result;
     } finally { inTransaction = false; }
   };
-  const context = {
-    knex, router: { post(path, ...handlers) { context.handler = handlers.at(-1); } },
-    requireOwner() {}, validCampaignId: id => ['subject','caller','target'].includes(id),
-    MAX_CAMPAIGNS_PER_USER: 20, SOFT_DELETE_DAYS: 30, SAFE_COLUMNS: ['id','owner_id'],
-    publicCampaign: row => ({ id: row.id, owner_id: row.owner_id }),
+  const operations = createCampaignOperations({
+    knex, validCampaignId: id => ['subject','caller','target'].includes(id),
+    MAX_CAMPAIGNS_PER_USER: 20,
+    random: () => 0.5, sleep: async ms => { waits.push(ms); },
+  });
+  const handlers = createCampaignMutationHandlers({
+    operations,
     gateway: { sendJson(req, res, body) { assert(!inTransaction, 'respond only after commit'); replies++; return res.json(body); } },
-    Math: { random: () => 0.5, floor: Math.floor },
-    setTimeout(fn, ms) { waits.push(ms); fn(); },
-  };
-  vm.createContext(context);
-  const helperStart = source.indexOf('// Ownership-cap transaction helpers.');
-  if (helperStart >= 0) vm.runInContext(source.slice(helperStart, source.indexOf('// POST /api/campaigns/:id/restore', helperStart)), context);
-  const start = source.indexOf("router.post('/:id/" + mode + "'");
-  assert(start >= 0);
-  const end = source.indexOf('\n});', start) + 4;
-  vm.runInContext(source.slice(start, end), context);
+  });
   const res = { statusCode: 200, headers: {}, status(n) { this.statusCode=n; return this; },
     set(k,v) { this.headers[k]=v; return this; }, json(body) { assert(!inTransaction); this.body=body; return this; } };
-  await context.handler({ params: { id: 'subject' }, campaign: { id: 'subject', owner_id: 'caller' }, user: { id: 'caller' }, body: { user_id: options.targetId || 'target' } }, res, error => { forwarded=error; });
+  await handlers[mode]({ params: { id: 'subject' }, campaign: { id: 'subject', owner_id: 'caller' }, user: { id: 'caller' }, body: { user_id: options.targetId || 'target' } }, res, error => { forwarded=error; });
   return { res, rows, attempts, waits, isolation, reads, writes, replies, forwarded };
 }
 (async () => {

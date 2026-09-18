@@ -39,6 +39,7 @@ const fs = require('fs');
 
 // No external server or database. Some suites start their own loopback server.
 const UNIT = [
+  'test-campaign-mutation-contracts.js',
   'test-final-owner-boundaries.js', 'test-final-room-admission.js',
   'test-campaign-permission-races.js',
   'test-login-session-races.js',

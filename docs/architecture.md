@@ -1,7 +1,7 @@
 # Architecture and bounded refactoring
 
-This describes the supplied post-PR-#11 source. Proposed boundaries below are
-future work, not claims about modules already present.
+This describes the campaign-operation extraction on top of the merged
+documentation PR. Socket-lifecycle extraction below remains future work.
 
 ## Current responsibilities
 
@@ -10,7 +10,10 @@ future work, not claims about modules already present.
 | `src/server.js` | Compose Express, sessions, Passport, Socket.IO, routes, error handling, cleanup timers, and listening |
 | `src/db/`, `knexfile.js` | Database access and migrations; dedicated test-environment restrictions |
 | `src/middleware/` | Authentication, campaign read/access guards, CSRF origin checks, rate limiting |
-| `src/routes/campaigns.js` | Campaign HTTP routes, mutation transactions/retries, public shapes, post-success socket effects; mounts game-resource routers |
+| `src/routes/campaigns.js` | Existing mounts/guards and production dependency wiring; retains reads and color/archive handlers |
+| `src/routes/campaignMutations.js` | Importable mutation HTTP handlers: status/headers, public responses, media rewriting, post-commit effects |
+| `src/services/campaigns/` | Mutation operations own validation/transactions/retries; presentation functions retain allow-listed responses; shared recovery-window constant |
+| `src/middleware/campaignAuthFactory.js` | Existing campaign guard bodies behind an explicit DB dependency; `campaignAuth.js` preserves existing exports with the production DB |
 | `src/routes/scenes.js` | Scenes, tokens, fog, shaping, and movement policy; imports actor/combat helpers |
 | `src/routes/actors.js` | Actors, actor-scoped inventory and spellbooks, disclosure/write policies; imports item helpers |
 | Other resource routers | Item/spell catalogues, combat, chat, assets, and media delivery |
@@ -48,17 +51,20 @@ embedded styles are maintenance debt, not a requirement for a framework change.
 
 ## Bounded refactoring plan
 
-1. **Documentation and necessary organization.** Record actual architecture,
+1. **Documentation and necessary organization (merged).** Record actual architecture,
    commands, invariants, and deployment backlog. Correct demonstrably stale
-   comments. No test relocation is required by this PR, so test paths, runner
-   registration, package scripts, and executable code remain unchanged. Do not
+   comments. That PR moved no tests and left paths, runner registration, package
+   scripts, and executable code unchanged. Do not
    introduce a manifest or compatibility mechanism without a current use.
-2. **Campaign operations and affected tests.** Extract cohesive state-changing
-   operations behind plain CommonJS interfaces. Keep authority checks, locks,
-   writes, and retries together. Routes preserve HTTP/media response contracts
-   and existing post-commit socket ordering. Replace affected source-snippet
-   loaders with imports of production code while preserving every regression
-   scenario and real PostgreSQL coverage.
+2. **Campaign operations and affected tests (this extraction).** Create, join,
+   leave, owner PATCH/DELETE, restore, transfer, kick/ban, and unban use plain
+   CommonJS operations. Authority checks, locks, writes, and retries stay together.
+   HTTP handlers preserve responses and existing post-commit socket ordering.
+   Five controlled suites import these production factories instead of slicing
+   source. The two middleware/transfer tests also import the unchanged campaign
+   guard bodies through a DB-injected factory. A focused contract suite controls
+   commit completion/failure and checks effects and response shaping. Real
+   PostgreSQL suites and all existing scenarios remain intact.
 3. **Coordinated socket lifecycle.** Keep admission cancellation, eviction,
    tracking, and presence coordination under one owner. Preserve `src/socket.js`
    as the entry point and its existing exports. Keep `socketSessions.js` focused
@@ -66,11 +72,17 @@ embedded styles are maintenance debt, not a requirement for a framework change.
    broadcasts only if doing so stays within this scope; token/ping and broad
    scene/actor/combat extraction are not completion requirements.
 
-Potential new locations are `src/services/campaigns/operations.js`,
-`src/services/campaigns/presentation.js`, and `src/socket/roomLifecycle.js`.
-These names are proposed, not interfaces to depend on yet. Relocate affected
-tests only when useful to their concrete change, updating actual callers in the
-same PR. Unrelated root-level tests may remain.
+`src/services/campaigns/operations.js` and `presentation.js` now exist.
+`createCampaignOperations` takes explicit database/password/ID-validation/limit
+dependencies; delay, randomness, and clock can be controlled without global
+patching. It takes caller IDs rather than middleware snapshots. Expected
+refusals return status/error data; unexpected errors reject. It never receives
+`req`/`res` or emits socket effects. `createCampaignMutationHandlers` is the same
+HTTP adapter factory used by the real router and controlled tests.
+
+`src/socket/roomLifecycle.js` is still only a proposed location. No tests move
+in this extraction, so no test-path or compatibility mechanism is needed.
+Relocate tests only when useful to a concrete later change.
 
 Authentication implementation is unchanged throughout this pass. No framework
 migration, TypeScript conversion, dependency upgrade, generic repository layer,
