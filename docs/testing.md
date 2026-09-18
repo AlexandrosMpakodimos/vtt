@@ -2,22 +2,29 @@
 
 ## Recorded baseline
 
-The completed local audit recorded 30 unit suites / 1,973 assertions,
-30 database/integration suites / 1,314 assertions, and 9 security suites /
-485 assertions: 69 suites / 3,772 assertions with zero failures. Independent
-GM/player open/close/reopen checks also passed according to the handoff.
-Do not rerun that audit merely to establish context.
+The recorded final full-run output, from the completed audit and refactoring
+closeout (not a new run), is:
+
+| Group | Suites | Assertions |
+| --- | --- | --- |
+| Unit | 31 | 2,134 |
+| Database/integration | 30 | 1,314 |
+| Adversarial | 9 | 485 |
+| Total | 70 | 3,933 |
+
+There were zero failures, and the independent GM/player open/close/reopen
+checks also passed. `FINAL-AUDIT-STATUS.md` records the earlier 69-suite audit
+run (30 / 1,973, 30 / 1,314, 9 / 485; 3,772 total). Do not rerun either merely
+to establish context.
 
 The authoritative registration and order are the `UNIT`, `DB`, and `SEC` arrays
-in `run-tests.js`. They are explicit lists, not automatic discovery. The campaign
-extraction adds `test-campaign-mutation-contracts.js` to UNIT: registration is
-now 31/30/9. This is not a claim of a new full regression pass. All original suite
-entries retain their relative order; no files move and commands/isolation stay
-unchanged.
+in `run-tests.js`. They are explicit lists, not automatic discovery, and
+currently register 31 / 30 / 9 suites, matching the recorded run. All original
+suite entries retain their relative order.
 
 `test-media-integration.js` is present but not registered. Its historical usage
 comment is not the current isolated setup procedure. Its prerequisites and
-runner inclusion need a separate decision; do not count it among the 69 passing
+runner inclusion need a separate decision; do not count it among the 70 recorded
 suites or silently add it to the baseline.
 
 ## Existing isolated environment
@@ -74,7 +81,7 @@ Use exactly `http://127.0.0.1:3001` in the browser. `localhost:3001` is a differ
 origin and is not the configured test origin. Do not disable CSRF to work around
 an origin mismatch.
 
-At the agreed refactoring endpoint, with the current isolated server running:
+When a concrete release gate requires the full run, with the current isolated server running:
 
 ```sh
 npm run test:all

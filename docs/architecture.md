@@ -1,7 +1,7 @@
 # Architecture and bounded refactoring
 
-This describes the coordinated socket-lifecycle extraction on top of the merged
-documentation and campaign-operation PRs. Final closeout remains required.
+This describes the completed bounded refactoring: the documentation PR, campaign
+operations (PR #13), and the coordinated socket lifecycle (PR #14).
 
 ## Current responsibilities
 
@@ -66,7 +66,7 @@ embedded styles are maintenance debt, not a requirement for a framework change.
    guard bodies through a DB-injected factory. A focused contract suite controls
    commit completion/failure and checks effects and response shaping. Real
    PostgreSQL suites and all existing scenarios remain intact.
-3. **Coordinated socket lifecycle (this extraction).** Keep admission cancellation, eviction,
+3. **Coordinated socket lifecycle (merged in PR #14).** Keep admission cancellation, eviction,
    tracking, and presence coordination under one owner. Preserve `src/socket.js`
    as the entry point and its existing exports. Keep `socketSessions.js` focused
    on session validity. Add a controlled delayed-`join()` regression. Extract
@@ -96,7 +96,38 @@ migration, TypeScript conversion, dependency upgrade, generic repository layer,
 global configuration rewrite, or new test framework is required. Deployment
 fixes and media-policy decisions stay in [the separate backlog](deployment.md).
 
+## Repository layout: paths kept on purpose
+
+These paths look unusual but have recorded reasons. Revisit them only with new
+evidence.
+
+- **Root `test-*.js` / `break-*.js`.** `run-tests.js` lists them by root filename
+  and `scripts/test-local.js` accepts only root-level names; suites read `./src/…`
+  and `public/…` relative to the root. Moving them means editing the runner, the
+  wrapper, and the suites.
+- **`public/scene.html`, `combat.html`, `actors.html`, `align.html`.** Standalone
+  dev-harness pages no longer linked from the app UI. Eight suites load them
+  through JSDOM, `test-game-ui.js` compares their element IDs with `game.html`,
+  and `break-dice.js` fetches `/combat.html`. Whether to serve them in production
+  is a separate deployment decision.
+- **`public/vendor/dice/`.** Vendored `dice-box-threejs` with its MIT license;
+  textures load by name at runtime. Four texture files are not named literally in
+  the bundle or `dice3d.js`. Whether the library ever requests them is
+  unconfirmed, and they are small (about 79 KB), so they stay with the upstream
+  tree.
+- **`src/db/seeds/`.** Configured in `knexfile.js`; no seed files are tracked.
+  An empty local directory may exist and does not need removal.
+- **`test-media-integration.js`.** Present but unregistered; see [testing](testing.md).
+- **Untracked local files.** Backups, repair scripts, and diagnostics are not part
+  of the repository, and their owner decides whether to archive or remove them.
+  Ignore rules only prevent accidental staging; they do not mean a file was
+  reviewed.
+
 ## Completion and verification
+
+Status: complete. The audit and the three planned refactoring PRs are done;
+recorded results are in [testing](testing.md), and deployment limitations
+remain in [the backlog](deployment.md).
 
 Use affected checks while implementing each extraction. Preserve transaction,
 HTTP, socket, and test-isolation contracts. At the endpoint, run the registered

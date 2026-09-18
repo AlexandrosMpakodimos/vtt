@@ -1,9 +1,14 @@
 node_modules/
 .env
+.env.*
+!.env.example
 .DS_Store
 
 *.bak
-.DS_Store
+# Local archives and repair backups at the repository root. Ignoring only
+# prevents accidental staging; it does not mean a file has been reviewed.
+/vtt*.zip
+/legacy-asset-repair-backup-*.json
 # local build/handoff notes — keep out of the repo
 CHAT_FIX_UPDATE.md
 CHAT_UPDATE.md

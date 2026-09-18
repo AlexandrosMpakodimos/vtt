@@ -9,23 +9,19 @@ and browser JavaScript; no frontend build step is configured.
 
 ## Current status
 
-The bounded local audit is complete. The September 17, 2026 handoff records
-PR #11 as merged and pulled, all 69 suites / 3,772 assertions passing, and
-independent GM/player browser checks passing for open, close, and explicit
-re-entry after reopening. These are recorded results, not a new run or a
-production-readiness certification.
+The bounded local authorization audit (final PR #11) and the three planned
+refactoring PRs are complete: the documentation PR, campaign operations
+(PR #13, merge `d830abb`), and the coordinated socket lifecycle (PR #14, merge
+`ca31317`). The recorded final full regression is 70 suites / 3,933 assertions
+with zero failures, and independent GM/player browser checks confirmed open
+delivery, close suppression, and reopening with explicit re-entry. These are
+recorded results, not a new run and not a production-readiness certification.
+Deployment limitations remain open in [deployment](docs/deployment.md).
 
-[FINAL-AUDIT-STATUS.md](FINAL-AUDIT-STATUS.md) preserves the audit history;
-its final automated-verification section supersedes earlier pending results.
-The browser result and merge status above come from the handoff.
-
-The documentation PR is merged. Campaign mutations now use importable operations
-and HTTP handlers, with the affected controlled tests importing production code.
-Campaign extraction is merged in PR #13 (18 targeted suites / 594 assertions
-passed, as reported by the maintainer). Room admission, eviction, tracking and
-presence now share one lifecycle module; authentication is unchanged. Final
-full-regression and independent GM/player browser closeout remain required.
-See [the bounded plan](docs/architecture.md#bounded-refactoring-plan).
+[FINAL-AUDIT-STATUS.md](FINAL-AUDIT-STATUS.md) preserves the audit history,
+including an earlier 69-suite run. The recorded test split is in
+[testing](docs/testing.md); the refactoring scope is in
+[the bounded plan](docs/architecture.md#bounded-refactoring-plan).
 
 ## Local development
 
