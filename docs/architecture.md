@@ -1,7 +1,7 @@
 # Architecture and bounded refactoring
 
-This describes the campaign-operation extraction on top of the merged
-documentation PR. Socket-lifecycle extraction below remains future work.
+This describes the coordinated socket-lifecycle extraction on top of the merged
+documentation and campaign-operation PRs. Final closeout remains required.
 
 ## Current responsibilities
 
@@ -17,7 +17,8 @@ documentation PR. Socket-lifecycle extraction below remains future work.
 | `src/routes/scenes.js` | Scenes, tokens, fog, shaping, and movement policy; imports actor/combat helpers |
 | `src/routes/actors.js` | Actors, actor-scoped inventory and spellbooks, disclosure/write policies; imports item helpers |
 | Other resource routers | Item/spell catalogues, combat, chat, assets, and media delivery |
-| `src/socket.js` | Sessions attachment, room admission/eviction, presence, broadcasting, token movement and pings; imports scene-route helpers |
+| `src/socket.js` | Connection/session enforcement and lifecycle wiring, existing broadcasts, token movement and pings; imports scene-route helpers |
+| `src/socket/roomLifecycle.js` | Admission generations, room admission/leave, eviction, shared user/socket tracking, distinct-user presence and disconnect coordination |
 | `src/services/socketSessions.js` | Live session-store checks and exact-SID disconnection for this process |
 | Other `src/services/` modules | Validators, scene access, atomic caps, dice/password/email helpers, media/storage, budget, cleanup, and reconciliation |
 | `public/` | Served HTML/CSS/JavaScript, including local vendored dice assets |
@@ -56,7 +57,7 @@ embedded styles are maintenance debt, not a requirement for a framework change.
    comments. That PR moved no tests and left paths, runner registration, package
    scripts, and executable code unchanged. Do not
    introduce a manifest or compatibility mechanism without a current use.
-2. **Campaign operations and affected tests (this extraction).** Create, join,
+2. **Campaign operations and affected tests (merged in PR #13).** Create, join,
    leave, owner PATCH/DELETE, restore, transfer, kick/ban, and unban use plain
    CommonJS operations. Authority checks, locks, writes, and retries stay together.
    HTTP handlers preserve responses and existing post-commit socket ordering.
@@ -65,7 +66,7 @@ embedded styles are maintenance debt, not a requirement for a framework change.
    guard bodies through a DB-injected factory. A focused contract suite controls
    commit completion/failure and checks effects and response shaping. Real
    PostgreSQL suites and all existing scenarios remain intact.
-3. **Coordinated socket lifecycle.** Keep admission cancellation, eviction,
+3. **Coordinated socket lifecycle (this extraction).** Keep admission cancellation, eviction,
    tracking, and presence coordination under one owner. Preserve `src/socket.js`
    as the entry point and its existing exports. Keep `socketSessions.js` focused
    on session validity. Add a controlled delayed-`join()` regression. Extract
@@ -80,9 +81,15 @@ refusals return status/error data; unexpected errors reject. It never receives
 `req`/`res` or emits socket effects. `createCampaignMutationHandlers` is the same
 HTTP adapter factory used by the real router and controlled tests.
 
-`src/socket/roomLifecycle.js` is still only a proposed location. No tests move
-in this extraction, so no test-path or compatibility mechanism is needed.
-Relocate tests only when useful to a concrete later change.
+`createRoomLifecycle({ io, knex, isActiveMember })` owns the room lifecycle in
+`src/socket/roomLifecycle.js`. The entry point attaches it only after the existing
+user and session gates. Admission and eviction share its generation state, and
+broadcasts use its existing `socketsByUser` map. Disconnect captures game rooms
+before leaving and updates presence afterward. Broadcast implementations and
+token/ping handlers stay in the entry point. Existing exports and aliases remain.
+The admission suite imports this production factory; no VM loader or compatibility
+shim is needed. The event scanner includes the relocated lifecycle emitters.
+No tests move and no runner or npm command changes are needed.
 
 Authentication implementation is unchanged throughout this pass. No framework
 migration, TypeScript conversion, dependency upgrade, generic repository layer,
