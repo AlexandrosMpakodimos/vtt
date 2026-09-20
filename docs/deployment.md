@@ -68,7 +68,7 @@ This PR runs none of these scripts against external storage or user data.
 | Runtime/dependencies | Review locked dependency advisories and target-runtime compatibility; use justified fixes, not a blanket upgrade bundled with refactoring |
 | Media policy | Decide whether closure denies new player media grants. Current media visibility checks active membership but not `is_open`; previously issued bearer grants can remain usable until expiry |
 | Remaining authorization timing | Separately triage pre-transaction campaign policy in join and campaign authority loaded before token batch writes, plus the already recorded broader game-route timing limits. No new reproduction or remediation is part of PR #1 |
-| Unregistered media suite | Review `test-media-integration.js` prerequisites and decide its status without silently changing the recorded regression baseline |
+| Unregistered media suite | Review `tests/integration/test-media-integration.js` prerequisites and decide its status without silently changing the recorded regression baseline |
 
 Immediate session revocation, room admission generations, user socket maps,
 presence inspection, and rate-limit state are local to one process. A shared

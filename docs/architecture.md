@@ -22,7 +22,7 @@ operations (PR #13), and the coordinated socket lifecycle (PR #14).
 | `src/services/socketSessions.js` | Live session-store checks and exact-SID disconnection for this process |
 | Other `src/services/` modules | Validators, scene access, atomic caps, dice/password/email helpers, media/storage, budget, cleanup, and reconciliation |
 | `public/` | Served HTML/CSS/JavaScript, including local vendored dice assets |
-| Root `test-*.js`, `break-*.js` | Regression suites selected explicitly by `run-tests.js` |
+| `tests/unit/`, `tests/integration/`, `tests/security/` | Suites registered in order by `tests/suites.js` and executed by root `run-tests.js` |
 | `scripts/` | Test isolation wrapper/server and maintenance/development utilities |
 
 Campaign routes mount authentication once before the nested resource routers.
@@ -89,7 +89,8 @@ before leaving and updates presence afterward. Broadcast implementations and
 token/ping handlers stay in the entry point. Existing exports and aliases remain.
 The admission suite imports this production factory; no VM loader or compatibility
 shim is needed. The event scanner includes the relocated lifecycle emitters.
-No tests move and no runner or npm command changes are needed.
+Those extraction PRs moved no tests and needed no runner or npm command changes.
+The later test-organization pass below preserves their assertions and interfaces.
 
 Authentication implementation is unchanged throughout this pass. No framework
 migration, TypeScript conversion, dependency upgrade, generic repository layer,
@@ -101,10 +102,17 @@ fixes and media-policy decisions stay in [the separate backlog](deployment.md).
 These paths look unusual but have recorded reasons. Revisit them only with new
 evidence.
 
-- **Root `test-*.js` / `break-*.js`.** `run-tests.js` lists them by root filename
-  and `scripts/test-local.js` accepts only root-level names; suites read `./src/…`
-  and `public/…` relative to the root. Moving them means editing the runner, the
-  wrapper, and the suites.
+- **`tests/`.** The owner-requested organization groups the existing 71 files
+  into unit, integration and security directories. `tests/suites.js` retains the
+  exact 31/30/9 registered order and separately maps the unregistered media test.
+  The runner and isolated wrapper share its exact-basename mapping; no per-test
+  root stubs or discovery rules are used. `tests/helpers/paths.js` anchors reads
+  and scans to this repository. Inline fixtures remain in place; no fixtures
+  directory or new test framework is needed.
+- **`tests/integration/test-login-session-races-db.js`.** This existing small
+  wrapper sets PostgreSQL mode before importing the implementation now located
+  in `tests/unit/test-login-session-races.js`. Each suite still runs in a separate
+  child process; the cross-group import avoids duplicating the race scenarios.
 - **`public/scene.html`, `combat.html`, `actors.html`, `align.html`.** Standalone
   dev-harness pages no longer linked from the app UI. Eight suites load them
   through JSDOM, `test-game-ui.js` compares their element IDs with `game.html`,
@@ -117,7 +125,7 @@ evidence.
   tree.
 - **`src/db/seeds/`.** Configured in `knexfile.js`; no seed files are tracked.
   An empty local directory may exist and does not need removal.
-- **`test-media-integration.js`.** Present but unregistered; see [testing](testing.md).
+- **`tests/integration/test-media-integration.js`.** Present but unregistered; see [testing](testing.md).
 - **Untracked local files.** Backups, repair scripts, and diagnostics are not part
   of the repository, and their owner decides whether to archive or remove them.
   Ignore rules only prevent accidental staging; they do not mean a file was

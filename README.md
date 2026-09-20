@@ -51,7 +51,9 @@ described in [deployment](docs/deployment.md).
 ## Existing commands
 
 Run commands from the repository root. Test setup and safety requirements are
-in [docs/testing.md](docs/testing.md).
+in [docs/testing.md](docs/testing.md). Suites are organized under `tests/unit/`,
+`tests/integration/`, and `tests/security/`; `tests/suites.js` preserves their
+explicit registration and order. Existing npm commands remain unchanged.
 
 | Command | Current purpose |
 | --- | --- |

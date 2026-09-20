@@ -18,14 +18,22 @@ run (30 / 1,973, 30 / 1,314, 9 / 485; 3,772 total). Do not rerun either merely
 to establish context.
 
 The authoritative registration and order are the `UNIT`, `DB`, and `SEC` arrays
-in `run-tests.js`. They are explicit lists, not automatic discovery, and
+in `tests/suites.js`. They are explicit lists, not automatic discovery, and
 currently register 31 / 30 / 9 suites, matching the recorded run. All original
 suite entries retain their relative order.
 
-`test-media-integration.js` is present but not registered. Its historical usage
-comment is not the current isolated setup procedure. Its prerequisites and
-runner inclusion need a separate decision; do not count it among the 70 recorded
-suites or silently add it to the baseline.
+Suites live in `tests/unit/`, `tests/integration/`, and `tests/security/`.
+The root `run-tests.js` remains the runner; npm commands are unchanged.
+`tests/helpers/paths.js` resolves filesystem reads from the repository location,
+not the caller's working directory. Inline fixtures remain in their suites.
+
+`tests/integration/test-media-integration.js` is manual-only and separately
+mapped, never registered in `UNIT`, `DB`, `SEC`, or `all`. Explicit invocation is
+`node scripts/test-local.js test-media-integration.js` after starting the isolated
+server. Its conditional checks and acceptance of 200/502/429 on one media path
+remain unchanged; this is not proof of successful byte delivery. Prerequisite
+review and runner inclusion need a separate decision. Do not count it among the
+70 recorded suites or silently add it to the baseline.
 
 ## Existing isolated environment
 
@@ -68,9 +76,22 @@ node scripts/test-local.js test-campaigns.js
 ```
 
 These are alternatives to choose as needed, not a requirement to run every line
-after every edit. The wrapper also accepts existing root-level `break-NAME.js`
-filenames. A single-suite wrapper invocation verifies the test server even for
-a unit filename; unit suites can instead run directly with Node from the root.
+after every edit. The wrapper selects exact known `test-NAME.js` or
+`break-NAME.js` basenames through `tests/suites.js`; the familiar single-suite
+commands remain valid after relocation. Unknown names, inherited object-property
+names and paths (including traversal) are refused. A single-suite wrapper
+invocation verifies the test server even for a unit filename; unit suites can
+instead run directly without that server, for example:
+
+```sh
+node tests/unit/test-events.js
+```
+
+Runner and wrapper children use the repository root as their working directory.
+Launcher paths and test filesystem reads are resolved from module locations, so
+invoking an absolute launcher or unit-suite path from another directory works.
+Individual wrapper runs retain standalone exit/report behavior; use the central
+registered security group for closeout, as described below.
 
 The isolated server is plain Node, not nodemon. Restart it after executable
 server changes; an identity check does not prove it loaded the latest source.
@@ -93,7 +114,7 @@ plus explicit player re-entry restores game updates. Use isolated fixtures.
 
 ## Runner contracts
 
-- Keep child-process suite isolation and the existing explicit group order.
+- Keep child-process suite isolation, explicit root `cwd`, and the existing group order.
   Database/security suites run sequentially because shared fixtures and exact
   cap assertions can interfere. Concurrency inside a race suite is intentional.
 - Missing files, crashes, nonzero exits, and reported assertion/security failures
@@ -126,7 +147,7 @@ must also be cleaned up. Multi-tab tracking, disconnect presence and game/lobby
 separation are covered by the same suite. These controlled adapters supplement
 the real HTTP/socket suites; they do not replace the endpoint browser check.
 
-`test-events.js` scans `src/routes`, `src/socket.js`, and
+`tests/unit/test-events.js` scans `src/routes`, `src/socket.js`, and
 `src/socket/roomLifecycle.js`. The server-handler check includes both socket
 files too, so relocation does not silently remove coverage.
 Whole-script JSDOM loading is distinct from backend source snippets; frontend

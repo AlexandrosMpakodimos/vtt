@@ -1,8 +1,17 @@
 const fs = require('node:fs');
-const path = require('node:path');
 const { spawn } = require('node:child_process');
 
-const root = path.resolve(__dirname, '..');
+const { root, rootPath } = require('../tests/helpers/paths');
+const { resolveSuite } = require('../tests/suites');
+const command = process.argv[2];
+const suite = resolveSuite(command);
+const commands = new Set(['server', 'check', 'unit', 'db', 'sec', 'all']);
+
+// Refuse arbitrary paths and inherited object-property names before configuration.
+if (!commands.has(command) && !suite) {
+  console.error('Usage: node scripts/test-local.js server|check|unit|db|sec|all|test-FILE.js (exact mapped basename)');
+  process.exit(1);
+}
 process.chdir(root);
 process.env.NODE_ENV = 'test';
 
@@ -82,22 +91,18 @@ function launch(args) {
 }
 
 (async () => {
-  const command = process.argv[2];
-
   if (command === 'server') {
-    launch(['scripts/test-memory-server.js']);
+    launch([rootPath('scripts/test-memory-server.js')]);
   } else if (command === 'check') {
     await verifyServer();
   } else if (['unit', 'db', 'sec', 'all'].includes(command)) {
     if (command !== 'unit') await verifyServer();
-    launch(['run-tests.js', command]);
-  } else if (
-    command &&
-    /^(test-|break-)[a-z0-9-]+\.js$/.test(command) &&
-    fs.existsSync(path.join(root, command))
-  ) {
+    launch([rootPath('run-tests.js'), command]);
+  } else if (suite) {
+    if (!fs.existsSync(rootPath(suite.file))) throw new Error('Mapped suite file is missing.');
     await verifyServer();
-    launch([command]);
+    if (!suite.registered) console.log('Manual-only diagnostic (not in registered groups):', command);
+    launch([rootPath(suite.file)]);
   } else {
     throw new Error(
       'Usage: node scripts/test-local.js server|check|unit|db|sec|all|test-FILE.js'

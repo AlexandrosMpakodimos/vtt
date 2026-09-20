@@ -106,7 +106,7 @@ consistency.
 
 ## Regression map
 
-Names below are existing root-level suites; use the isolated wrapper for
+Names below are suite basenames mapped by `tests/suites.js`; use the isolated wrapper for
 database/server-backed suites as described in [testing](testing.md).
 
 | Contract | Existing representative coverage |
