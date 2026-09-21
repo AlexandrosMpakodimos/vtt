@@ -85,6 +85,92 @@ Neither route touches unmarked rows or loosens the preconditions of other
 suites. An interrupted run can also leave the budget ledger row with the counters
 this suite set; the budget suites reset that row themselves before using it.
 
+## Media proxy Worker package
+
+`workers/media-proxy/` is a separate package with its own manifest, lockfile and
+dependency (Miniflare, which brings workerd). Its tests are not registered in
+`tests/suites.js`, are not part of `npm test`, `npm run test:db`, `npm run test:sec`
+or `npm run test:all`, and do not change the app's dependency tree.
+
+| Command, from `workers/media-proxy/` | What it runs | Needs |
+| --- | --- | --- |
+| `npm test` | Unit and runtime tests | `npm ci` in that directory only |
+| `npm run test:unit` | The Worker handler in Node with an injected mock upstream | Same |
+| `npm run test:runtime` | The same Worker on workerd (through Miniflare) with the upstream mocked at the network boundary | Same |
+| `npm run test:integration` | The Worker, in Node and in workerd, forwarding over loopback to the app's real media router; then four failure checks that re-run the same file as child processes with a fault | `npm ci` here and at the repository root; the isolated test database |
+
+Three kinds of evidence are kept apart:
+
+| Kind | Tests | What is real | What is not |
+| --- | --- | --- | --- |
+| Mocked | Unit and runtime | The Worker code | The upstream: every answer is scripted |
+| Local integration | `test:integration` | The Worker code, the app's media router with the merged proxy gate, Postgres fixtures | Object storage (stubbed with a read counter), every secret (synthetic), and the network (the HTTPS upstream is mapped to a loopback listener) |
+| Deployment evidence | None yet | | Nothing has run on Render or Cloudflare. TLS, Host and header forwarding, a sleeping service, bandwidth, edge behaviour and platform logging are unverified. |
+
+The integration check forces `NODE_ENV=test` before any app module loads, so the
+knexfile allows only the dedicated `vtt_test` database and `vtt_test_runner` role
+and never falls back to `DATABASE_URL`. A missing test configuration fails the run;
+it never skips. It does not use the isolated test server.
+
+Its fixtures carry ownership markers: campaign names starting
+`__vtt_media_worker_integration__` and user emails ending
+`@media-worker-integration.invalid`. Setup records what it has actually created,
+step by step. Teardown closes exactly those resources, guards every database
+operation on its own, and always restores local state (environment, console
+methods, module-cache entries, installed storage stubs) even if setup or the
+database cleanup failed. It removes this run's rows by marker and by recorded id,
+restores the budget ledger row, and closes the listener, the workerd instances and
+the database pool. A setup failure stays the reported failure. An ordinary test
+after the suite asserts that teardown cleaned up completely, because a failing
+after-hook alone does not fail the runner's summary or exit code.
+
+Four failure checks re-run the same file as a child process, without the runner's
+forced exit, and read a teardown report that the child prints: a real
+configuration rejection before Knex is assigned (no test URL and an empty home
+directory), an injected failure after the pool exists, an injected failure after
+the listener and fixtures exist, and an injected failure in the database cleanup.
+Each child must exit nonzero by itself, report that local state was restored and
+that everything it created was closed, and keep the original failure visible. The
+injections are set only by these checks through `VTT_WORKER_INTEGRATION_*`
+variables, and are refused outside a child run.
+
+If a run is interrupted, its committed rows remain and would make the registered
+`test-assets.js` refuse to start. Run `npm run test:integration` once by itself, or
+remove only its rows:
+
+```sql
+BEGIN;
+DELETE FROM assets WHERE campaign_id IN (SELECT id FROM campaigns WHERE starts_with(name, '__vtt_media_worker_integration__')) OR user_id IN (SELECT id FROM users WHERE email LIKE '%@media-worker-integration.invalid');
+DELETE FROM campaign_members WHERE campaign_id IN (SELECT id FROM campaigns WHERE starts_with(name, '__vtt_media_worker_integration__'));
+DELETE FROM campaigns WHERE starts_with(name, '__vtt_media_worker_integration__');
+DELETE FROM users WHERE email LIKE '%@media-worker-integration.invalid';
+COMMIT;
+```
+
+Owner verification on macOS with PostgreSQL 17 passed. Before dependency
+remediation, the application regression passed 71 suites and 4,008 assertions
+with zero failures (215.3 seconds). After applying the Worker dependency
+overrides, a clean npm ci, npm audit (zero vulnerabilities), npm ls --all,
+and the Sharp load/PNG round-trip check passed. Worker unit/runtime tests
+passed 87 of 87, and Worker-to-router integration passed 30 of 30, including
+teardown and partial-setup failure checks. Integration uses local PostgreSQL
+and stubbed storage; these results do not establish live Cloudflare, Render
+or R2 delivery.
+
+`npm audit` in `workers/media-proxy/` reports no advisories. That depends on
+`overrides` in the package manifest, which raise two exact pins inside Miniflare
+4.20260730.0 (`sharp` 0.35.4 and `undici` 7.29.0), because no stable Miniflare
+release pins fixed versions yet. The package README records what was checked and
+when the overrides can be removed.
+
+Two workerd behaviours found by the integration check are worth knowing. The
+runtime adds `Cache-Control: no-cache`, `Pragma: no-cache` and `cf-worker` to the
+Worker's outbound request (from `cache: 'no-store'` and its own identification),
+beyond the header allowlist the Worker code sets. And a streamed GET reaches the
+client without `Content-Length` in workerd; the Worker never sends a wrong one.
+Neither weakens the reviewed contract. Whether the real edge behaves the same is a
+deployment-only check.
+
 ## Existing isolated environment
 
 `knexfile.js` in test mode uses `TEST_DATABASE_URL`, or reads that key from the

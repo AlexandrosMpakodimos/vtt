@@ -1,0 +1,17 @@
+// Reference configuration for review. NOT deployed, NOT validated by `wrangler`.
+// Secrets are never written here; MEDIA_PROXY_SECRET would be set with `wrangler secret put`.
+{
+  "name": "vtt-media",
+  "main": "src/index.js",
+  "compatibility_date": "2026-01-01",
+  "workers_dev": true,
+  // Unverified key name: check that per-version preview URLs can be disabled, so the
+  // Worker is reachable on exactly one hostname.
+  "preview_urls": false,
+  // Workers Logs write request details (which include this Worker's token-bearing URL)
+  // once enabled. Keep them off. Do not add Logpush, Tail Workers or tracing.
+  "observability": { "enabled": false },
+  "vars": {
+    "UPSTREAM_ORIGIN": "https://REPLACE-ME.onrender.com"
+  }
+}
