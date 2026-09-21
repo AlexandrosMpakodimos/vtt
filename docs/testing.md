@@ -20,8 +20,9 @@ Earlier audit results remain [historical evidence](history/authorization-audit.m
 
 The authoritative registration and order are the `UNIT`, `DB`, and `SEC` arrays
 in `tests/suites.js`. They are explicit lists, not automatic discovery, and
-currently register 31 / 30 / 9 suites, matching the recorded run. All original
-suite entries retain their relative order.
+currently register 31 / 31 / 9 suites. The recorded run above predates
+`test-media-proxy-gate.js`, the one database/integration suite added since. All
+original suite entries retain their relative order.
 
 Suites live in `tests/unit/`, `tests/integration/`, and `tests/security/`.
 The root `run-tests.js` remains the runner; npm commands are unchanged.
@@ -35,6 +36,54 @@ server. Its conditional checks and acceptance of 200/502/429 on one media path
 remain unchanged; this is not proof of successful byte delivery. Prerequisite
 review and runner inclusion need a separate decision. Do not count it among the
 70 recorded suites or silently add it to the baseline.
+
+## Media gate suite (host and proxy modes)
+
+`tests/integration/test-media-proxy-gate.js` is the last entry in `DB`. It drives
+the real media router over real HTTP with real Postgres fixtures and a stubbed
+object read, once in host mode and once with `MEDIA_PROXY_SECRET` set. It starts
+its own loopback listeners and does not use the isolated test server. It covers
+proxy authentication (including refusal of a duplicated `X-Media-Proxy-Auth`
+header in any capitalisation), the unchanged token, asset, metering and cache
+behaviour, and secret validation. Its fixtures carry ownership markers: campaign
+names starting `__vtt_media_proxy_gate_test__` and user emails ending
+`@media-proxy-gate.invalid`. One check creates unmarked look-alike rows to prove
+the marker cleanup is narrow. It does so inside a database transaction that is
+always rolled back, so an exception, a lost connection or a killed process leaves
+none of them behind. Teardown removes and verifies everything the suite created by
+recorded id, not only rows that carry the markers.
+
+Owner verification on macOS with PostgreSQL 17 passed: 71 suites,
+4,008 assertions, zero failures (104.1 seconds). The new media proxy gate
+suite also passed standalone with 73 assertions. The manual host-mode
+diagnostic passed 10 assertions; its byte read returned the expected 502
+without R2, so it does not establish live storage delivery.
+
+**Interruption recovery.** A killed run leaves the marked rows it had committed;
+the look-alike block leaves nothing. Starting the suite again removes only rows
+carrying its markers, but that cannot protect earlier suites in the next full run:
+`test-assets.js`, for example, refuses to start while stored test assets remain.
+After an interruption, run this suite once by itself, with the isolated server
+running, before the next full run:
+
+```
+node scripts/test-local.js test-media-proxy-gate.js
+```
+
+Alternatively, against `vtt_test` with the test role, remove only its rows:
+
+```sql
+BEGIN;
+DELETE FROM assets WHERE campaign_id IN (SELECT id FROM campaigns WHERE starts_with(name, '__vtt_media_proxy_gate_test__')) OR user_id IN (SELECT id FROM users WHERE email LIKE '%@media-proxy-gate.invalid');
+DELETE FROM campaign_members WHERE campaign_id IN (SELECT id FROM campaigns WHERE starts_with(name, '__vtt_media_proxy_gate_test__'));
+DELETE FROM campaigns WHERE starts_with(name, '__vtt_media_proxy_gate_test__');
+DELETE FROM users WHERE email LIKE '%@media-proxy-gate.invalid';
+COMMIT;
+```
+
+Neither route touches unmarked rows or loosens the preconditions of other
+suites. An interrupted run can also leave the budget ledger row with the counters
+this suite set; the budget suites reset that row themselves before using it.
 
 ## Existing isolated environment
 
