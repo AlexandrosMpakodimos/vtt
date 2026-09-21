@@ -37,7 +37,11 @@ const budget = require('./storageBudget');
 
 // The media hostname. When unset, the gateway is not enabled (reads continue on
 // whatever path the deployment currently uses). When set, media is served ONLY
-// for requests whose Host matches, and never on the app origin.
+// on the media origin, never on the app origin. Two modes decide what "on the
+// media origin" means (see onMediaHost). In host mode, the default, the request
+// Host must match this value. In proxy mode (MEDIA_PROXY_SECRET set) the request
+// must carry the media proxy's secret header instead and Host is ignored; this
+// value then only names the public media origin that browser-facing URLs use.
 const MEDIA_HOST = (process.env.MEDIA_HOST || '').toLowerCase().replace(/:.*$/, '');
 
 // Public origin used when generating browser-facing media URLs. Production
@@ -65,13 +69,76 @@ const MEDIA_ORIGIN = (() => {
 const TOKEN_SECRET = process.env.MEDIA_TOKEN_SECRET || process.env.SESSION_SECRET || '';
 const TOKEN_TTL_SECONDS = 300;
 
+// Proxy mode (optional). MEDIA_PROXY_SECRET is a secret shared between this app
+// and a media proxy (a Worker on its own hostname). It is NOT an authorisation
+// secret, so it must differ from the media token secret (as resolved above,
+// including its SESSION_SECRET fallback) and from SESSION_SECRET: no secret
+// should open more than one door. Unset or blank leaves host mode. Error
+// messages never include a secret.
+const PROXY_HEADER = 'x-media-proxy-auth';
+const PROXY_SECRET = process.env.MEDIA_PROXY_SECRET || '';
+if (PROXY_SECRET) {
+  if (PROXY_SECRET.length < 32) {
+    throw new Error('MEDIA_PROXY_SECRET must be at least 32 characters');
+  }
+  if (PROXY_SECRET === TOKEN_SECRET) {
+    throw new Error('MEDIA_PROXY_SECRET must differ from the media token secret');
+  }
+  if (PROXY_SECRET === (process.env.SESSION_SECRET || '')) {
+    throw new Error('MEDIA_PROXY_SECRET must differ from SESSION_SECRET');
+  }
+}
+const sha256 = (value) => crypto.createHash('sha256').update(value).digest();
+const PROXY_DIGEST = PROXY_SECRET ? sha256(PROXY_SECRET) : null;
+
 function isEnabled() { return !!MEDIA_HOST; }
 
-// Host gate. Media is served only on the dedicated media host, so the separate-
-// origin boundary cannot be lost to a stray route on the app origin. Returns
-// true if this request is on the media host.
+// The single X-Media-Proxy-Auth value, or null when the header is absent or
+// appears more than once. Raw header names are compared case-insensitively, so
+// duplicates under any capitalisation are caught. Node's parsed req.headers is
+// deliberately not used: it joins repeated headers with ", ", which could turn
+// two values into one that happens to equal a secret containing that text.
+function singleProxyHeader(req) {
+  const raw = req.rawHeaders;
+  if (!Array.isArray(raw)) return null;
+  let value = null;
+  for (let i = 0; i + 1 < raw.length; i += 2) {
+    if (String(raw[i]).toLowerCase() !== PROXY_HEADER) continue;
+    if (value !== null) return null;
+    value = raw[i + 1];
+  }
+  return typeof value === 'string' ? value : null;
+}
+
+// Origin gate. Media is served only on the media origin, so the separate-origin
+// boundary cannot be lost to a stray route on the app origin. Returns true if
+// this request is on the media origin. Two modes:
+//
+//   HOST MODE (MEDIA_PROXY_SECRET unset; the default and the historical
+//   behaviour): the request's Host header, port removed, must equal MEDIA_HOST.
+//
+//   PROXY MODE (MEDIA_PROXY_SECRET set): a media proxy fetches from this app, so
+//   the request's Host is the app's own hostname and cannot identify the media
+//   origin. The request must instead carry the shared secret in exactly one
+//   X-Media-Proxy-Auth header. Host is never consulted: a correct Host without
+//   the header is refused. The header proves only that the request came through
+//   the proxy; it authorises no asset. The signed media token and the asset
+//   checks still decide every read.
+//
+// Proxy-mode matching is exact. A header that appears more than once, under any
+// capitalisation, is rejected outright, never joined or picked from. The secret
+// and the presented value are each hashed to a fixed-length SHA-256 digest, and
+// the digests are compared with crypto.timingSafeEqual, which requires
+// equal-length buffers. Hashing takes longer for longer input, so this does not
+// hide the length of the presented value; it makes the comparison of the
+// digests itself safe.
 function onMediaHost(req) {
   if (!MEDIA_HOST) return false;
+  if (PROXY_DIGEST) {
+    const presented = singleProxyHeader(req);
+    if (presented === null) return false;
+    return crypto.timingSafeEqual(sha256(presented), PROXY_DIGEST);
+  }
   const host = String(req.headers.host || '').toLowerCase().replace(/:.*$/, '');
   return host === MEDIA_HOST;
 }
