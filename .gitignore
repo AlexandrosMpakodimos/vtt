@@ -17,3 +17,6 @@ LIBRARY_POLISH_UPDATE.md
 OWNER_STATS_UPDATE.md
 PARTY_UPDATE.md
 SPELLBOOK_UPDATE.md
+# Media proxy Worker: local secrets for `wrangler dev` and wrangler's working directory
+workers/*/.dev.vars
+workers/*/.wrangler/

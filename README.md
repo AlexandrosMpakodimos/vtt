@@ -37,6 +37,7 @@ without nodemon; it does not establish a production configuration.
 | `npm run migrate` | Apply migrations for the selected environment |
 | `npm run migrate:make -- NAME` | Create a migration |
 | `npm run clean:bucket` | Storage maintenance; read the operational guide first |
+| `cd workers/media-proxy && npm ci && npm test` | Media proxy Worker tests; a separate package with its own dependencies. `npm run test:integration` there also needs the app's dependencies and the isolated test database |
 
 ## Maintainer guide
 
@@ -44,6 +45,7 @@ without nodemon; it does not establish a production configuration.
 - [Permission, transaction and socket contracts](docs/invariants.md)
 - [Tests, fixtures and isolation](docs/testing.md)
 - [Configuration, operations and deployment backlog](docs/deployment.md)
+- [Media proxy Worker package](workers/media-proxy/README.md) (own manifest, lockfile and tests; not deployed)
 
 The application is locally tested; public deployment remains unfinished.
 Historical audit evidence is in [the audit archive](docs/history/authorization-audit.md).

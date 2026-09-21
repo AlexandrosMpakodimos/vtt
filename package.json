@@ -18,6 +18,7 @@
   "nodemonConfig": {
     "ignore": [
       "tests/**",
+      "workers/**",
       "public/**",
       "*.md"
     ]

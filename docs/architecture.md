@@ -14,6 +14,7 @@
 | `src/socket.js` | Session-enforced connection wiring, broadcasts, movement and pings |
 | `src/socket/roomLifecycle.js` | Admission generations, eviction, tracking and presence |
 | `scripts/` | Test launchers and storage/development utilities |
+| `workers/media-proxy/` | Separate Cloudflare Worker package (own manifest, lockfile and tests): a pass-through proxy in front of `/media/:id`. Authorization, metering and caching stay in the app. Not deployed |
 
 Campaign routes mount authentication before nested resources. Middleware checks
 are not a substitute for fresh authority checks inside protected transactions;
@@ -57,8 +58,9 @@ These pairs are different responsibilities, not obsolete copies.
 
 ## Tests and historical material
 
-`tests/suites.js` explicitly registers 31 unit, 30 integration and 9 security
-suites. `run-tests.js` remains at the root; `scripts/test-local.js` supplies the
+`tests/suites.js` explicitly registers 31 unit, 31 integration and 9 security
+suites. The media proxy Worker's tests are a separate package and are not part
+of these registered groups; see [testing](testing.md). `run-tests.js` remains at the root; `scripts/test-local.js` supplies the
 isolated environment. Filesystem reads use `tests/helpers/paths.js`.
 
 `tests/fixtures/pages/` preserves the scene, actor, combat and alignment DOM
