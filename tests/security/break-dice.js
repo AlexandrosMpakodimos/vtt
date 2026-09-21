@@ -240,9 +240,10 @@ const median = (xs) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)];
     injAt.status === 400, `got ${injAt.status} — @ is the predetermined-result operator client-side`);
 
   // ================= API8: the 3D layer did not weaken the CSP =============
-  const page = await fetch(`${BASE}/combat.html`, { headers: { Cookie: gm.cookie } });
+  const page = await fetch(`${BASE}/game.html`, { headers: { Cookie: gm.cookie } });
+  ok('the game page is served successfully', page.status === 200, `got ${page.status}`);
   const csp = page.headers.get('content-security-policy') || '';
-  ok('a CSP header is present on the harness page', csp.length > 0);
+  ok('a CSP header is present on the game page', csp.length > 0);
   ok('script-src is still self-only (no CDN was added for the dice)',
     /script-src[^;]*'self'/.test(csp) && !/script-src[^;]*https:/.test(csp), csp);
   ok('no wasm-unsafe-eval was needed (the ThreeJS fork avoids AmmoJS)',

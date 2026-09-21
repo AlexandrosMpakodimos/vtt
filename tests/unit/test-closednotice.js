@@ -25,7 +25,7 @@ const t = (name, cond, extra = '') => {
   if (cond) { pass += 1; } else { fail += 1; console.log(`  FAIL  ${name}  ${extra}`); }
 };
 
-window.eval(fs.readFileSync(rootPath('public/js/closednotice.js'), 'utf8'));
+window.eval(fs.readFileSync(rootPath('public/js/ui/closednotice.js'), 'utf8'));
 const N = window.VTTClosedNotice;
 const banner = () => document.querySelector('.vtt-closed-notice');
 const visible = () => !!banner() && banner().style.display === 'block';

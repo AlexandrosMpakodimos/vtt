@@ -2,7 +2,7 @@ const { rootPath } = require('../helpers/paths');
 // Fog-of-war UI suite. jsdom only — no server and no database:
 //   node tests/unit/test-fog-ui.js
 //
-// Loads the REAL public/scene.html + public/js/scene.js, like test-marquee.js
+// Loads the REAL tests/fixtures/pages/scene.html + public/js/game/scene.js, like test-marquee.js
 // and test-shortcuts.js do, and drives them with synthetic events.
 //
 // The two things most worth gating here:
@@ -18,7 +18,7 @@ const { rootPath } = require('../helpers/paths');
 // what it sends. Whether the server accepts it is test-fog.js / break-fog.js.
 
 const { JSDOM } = require('jsdom'); const fs = require('fs');
-const dom = new JSDOM(fs.readFileSync(rootPath('public/scene.html'),'utf8'), { runScripts:'outside-only', url:'http://localhost:3000/scene.html' });
+const dom = new JSDOM(fs.readFileSync(rootPath('tests/fixtures/pages/scene.html'),'utf8'), { runScripts:'outside-only', url:'http://localhost:3000/scene.html' });
 const { window } = dom; const { document } = window;
 window.io=()=>({on(){},emit(){}});
 // Record every write the client attempts, so we can assert on payloads.
@@ -34,7 +34,7 @@ window.Element.prototype.setPointerCapture=function(){}; window.Element.prototyp
 let pass=0, fail=0;
 window.__check=(name,cond,d='')=>{ if(cond){pass++;console.log('  PASS  '+name);} else {fail++;console.log('  FAIL  '+name+'  '+d);} };
 
-window.eval(fs.readFileSync(rootPath('public/js/scene.js'),'utf8') + `
+window.eval(fs.readFileSync(rootPath('public/js/game/scene.js'),'utf8') + `
 ;(function(){
   scene={id:'S',width:1000,height:800,img_url:null}; currentCampaignOwnerId='GM'; me={id:'GM'};
   campaignId='C';

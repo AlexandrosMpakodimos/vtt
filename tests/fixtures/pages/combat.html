@@ -117,7 +117,7 @@
 <body>
   <h1>VTT combat / chat / dice (dev harness)</h1>
   <p class="muted">
-    Log in via <a href="/auth.html">/auth.html</a>, pick a campaign on
+    Log in via <a href="/">the landing page</a>, pick a campaign on
     <a href="/dashboard.html">/dashboard.html</a>. <span id="whoami">checking…</span>
   </p>
   <p class="muted">
@@ -292,9 +292,9 @@
   <!-- An ES module, because the vendored dice library ships as one. It sets
        window.VTTDice and fires `vtt-dice-ready`; combat.js is a classic script
        and waits for that event rather than assuming load order. -->
-  <script type="module" src="/js/dice3d.js"></script>
-  <script src="/js/imageframe.js"></script>
-  <script src="/js/closednotice.js"></script>
-  <script src="/js/combat.js"></script>
+  <script type="module" src="/js/game/dice3d.js"></script>
+  <script src="/js/ui/imageframe.js"></script>
+  <script src="/js/ui/closednotice.js"></script>
+  <script src="/js/game/combat.js"></script>
 </body>
 </html>

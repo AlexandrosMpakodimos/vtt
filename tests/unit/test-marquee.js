@@ -1,6 +1,6 @@
 const { rootPath } = require('../helpers/paths');
 const { JSDOM } = require('jsdom'); const fs = require('fs');
-const dom = new JSDOM(fs.readFileSync(rootPath('public/scene.html'),'utf8'), { runScripts:'outside-only', url:'http://localhost:3000/scene.html' });
+const dom = new JSDOM(fs.readFileSync(rootPath('tests/fixtures/pages/scene.html'),'utf8'), { runScripts:'outside-only', url:'http://localhost:3000/scene.html' });
 const { window } = dom; const { document } = window;
 window.io=()=>({on(){},emit(){}}); window.fetch=async()=>({status:200,json:async()=>({user:{id:'GM'}})});
 window.CSS={escape:s=>s};
@@ -13,7 +13,7 @@ window.Element.prototype.setPointerCapture=function(id){ window.__captures.push(
 window.Element.prototype.releasePointerCapture=function(id){ window.__captures.push({op:'release', id:id, el:this.id}); };
 let pass=0, fail=0;
 window.__check=(name,cond,d='')=>{ if(cond){pass++;console.log('  PASS  '+name);} else {fail++;console.log('  FAIL  '+name+'  '+d);} };
-window.eval(fs.readFileSync(rootPath('public/js/scene.js'),'utf8') + `
+window.eval(fs.readFileSync(rootPath('public/js/game/scene.js'),'utf8') + `
 ;(function(){
   scene={id:'S',width:1000,height:800,img_url:null}; currentCampaignOwnerId='GM'; me={id:'GM'};
   upsertToken({id:'T1',scene_id:'S',created_by:'GM',name:'A',x:1,y:1,width:1,height:1,rotation:0,hidden:false,locked:false,conditions:[]});

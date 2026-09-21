@@ -4,7 +4,7 @@ const { rootPath } = require('../helpers/paths');
 // Needs NO server, NO database and NO browser:
 //     node tests/unit/test-dice3d.js
 //
-// It `eval`s the REAL public/js/dice3d.js with its ES import stripped, the same
+// It `eval`s the REAL public/js/game/dice3d.js with its ES import stripped, the same
 // way test-fog-ui.js and test-sheet-ui.js exercise the real client source rather
 // than a copy. A copy would pass forever after the original drifted.
 //
@@ -30,7 +30,7 @@ const t = (name, cond, extra = '') => {
 };
 
 // Load the real module source, minus the parts that need a browser.
-const src = fs.readFileSync(rootPath('./public/js/dice3d.js'), 'utf8')
+const src = fs.readFileSync(rootPath('./public/js/game/dice3d.js'), 'utf8')
   .replace(/^import .*$/m, '')                 // the vendored ES import
   .replace(/^export /gm, '')                   // export keywords
   .replace(/window\.VTTDice[\s\S]*$/m, '');    // the global bridge + dispatchEvent
@@ -379,7 +379,7 @@ console.log('\n--- SOURCE INVARIANT: nothing may gate on the library promise ---
 // simulation), so this is a SOURCE-LEVEL guard instead. Crude, and worth it:
 // a rule that has been broken twice needs something that fails loudly when it is
 // broken a third time.
-const raw = fs.readFileSync(rootPath('./public/js/dice3d.js'), 'utf8');
+const raw = fs.readFileSync(rootPath('./public/js/game/dice3d.js'), 'utf8');
 const code = raw.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
 t('no `await box.roll(...)`', !/await\s+box\s*\.\s*roll\s*\(/.test(code));
 t('no `await box.add(...)`', !/await\s+box\s*\.\s*add\s*\(/.test(code));

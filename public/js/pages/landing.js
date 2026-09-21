@@ -1,4 +1,4 @@
-// public/js/landing.js — the landing page's behaviour: theme toggle + live
+// public/js/pages/landing.js — the landing page's behaviour: theme toggle + live
 // system-follow, URL-param handling (reset links land here), session check,
 // the auth-card state machine (spec §4), and pointer parallax (spec §7).
 //

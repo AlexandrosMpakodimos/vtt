@@ -2,7 +2,7 @@ const { rootPath } = require('../helpers/paths');
 // Character page smoke suite. jsdom only — no server, no database:
 //   node tests/unit/test-actors-ui.js
 //
-// public/js/actors.js had NO runtime coverage. test-sheet-ui.js loads
+// public/js/game/actors.js had NO runtime coverage. test-sheet-ui.js loads
 // actors.html, sheet.js and itemsheet.js — it never evaluates actors.js — which
 // is exactly the blind spot that let an edit delete a function from combat.js
 // and kill that whole page on load. Two 500-line client files sharing one gap
@@ -17,7 +17,7 @@ const { rootPath } = require('../helpers/paths');
 const { JSDOM } = require('jsdom');
 const fs = require('fs');
 
-const dom = new JSDOM(fs.readFileSync(rootPath('public/actors.html'), 'utf8'), {
+const dom = new JSDOM(fs.readFileSync(rootPath('tests/fixtures/pages/actors.html'), 'utf8'), {
   runScripts: 'outside-only',
   url: 'http://localhost:3000/actors.html',
 });
@@ -132,12 +132,12 @@ try {
   // Loading them here mirrors the real page's <script> order — and the first run
   // of this suite failed on exactly that omission, which is a fair illustration
   // of why an 800-line client file wants a load probe at all.
-  window.eval(fs.readFileSync(rootPath('public/js/imageframe.js'), 'utf8'));
-  window.eval(fs.readFileSync(rootPath('public/js/sheet.js'), 'utf8'));
-  window.eval(fs.readFileSync(rootPath('public/js/itemsheet.js'), 'utf8'));
-  window.eval(fs.readFileSync(rootPath('public/js/spellsheet.js'), 'utf8'));
-  window.eval(fs.readFileSync(rootPath('public/js/actorsheet.js'), 'utf8'));
-  window.eval(fs.readFileSync(rootPath('public/js/actors.js'), 'utf8').replace(/\}\)\(\);\s*$/, `window.__inventoryTest = { setRoster(gm, rows) { isGm = gm; me = { id: 'U1' }; campaign = { id: 'C1' }; selectedActor = null; actors = rows; Object.assign(charFilter, { q: '', type: '', control: '', party: '' }); charFiltersWired = false; renderActors(); }, renderInventory, renderSheet, loadSpellbook, renderSpellbook, renderSpellChoices, learnSpell, patchSpellbook, forgetSpell, seedBook(entries) { spellbook = entries; spellbookActorId = selectedActor; spellbookAvailable = true; spellbookLoading = false; spells = [{ id: 'B1', name: 'Light', level: 0 }, { id: 'B2', name: 'Shield', level: 1 }]; renderSpellbook(); renderSpellChoices(); }, set(gm, owner, npc = false) { isGm = gm; me = { id: 'U1' }; campaign = { id: 'C1' }; selectedActor = 'INV-A'; actors = [{ id: 'INV-A', name: 'Test mage', user_id: owner, is_npc: npc, ...(npc ? {} : { hp_max: 10, hp_current: 10, data: {} }) }]; } }; })();`));
+  window.eval(fs.readFileSync(rootPath('public/js/ui/imageframe.js'), 'utf8'));
+  window.eval(fs.readFileSync(rootPath('public/js/sheets/sheet.js'), 'utf8'));
+  window.eval(fs.readFileSync(rootPath('public/js/sheets/itemsheet.js'), 'utf8'));
+  window.eval(fs.readFileSync(rootPath('public/js/sheets/spellsheet.js'), 'utf8'));
+  window.eval(fs.readFileSync(rootPath('public/js/sheets/actorsheet.js'), 'utf8'));
+  window.eval(fs.readFileSync(rootPath('public/js/game/actors.js'), 'utf8').replace(/\}\)\(\);\s*$/, `window.__inventoryTest = { setRoster(gm, rows) { isGm = gm; me = { id: 'U1' }; campaign = { id: 'C1' }; selectedActor = null; actors = rows; Object.assign(charFilter, { q: '', type: '', control: '', party: '' }); charFiltersWired = false; renderActors(); }, renderInventory, renderSheet, loadSpellbook, renderSpellbook, renderSpellChoices, learnSpell, patchSpellbook, forgetSpell, seedBook(entries) { spellbook = entries; spellbookActorId = selectedActor; spellbookAvailable = true; spellbookLoading = false; spells = [{ id: 'B1', name: 'Light', level: 0 }, { id: 'B2', name: 'Shield', level: 1 }]; renderSpellbook(); renderSpellChoices(); }, set(gm, owner, npc = false) { isGm = gm; me = { id: 'U1' }; campaign = { id: 'C1' }; selectedActor = 'INV-A'; actors = [{ id: 'INV-A', name: 'Test mage', user_id: owner, is_npc: npc, ...(npc ? {} : { hp_max: 10, hp_current: 10, data: {} }) }]; } }; })();`));
 } catch (err) {
   loadError = err;
 }
@@ -797,7 +797,7 @@ for (const id of [
     // Exercise the actual themed dropdown implementation, not the earlier editor stub.
     const previousCommon = window.VTTCommon;
     window.Element.prototype.scrollIntoView = function () {};
-    window.eval(fs.readFileSync(rootPath('public/js/common.js'), 'utf8'));
+    window.eval(fs.readFileSync(rootPath('public/js/shared/common.js'), 'utf8'));
     seam.set(true, null); seam.seedBook([entry]);
     t('learn picker uses a themed dropdown', document.getElementById('sbSpell').hidden && !!document.getElementById('sbSpell-button'));
     document.getElementById('sbSource-button').click();

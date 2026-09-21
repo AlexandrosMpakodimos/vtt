@@ -2,7 +2,7 @@ const { rootPath } = require('../helpers/paths');
 // Headless DOM tests for bulk token placement: compact packing, auto-numbering,
 // size presets, edge clamping, and the single-vs-bulk endpoint split.
 const { JSDOM } = require('jsdom'); const fs = require('fs');
-const dom = new JSDOM(fs.readFileSync(rootPath('public/scene.html'),'utf8'), { runScripts:'outside-only', url:'http://localhost:3000/scene.html' });
+const dom = new JSDOM(fs.readFileSync(rootPath('tests/fixtures/pages/scene.html'),'utf8'), { runScripts:'outside-only', url:'http://localhost:3000/scene.html' });
 const { window } = dom; const { document } = window;
 const calls = { fetch: [] };
 window.__uid = 'GM';
@@ -42,7 +42,7 @@ window.__done=()=>{
 };
 window.__calls = calls;
 
-window.eval(fs.readFileSync(rootPath('public/js/common.js'),'utf8') + '\n' + fs.readFileSync(rootPath('public/js/scene.js'),'utf8') + `
+window.eval(fs.readFileSync(rootPath('public/js/shared/common.js'),'utf8') + '\n' + fs.readFileSync(rootPath('public/js/game/scene.js'),'utf8') + `
 ;(function(){
   const calls = window.__calls;
   campaignId='C'; scene={id:'S',width:1000,height:800,img_url:null};  // 20x16 grid

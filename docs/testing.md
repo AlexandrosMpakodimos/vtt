@@ -1,9 +1,8 @@
 # Tests and isolation
 
-## Recorded baseline
+## Verification records
 
-The recorded final full-run output, from the completed audit and refactoring
-closeout (not a new run), is:
+The owner-reported full macOS run immediately before frontend organization:
 
 | Group | Suites | Assertions |
 | --- | --- | --- |
@@ -12,10 +11,12 @@ closeout (not a new run), is:
 | Adversarial | 9 | 485 |
 | Total | 70 | 3,933 |
 
-There were zero failures, and the independent GM/player open/close/reopen
-checks also passed. `FINAL-AUDIT-STATUS.md` records the earlier 69-suite audit
-run (30 / 1,973, 30 / 1,314, 9 / 485; 3,772 total). Do not rerun either merely
-to establish context.
+That run had zero failures. The current organization adds one landing-stylesheet
+link check and one successful-game-page-response check to the existing suites.
+Expected totals are 2,135 unit + 1,314 integration + 486 adversarial = 3,935.
+The integration/security and browser results for this change must be recorded
+when actually run; these expected counts are not a claimed full-run result.
+Earlier audit results remain [historical evidence](history/authorization-audit.md).
 
 The authoritative registration and order are the `UNIT`, `DB`, and `SEC` arrays
 in `tests/suites.js`. They are explicit lists, not automatic discovery, and
@@ -128,27 +129,19 @@ plus explicit player re-entry restores game updates. Use isolated fixtures.
 - The unit group needs no external server/database. Some tests create their own
   loopback HTTP server. Do not equate "unit" with "no network socket ever opened".
 
-## Campaign and socket extraction checks
+## Frontend organization
 
-The create-retry, join-retry, ownership, permission-race, and final-owner-boundary
-suites now import production operations and HTTP handlers. Their original
-scenario/assertion sections remain intact. The latter two also run the imported
-campaign guards before changing ownership; this is not simulated authorization.
-The new contract suite pauses commit completion and injects commit failure,
-checking response/effect timing, lock sequence, and public serialization. These
-are controlled doubles, not proof of PostgreSQL isolation. Keep the existing
-PostgreSQL suites and the wrapper's sequential execution.
+JSDOM fixture pages live under `tests/fixtures/pages/` and are not served by
+Express. The production page DOM and linked assets remain under `public/`.
+The event scanner recursively covers JavaScript under `public/js/`, including
+all page, game, sheet, UI and shared directories. It does not scan vendored code.
+CSS source assertions read the linked stylesheet rather than requiring embedded
+styles in the HTML. Browser checks still matter: JSDOM does not prove rendering.
 
-The admission suite imports `createRoomLifecycle` directly. Its original seven
-controlled authorization-read scenarios remain; new cases hold `socket.join()`
-open, invalidate admission, and verify refusal, room cleanup and no success
-emission after completion. A partially completed multi-campaign lobby subscription
-must also be cleaned up. Multi-tab tracking, disconnect presence and game/lobby
-separation are covered by the same suite. These controlled adapters supplement
-the real HTTP/socket suites; they do not replace the endpoint browser check.
+After frontend path/style changes, check landing/login, light/dark themes,
+dashboard dialogs, game layout, character/item/spell forms, image framing and
+dice. For socket-affecting changes, check independent GM/player open, close and
+explicit re-entry behavior. Use the isolated environment for automated suites.
 
-`tests/unit/test-events.js` scans `src/routes`, `src/socket.js`, and
-`src/socket/roomLifecycle.js`. The server-handler check includes both socket
-files too, so relocation does not silently remove coverage.
-Whole-script JSDOM loading is distinct from backend source snippets; frontend
-test restructuring and auth test extraction are outside this pass.
+Controlled operation/lifecycle tests supplement real HTTP/PostgreSQL coverage;
+they do not prove database isolation or real network scheduling on their own.

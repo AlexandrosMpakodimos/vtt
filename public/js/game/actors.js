@@ -8,24 +8,9 @@
    before; the internal names the jsdom suite reaches are re-published on
    window at the end. Same pattern sheet.js / itemsheet.js already use. */
 ;(function () {
-// Dev harness for M4 — actors, items, inventory.
-//
-// Kept in an external file and built with createElement + addEventListener: the
-// CSP is `script-src 'self'`, so inline <script> bodies and on*= handlers are
-// blocked, and every user-supplied string reaches the DOM through `textContent`
-// so it never enters an HTML parsing context. The canvas audit's standing note
-// applies here verbatim: names are stored raw server-side, so this file must
-// NEVER switch to innerHTML.
-//
-// Deliberately a SEPARATE page from scene.html. The four jsdom suites
-// (test-shortcuts, test-marquee, test-fog-ui, test-bulk-place) `eval` the real
-// scene.html/scene.js, so keeping actor CRUD out of those files leaves 134
-// assertions untouched.
-//
-// What this harness is FOR, beyond clicking things: open it as the GM in one
-// browser and as a player in another, against the same campaign, and watch the
-// socket log. The projection is the hardest part of M4 to believe from a test
-// report — here the two roles' payloads sit side by side on screen.
+// Character roster, inventory and spellbook behavior used by game.html.
+// JSDOM also exercises this module with the actor DOM fixture.
+// Render user-controlled text through textContent; do not introduce HTML parsing.
 
 const out = document.getElementById('out');
 const logEl = document.getElementById('log');
@@ -2106,7 +2091,7 @@ document.getElementById('newItem').addEventListener('click', newItem);
 document.getElementById('addToBag').addEventListener('click', addToBag);
 document.getElementById('clearLog').addEventListener('click', () => { logEl.textContent = ''; });
 
-// Convenience: /actors.html?campaign=<uuid> preloads, so the GM and player
+// Fixture compatibility: a campaign query parameter preloads, so the GM and player
 // windows can be opened from the same link.
 initFraming();
 

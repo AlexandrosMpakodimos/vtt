@@ -19,7 +19,7 @@
 // WHY THIS IS A SEPARATE PAGE
 // ---------------------------------------------------------------------------
 // The obvious home is scene.html, which already draws the map. It was rejected
-// for the reason M4 and M5 both rejected it: public/js/scene.js is covered by
+// for the reason M4 and M5 both rejected it: public/js/game/scene.js is covered by
 // 134 jsdom assertions across four suites, and an alignment tool needs its own
 // pointer handling, its own scroll behaviour and its own transient state. Adding
 // all of that to the file those probes cover is how a presentational feature

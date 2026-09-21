@@ -1,8 +1,8 @@
 # Configuration and deployment backlog
 
 This is an inventory and separate backlog, not a deployment procedure or a
-claim of production readiness. No deployment fix or media-policy change is
-implemented by the documentation PR. The local audit remains complete.
+claim of production readiness. The source does not yet implement the proposed public hosting, media Worker or
+Gmail API integration. Keep those design proposals separate from completed work.
 
 ## Current configuration
 
@@ -51,7 +51,7 @@ accounting with 503 despite older comments suggesting an inactive bypass.
 | `scripts/clean-bucket.js` | Reports candidates by default; `--delete` enables deletion. Review configuration, inventory, and legacy-object safeguards first |
 | `scripts/fill-campaign.js` | Development fixture utility that writes users/memberships; not an isolated regression command |
 
-This PR runs none of these scripts against external storage or user data.
+Use these scripts deliberately: normal app startup also schedules maintenance.
 
 ## Separate deployment work
 
@@ -67,7 +67,7 @@ This PR runs none of these scripts against external storage or user data.
 | Recovery/release | Verify backup restoration, migration/release rollback, and minimum error/cleanup monitoring |
 | Runtime/dependencies | Review locked dependency advisories and target-runtime compatibility; use justified fixes, not a blanket upgrade bundled with refactoring |
 | Media policy | Decide whether closure denies new player media grants. Current media visibility checks active membership but not `is_open`; previously issued bearer grants can remain usable until expiry |
-| Remaining authorization timing | Separately triage pre-transaction campaign policy in join and campaign authority loaded before token batch writes, plus the already recorded broader game-route timing limits. No new reproduction or remediation is part of PR #1 |
+| Remaining authorization timing | Separately triage pre-transaction campaign policy in join and campaign authority loaded before token batch writes, plus the already recorded broader game-route timing limits. These timing questions remain separate behavioral work |
 | Unregistered media suite | Review `tests/integration/test-media-integration.js` prerequisites and decide its status without silently changing the recorded regression baseline |
 
 Immediate session revocation, room admission generations, user socket maps,

@@ -1,4 +1,4 @@
-// public/js/dashboard.js — the signed-in home (page 2 of 3): your games, the
+// public/js/pages/dashboard.js — the signed-in home (page 2 of 3): your games, the
 // actions on them, discovery of others' games, and your account.
 //
 // REST is the source of truth (dashboard-design-spec §0.1). A lightweight lobby

@@ -2,7 +2,7 @@ const { rootPath } = require('../helpers/paths');
 // Landing page UI smoke suite. jsdom only — no server, no database:
 //   node tests/unit/test-landing-ui.js
 //
-// Same scope and reason as test-align-ui.js: public/js/landing.js is a client
+// Same scope and reason as test-align-ui.js: public/js/pages/landing.js is a client
 // file with no runtime coverage from any server suite, and the class of defect
 // that motivates these suites — a function deleted by an edit and still called,
 // or a contract quietly broken — is invisible to `node --check` and to every
@@ -82,9 +82,9 @@ function watchPointerListener(window) {
 function evalScripts(window) {
   let err = null;
   try {
-    window.eval(fs.readFileSync(rootPath('public/js/theme.js'), 'utf8'));
-    window.eval(fs.readFileSync(rootPath('public/js/common.js'), 'utf8'));
-    window.eval(fs.readFileSync(rootPath('public/js/landing.js'), 'utf8'));
+    window.eval(fs.readFileSync(rootPath('public/js/shared/theme.js'), 'utf8'));
+    window.eval(fs.readFileSync(rootPath('public/js/shared/common.js'), 'utf8'));
+    window.eval(fs.readFileSync(rootPath('public/js/pages/landing.js'), 'utf8'));
     // jsdom with runScripts:'outside-only' reports readyState 'loading' at eval
     // time, so landing.js registers a DOMContentLoaded listener and waits (in a
     // real browser its `defer` script runs after parse, DOM already ready). Fire
@@ -167,9 +167,9 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     const dlg = w.document.getElementById('authCard');
     if (dlg) { dlg.showModal = function () { this.open = true; }; dlg.close = function () { this.open = false; }; }
     w.fetch = async () => ({ status: 401, json: async () => ({}) });
-    w.eval(fs.readFileSync(rootPath('public/js/theme.js'), 'utf8'));
-    w.eval(fs.readFileSync(rootPath('public/js/common.js'), 'utf8'));
-    w.eval(fs.readFileSync(rootPath('public/js/landing.js'), 'utf8'));
+    w.eval(fs.readFileSync(rootPath('public/js/shared/theme.js'), 'utf8'));
+    w.eval(fs.readFileSync(rootPath('public/js/shared/common.js'), 'utf8'));
+    w.eval(fs.readFileSync(rootPath('public/js/pages/landing.js'), 'utf8'));
     w.document.dispatchEvent(new w.Event('DOMContentLoaded', { bubbles: true }));
     t('motion allowed -> parallaxActive true', w.VTTLanding.parallaxActive === true);
     t('parallax listener attaches (pointermove seen)', pmTarget !== null);
@@ -334,9 +334,11 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   }
 
   // ── source-level probes ─────────────────────────────────────────────────────
-  const themeSrc = fs.readFileSync(rootPath('public/js/theme.js'), 'utf8');
-  const landingSrc = fs.readFileSync(rootPath('public/js/landing.js'), 'utf8');
+  const themeSrc = fs.readFileSync(rootPath('public/js/shared/theme.js'), 'utf8');
+  const landingSrc = fs.readFileSync(rootPath('public/js/pages/landing.js'), 'utf8');
   const htmlSrc = fs.readFileSync(rootPath('public/index.html'), 'utf8');
+  const cssSrc = fs.readFileSync(rootPath('public/css/landing.css'), 'utf8');
+  t('landing stylesheet is linked', /<link[^>]+href="\/css\/landing\.css"/.test(htmlSrc));
   const stripComments = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
   t('theme.js contains no innerHTML/insertAdjacentHTML/document.write (code)',
     !/innerHTML|insertAdjacentHTML|document\.write/.test(stripComments(themeSrc)));
@@ -351,16 +353,16 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   // clear pixels — but WITHOUT will-change on them (that promotion caused Chrome's
   // compositor to desync tiles during rapid toggles, the rectangular-band glitch).
   t('night art is on the ::before overlay (dark default)',
-    /\.layer\.back::before\s*\{[^}]*layer-back-night\.jpg/.test(htmlSrc));
+    /\.layer\.back::before\s*\{[^}]*layer-back-night\.jpg/.test(cssSrc));
   t('day art is on the ::after overlay, shown in light theme',
-    /\.layer\.back::after\s*\{[^}]*layer-back\.jpg/.test(htmlSrc)
-    && /html\[data-theme="light"\][^{]*\.layer::after\s*\{[^}]*opacity:\s*1/.test(htmlSrc));
+    /\.layer\.back::after\s*\{[^}]*layer-back\.jpg/.test(cssSrc)
+    && /html\[data-theme="light"\][^{]*\.layer::after\s*\{[^}]*opacity:\s*1/.test(cssSrc));
   t('crossfade overlays are NOT GPU-promoted (no will-change/backface)',
-    !/\.layer::before,\s*\.layer::after\s*\{[^}]*will-change/.test(htmlSrc));
+    !/\.layer::before,\s*\.layer::after\s*\{[^}]*will-change/.test(cssSrc));
   t('hero art crossfades on theme change (opacity transition on the overlays)',
-    /\.theme-ready\s+\.layer::before,\s*\.theme-ready\s+\.layer::after\s*\{[^}]*transition:\s*opacity/.test(htmlSrc));
+    /\.theme-ready\s+\.layer::before,\s*\.theme-ready\s+\.layer::after\s*\{[^}]*transition:\s*opacity/.test(cssSrc));
   t('UI colours also transition on theme change (global .theme-ready rule)',
-    /\.theme-ready\s+\*\s*\{[^}]*transition:[^}]*color/.test(htmlSrc));
+    /\.theme-ready\s+\*\s*\{[^}]*transition:[^}]*color/.test(cssSrc));
 
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);

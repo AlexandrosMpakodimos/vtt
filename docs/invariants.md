@@ -1,7 +1,7 @@
 # Permission, transaction, and socket invariants
 
 These contracts describe the audited paths in the current source and must
-survive the bounded refactor. They are not a claim that every asynchronous
+survive maintenance and refactoring. They are not a claim that every asynchronous
 authorization race in every route has been proven atomic.
 
 ## Campaign transitions
@@ -38,7 +38,7 @@ Join's additional uniqueness recovery is limited to
 `campaign_members_pkey` and `campaign_members_campaign_color_unique` under its
 existing conditions. Do not turn all database errors into retryable conflicts.
 Other helpers such as `atomicCap.js` and storage accounting have their own
-policies; this pass does not normalize them.
+policies; these policies are not interchangeable.
 
 PostgreSQL requires retries of the complete transaction after serialization
 failure and cautions against indiscriminate uniqueness retries. Its lock-order
@@ -62,7 +62,7 @@ are application contracts, not requirements imposed by those libraries.
   NPC/unknown-item fields are projected, and whispers reach their named users
   plus sender, not automatically the GM. Fog is a presentation feature.
 
-## Sessions and account recovery: leave implementation unchanged
+## Sessions and account recovery
 
 Authentication and campaign membership are separate checks. The handshake user
 is a snapshot; it does not establish continuing session validity.

@@ -1,4 +1,4 @@
-// public/js/theme.js — synchronous, dependency-free, blocks parsing BY DESIGN.
+// public/js/shared/theme.js — synchronous, dependency-free, blocks parsing BY DESIGN.
 //
 // Loaded from <head> with a plain <script src>, NO defer and NO async: it must
 // set data-theme before the first paint, or a stored/system dark preference

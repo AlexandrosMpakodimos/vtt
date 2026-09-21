@@ -19,8 +19,8 @@ window.HTMLElement.prototype.releasePointerCapture = window.HTMLElement.prototyp
 // jsdom gives every element a 0x0 box; the drag maths divides by the stage size,
 // so give the stage a real rect.
 const STAGE = 220;
-window.eval(fs.readFileSync(rootPath('public/js/imageframe.js'), 'utf8'));
-window.eval(fs.readFileSync(rootPath('public/js/frametool.js'), 'utf8'));
+window.eval(fs.readFileSync(rootPath('public/js/ui/imageframe.js'), 'utf8'));
+window.eval(fs.readFileSync(rootPath('public/js/ui/frametool.js'), 'utf8'));
 
 let pass = 0, fail = 0;
 function t(name, cond, extra) {

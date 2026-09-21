@@ -2,8 +2,8 @@ const { rootPath } = require('../helpers/paths');
 // Character sheet + item editor UI suite. jsdom only — no server, no database:
 //   node tests/unit/test-sheet-ui.js
 //
-// Loads the REAL public/actors.html, public/js/sheet.js and
-// public/js/itemsheet.js and drives them with synthetic events, the way
+// Loads the REAL tests/fixtures/pages/actors.html, public/js/sheets/sheet.js and
+// public/js/sheets/itemsheet.js and drives them with synthetic events, the way
 // test-fog-ui.js drives the scene harness.
 //
 // The two things most worth gating here:
@@ -28,7 +28,7 @@ const { rootPath } = require('../helpers/paths');
 const { JSDOM } = require('jsdom');
 const fs = require('fs');
 
-const dom = new JSDOM(fs.readFileSync(rootPath('public/actors.html'), 'utf8'), {
+const dom = new JSDOM(fs.readFileSync(rootPath('tests/fixtures/pages/actors.html'), 'utf8'), {
   runScripts: 'outside-only',
   url: 'http://localhost:3000/actors.html',
 });
@@ -44,12 +44,12 @@ window.HTMLElement.prototype.scrollIntoView = window.HTMLElement.prototype.scrol
 // Rarity / Armour lists use. Loading it here means those custom dropdowns are
 // tested for real (not the degraded fallback), so a wrong initDropdown call
 // signature is caught instead of silently showing an empty list.
-window.eval(fs.readFileSync(rootPath('public/js/imageframe.js'), 'utf8'));
-window.eval(fs.readFileSync(rootPath('public/js/common.js'), 'utf8'));
-window.eval(fs.readFileSync(rootPath('public/js/sheet.js'), 'utf8'));
-window.eval(fs.readFileSync(rootPath('public/js/itemsheet.js'), 'utf8'));
-window.eval(fs.readFileSync(rootPath('public/js/spellsheet.js'), 'utf8'));
-window.eval(fs.readFileSync(rootPath('public/js/actorsheet.js'), 'utf8'));
+window.eval(fs.readFileSync(rootPath('public/js/ui/imageframe.js'), 'utf8'));
+window.eval(fs.readFileSync(rootPath('public/js/shared/common.js'), 'utf8'));
+window.eval(fs.readFileSync(rootPath('public/js/sheets/sheet.js'), 'utf8'));
+window.eval(fs.readFileSync(rootPath('public/js/sheets/itemsheet.js'), 'utf8'));
+window.eval(fs.readFileSync(rootPath('public/js/sheets/spellsheet.js'), 'utf8'));
+window.eval(fs.readFileSync(rootPath('public/js/sheets/actorsheet.js'), 'utf8'));
 const Sheet = window.VTTSheet;
 const ItemSheet = window.VTTItemSheet;
 const SpellSheet = window.VTTSpellSheet;

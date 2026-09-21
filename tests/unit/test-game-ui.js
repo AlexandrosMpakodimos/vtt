@@ -3,7 +3,7 @@ const { rootPath } = require('../helpers/paths');
 //   node tests/unit/test-game-ui.js
 //
 // Same scope and reason as test-landing-ui.js / test-dashboard-ui.js: the game
-// shell (public/js/game.js) is a client file with no runtime coverage from any
+// shell (public/js/pages/game.js) is a client file with no runtime coverage from any
 // server suite, and folding four covered harnesses into one page is the
 // riskiest work in the project. This loads the REAL public/game.html + the full
 // game script list (theme, common, imagepicker, closednotice, scene, combat,
@@ -44,8 +44,8 @@ const USER = { id: 'u-self', username: 'selene', avatar_url: null };
 // The full game script list, in the page's load order (dice3d is an ES module
 // on the page; here it is faked below, so it is not eval'd as a classic script).
 const SCRIPTS = [
-  'theme.js', 'common.js', 'imagepicker.js', 'closednotice.js',
-  'imageframe.js', 'scene.js', 'combat.js', 'actors.js', 'sheet.js', 'itemsheet.js', 'spellsheet.js', 'actorsheet.js', 'align.js', 'game.js',
+  'shared/theme.js', 'shared/common.js', 'ui/imagepicker.js', 'ui/closednotice.js',
+  'ui/imageframe.js', 'game/scene.js', 'game/combat.js', 'game/actors.js', 'sheets/sheet.js', 'sheets/itemsheet.js', 'sheets/spellsheet.js', 'sheets/actorsheet.js', 'game/align.js', 'pages/game.js',
 ];
 
 // A URL-dispatching fake API. Records every call; returns canned game state.
@@ -146,7 +146,7 @@ function bootPage(opts) {
   for (const s of SCRIPTS) {
     try { window.eval(fs.readFileSync(rootPath('public/js/' + s), 'utf8')); }
     catch (e) { threw.push(s + ': ' + e.message); }
-    if (s === 'align.js') {
+    if (s === 'game/align.js') {
       // All four boot exports exist now; wrap them before game.js drives them.
       const sB = window.VTTScene && window.VTTScene.boot;
       const cB = window.VTTCombat && window.VTTCombat.boot;
@@ -190,8 +190,8 @@ const SHELL = [
   // ── 1. Manifest: union − DEAD + SHELL, each id exactly once, DEAD absent ────
   {
     const union = Array.from(new Set([].concat(
-      idsIn('public/scene.html'), idsIn('public/combat.html'),
-      idsIn('public/actors.html'), idsIn('public/align.html'),
+      idsIn('tests/fixtures/pages/scene.html'), idsIn('tests/fixtures/pages/combat.html'),
+      idsIn('tests/fixtures/pages/actors.html'), idsIn('tests/fixtures/pages/align.html'),
     )));
     // 153 — the Characters section was redesigned to mirror Items/Spells: the
     // inline creation form was removed (-#acName, -#acImg, -#acHp, -#acSize,
@@ -424,7 +424,7 @@ const SHELL = [
     for (const s of SCRIPTS) {
       try { window.eval(fs.readFileSync(rootPath('public/js/' + s), 'utf8')); }
       catch (e) { threw.push(s + ': ' + e.message); }
-      if (s === 'align.js' && window.VTTScene && window.VTTScene.boot) {
+      if (s === 'game/align.js' && window.VTTScene && window.VTTScene.boot) {
         const sB = window.VTTScene.boot; window.VTTScene.boot = function () { sceneBoots += 1; return sB.apply(this, arguments); };
       }
     }
@@ -436,7 +436,7 @@ const SHELL = [
 
   // ── 11. Source probes (CSP + seams) ────────────────────────────────────────
   {
-    const gameJsRaw = fs.readFileSync(rootPath('public/js/game.js'), 'utf8');
+    const gameJsRaw = fs.readFileSync(rootPath('public/js/pages/game.js'), 'utf8');
     const gameHtml = fs.readFileSync(rootPath('public/game.html'), 'utf8');
 
     // Strip comments before probing: the file's constraint header documents the
@@ -460,10 +460,10 @@ const SHELL = [
     t('every game.html <script> has a src', scriptTags.every((tg) => /\bsrc=/.test(tg)), scriptTags.filter((tg) => !/\bsrc=/.test(tg)).join(' '));
 
     // The four boot seams exist and export a boot; scene also exports pingAt.
-    const sceneJs = fs.readFileSync(rootPath('public/js/scene.js'), 'utf8');
-    const combatJs = fs.readFileSync(rootPath('public/js/combat.js'), 'utf8');
-    const actorsJs = fs.readFileSync(rootPath('public/js/actors.js'), 'utf8');
-    const alignJs = fs.readFileSync(rootPath('public/js/align.js'), 'utf8');
+    const sceneJs = fs.readFileSync(rootPath('public/js/game/scene.js'), 'utf8');
+    const combatJs = fs.readFileSync(rootPath('public/js/game/combat.js'), 'utf8');
+    const actorsJs = fs.readFileSync(rootPath('public/js/game/actors.js'), 'utf8');
+    const alignJs = fs.readFileSync(rootPath('public/js/game/align.js'), 'utf8');
     t('scene.js exports window.VTTScene = { boot, pingAt }', /window\.VTTScene\s*=\s*\{[^}]*boot[^}]*pingAt|window\.VTTScene\s*=\s*\{[^}]*pingAt[^}]*boot/.test(sceneJs));
     t('combat.js exports window.VTTCombat = { boot }', /window\.VTTCombat\s*=\s*\{[^}]*boot/.test(combatJs));
     t('actors.js exports window.VTTActors = { boot }', /window\.VTTActors\s*=\s*\{[^}]*boot/.test(actorsJs));

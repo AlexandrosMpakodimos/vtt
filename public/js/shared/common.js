@@ -1,5 +1,5 @@
-// public/js/common.js — shared client helpers for the signed-in pages
-// (landing + dashboard, page 3 later). Classic script, no framework, no build
+// public/js/shared/common.js — shared client helpers for the signed-in pages
+// (landing, dashboard and game). Classic script, no framework, no build
 // step, no dependency; exposes window.VTTCommon. Loaded with `defer` AFTER
 // theme.js and BEFORE the page's own script.
 //

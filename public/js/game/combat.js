@@ -8,20 +8,8 @@
    before; the internal names the jsdom suite reaches are re-published on
    window at the end. Same pattern sheet.js / itemsheet.js already use. */
 ;(function () {
-// Dev harness for M5 — combat, chat, dice.
-//
-// Same constraints as actors.js and for the same reasons: the CSP is
-// `script-src 'self'`, so this lives in an external file, is built with
-// createElement + addEventListener, and every server-supplied string reaches the
-// DOM through `textContent`. Token and character names are stored RAW
-// server-side (the canvas audit's standing note), so this file must NEVER switch
-// to innerHTML.
-//
-// Deliberately a SEPARATE page from scene.html, exactly as actors.html is. The
-// four jsdom suites (test-shortcuts, test-marquee, test-fog-ui, test-bulk-place)
-// `eval` the real scene.html/scene.js, so keeping the tracker out of those files
-// leaves 134 assertions untouched. Chat arguably belongs beside the canvas; that
-// is a UX compromise the real M6 frontend resolves.
+// Combat tracker, chat and dice behavior used by game.html and the combat DOM fixture.
+// Keep user-controlled text out of HTML parsing sinks.
 //
 // ---------------------------------------------------------------------------
 // WHY THE ROSTER IS JOINED CLIENT-SIDE, AND WHAT THAT MAKES VISIBLE
@@ -1359,7 +1347,7 @@ document.getElementById('sceneSel').addEventListener('change', async (e) => {
 // 3D dice — entirely optional, entirely presentational
 // ---------------------------------------------------------------------------
 //
-// Everything below degrades to nothing. Delete /js/dice3d.js and its <script>
+// Everything below degrades to nothing. Delete /js/game/dice3d.js and its <script>
 // tag and this harness behaves exactly as it did before: rolls still happen on
 // the server, still land in the log, still broadcast. The tray adds pixels.
 
@@ -1583,7 +1571,7 @@ if (window.VTTDice) {
   document.addEventListener('vtt-dice-ready', onDiceReady, { once: true });
 }
 
-// Convenience: /combat.html?campaign=<uuid> preloads, so the GM and player
+// Fixture compatibility: a campaign query parameter preloads, so the GM and player
 // windows can be opened from the same link. Guarded: on the game page the
 // #campaignId input is gone and the shell drives boot() instead.
 const preset = new URLSearchParams(window.location.search).get('campaign');

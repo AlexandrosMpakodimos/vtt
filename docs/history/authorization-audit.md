@@ -1,3 +1,7 @@
+> Historical record of the authorization audit and its original findings.
+> Later sections record fixes and verification. This is not a current task list.
+> See [current test guidance](../testing.md) and [deployment limitations](../deployment.md).
+
 # Bounded audit pass — snapshot after PR #10
 
 ## Scope and evidence

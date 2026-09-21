@@ -4,7 +4,7 @@ const { rootPath } = require('../helpers/paths');
 // intent (what it selects, what request/emit it fires), not server behaviour —
 // the server rules are covered by test-token-ops.js.
 const { JSDOM } = require('jsdom'); const fs = require('fs');
-const dom = new JSDOM(fs.readFileSync(rootPath('public/scene.html'),'utf8'), { runScripts:'outside-only', url:'http://localhost:3000/scene.html' });
+const dom = new JSDOM(fs.readFileSync(rootPath('tests/fixtures/pages/scene.html'),'utf8'), { runScripts:'outside-only', url:'http://localhost:3000/scene.html' });
 const { window } = dom; const { document } = window;
 
 // Capture outbound calls instead of hitting the network.
@@ -36,7 +36,7 @@ let pass=0, fail=0;
 window.__check=(n,c,d='')=>{ if(c){pass++;console.log('  PASS  '+n);} else {fail++;console.log('  FAIL  '+n+'  '+d);} };
 window.__calls = calls;
 
-window.eval(fs.readFileSync(rootPath('public/js/scene.js'),'utf8') + `
+window.eval(fs.readFileSync(rootPath('public/js/game/scene.js'),'utf8') + `
 ;(function(){
   const calls = window.__calls;
   campaignId='C'; scene={id:'S',width:1000,height:800,img_url:null};

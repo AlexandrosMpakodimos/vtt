@@ -1,6 +1,6 @@
-// public/js/game.js — the game table shell (page 3 of 3).
+// public/js/pages/game.js — the game table shell (page 3 of 3).
 //
-// The four harness scripts (scene.js / combat.js / actors.js / align.js) are
+// The four gameplay modules (scene.js / combat.js / actors.js / align.js) are
 // SEAMED, not rewritten: each exposes boot() (+ scene's pingAt) and its render
 // paths run untouched. game.js is only the shell — layout wiring, boot order,
 // tabs, the rail, modals, the Escape stack, connection state and the debug

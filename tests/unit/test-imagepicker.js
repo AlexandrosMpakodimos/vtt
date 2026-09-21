@@ -2,7 +2,7 @@ const { rootPath } = require('../helpers/paths');
 // Image picker — jsdom suite. No server, no database, no bucket:
 //     node tests/unit/test-imagepicker.js
 //
-// public/js/imagepicker.js is a new client file, and this project has twice
+// public/js/ui/imagepicker.js is a new client file, and this project has twice
 // shipped a client file with no runtime coverage and had it break silently —
 // combat.js lost a function to an edit, and actors.js was one edit away from
 // the same. A shared module is worse than either, because it has three call
@@ -61,8 +61,8 @@ window.fetch = async (path, opts = {}) => {
   return { status: /external$/.test(path) ? uploadStatus : 200, json };
 };
 
-window.eval(fs.readFileSync(rootPath('public/js/imagepicker.js'), 'utf8'));
-window.eval(fs.readFileSync(rootPath('public/js/frametool.js'), 'utf8'));
+window.eval(fs.readFileSync(rootPath('public/js/ui/imagepicker.js'), 'utf8'));
+window.eval(fs.readFileSync(rootPath('public/js/ui/frametool.js'), 'utf8'));
 const P = window.VTTImagePicker;
 
 console.log('\n--- the module loads and exposes its surface ---');

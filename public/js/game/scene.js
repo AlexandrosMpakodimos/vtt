@@ -1,6 +1,5 @@
-// Dev harness for the M2 canvas + token manipulation. External file (CSP is
-// script-src 'self': no inline <script>, no on*= handlers). Function over form,
-// same spirit as dashboard.html.
+// Scene canvas and token manipulation used by game.html and scene DOM fixtures.
+// External script under CSP: no inline scripts or on*= handlers.
 //
 // Interactions:
 //   - drag a token           -> move it (syncs ON DROP via token:move)

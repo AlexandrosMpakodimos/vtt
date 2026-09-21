@@ -68,9 +68,16 @@ for (const f of serverFiles) {
 }
 
 // ---- what the clients handle -----------------------------------------------
-const clientFiles = fs.readdirSync(rootPath('public/js'))
-  .filter((f) => f.endsWith('.js'))
-  .map((f) => path.join('public/js', f));
+function javascriptFiles(directory) {
+  return fs.readdirSync(rootPath(directory), { withFileTypes: true })
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .flatMap((entry) => {
+      const filename = path.join(directory, entry.name);
+      return entry.isDirectory() ? javascriptFiles(filename)
+        : entry.isFile() && entry.name.endsWith('.js') ? [filename] : [];
+    });
+}
+const clientFiles = javascriptFiles('public/js');
 const handled = new Set();
 for (const f of clientFiles) {
   const code = strip(read(f));
@@ -132,7 +139,7 @@ t('actor:updated is handled — token pictures are inherited, not copied',
   handled.has('actor:updated'));
 
 console.log('\n--- the canvas handles what changes the board ---');
-const sceneJs = strip(read('public/js/scene.js'));
+const sceneJs = strip(read('public/js/game/scene.js'));
 for (const ev of ['token:created', 'token:updated', 'token:moved', 'token:deleted',
   'fog:created', 'fog:updated', 'fog:deleted',
   'scene:activated', 'scene:updated', 'actor:updated']) {

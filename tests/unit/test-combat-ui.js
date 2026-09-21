@@ -2,7 +2,7 @@ const { rootPath } = require('../helpers/paths');
 // Combat harness smoke suite. jsdom only — no server and no database:
 //   node tests/unit/test-combat-ui.js
 //
-// Loads the REAL public/combat.html + public/js/combat.js, the same way
+// Loads the REAL tests/fixtures/pages/combat.html + public/js/game/combat.js, the same way
 // test-fog-ui.js loads scene.html + scene.js.
 //
 // ---------------------------------------------------------------------------
@@ -34,7 +34,7 @@ const { rootPath } = require('../helpers/paths');
 const { JSDOM } = require('jsdom');
 const fs = require('fs');
 
-const dom = new JSDOM(fs.readFileSync(rootPath('public/combat.html'), 'utf8'), {
+const dom = new JSDOM(fs.readFileSync(rootPath('tests/fixtures/pages/combat.html'), 'utf8'), {
   runScripts: 'outside-only',
   url: 'http://localhost:3000/combat.html?campaign=11111111-1111-4111-8111-111111111111',
 });
@@ -146,8 +146,8 @@ document.body.appendChild(document.importNode(gameDom.window.document.getElement
 // ---- load ------------------------------------------------------------------
 let loadError = null;
 try {
-  window.eval(fs.readFileSync(rootPath('public/js/imageframe.js'), 'utf8'));
-  window.eval(fs.readFileSync(rootPath('public/js/common.js'), 'utf8') + '\n' + fs.readFileSync(rootPath('public/js/combat.js'), 'utf8').replace(/\}\)\(\);\s*$/, 'Object.assign(window, { renderPresence, renderMessage, whisperTargets, renderWhisperTargets }); window.testPlayerSpeakers = async () => { const previousMe = me; const previousGm = isGm; me = { id: "U2" }; isGm = false; await loadSpeakable(); me = previousMe; isGm = previousGm; };\n})();'));
+  window.eval(fs.readFileSync(rootPath('public/js/ui/imageframe.js'), 'utf8'));
+  window.eval(fs.readFileSync(rootPath('public/js/shared/common.js'), 'utf8') + '\n' + fs.readFileSync(rootPath('public/js/game/combat.js'), 'utf8').replace(/\}\)\(\);\s*$/, 'Object.assign(window, { renderPresence, renderMessage, whisperTargets, renderWhisperTargets }); window.testPlayerSpeakers = async () => { const previousMe = me; const previousGm = isGm; me = { id: "U2" }; isGm = false; await loadSpeakable(); me = previousMe; isGm = previousGm; };\n})();'));
 } catch (err) {
   loadError = err;
 }
