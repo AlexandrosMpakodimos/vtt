@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>VTT — Actors / Items / Inventory (dev)</title>
+  <style>
+    body { font-family: monospace; max-width: 980px; margin: 40px auto; padding: 0 16px; }
+    fieldset { margin-bottom: 16px; border: 1px solid #999; }
+    legend { font-weight: bold; }
+    label { display: block; margin: 6px 0 2px; font-size: 12px; }
+    input, select, textarea { width: 100%; padding: 5px; box-sizing: border-box; font-family: monospace; }
+    button { margin-top: 8px; padding: 5px 10px; cursor: pointer; }
+    .row { display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap; }
+    .row > * { margin-top: 0; }
+    .row > div { flex: 1; min-width: 90px; }
+    .cols { display: flex; gap: 16px; align-items: flex-start; }
+    .cols > * { flex: 1; min-width: 0; }
+    hr { border: none; border-top: 1px dashed #ccc; margin: 14px 0; }
+    .card { border: 1px solid #ccc; padding: 8px; margin: 6px 0; border-radius: 4px; }
+    .card.sel { border-color: #06c; background: #f0f6ff; }
+    .card b { font-size: 14px; }
+    .tag { font-size: 11px; padding: 1px 5px; border: 1px solid #999; border-radius: 3px; margin-left: 4px; }
+    .tag.npc { border-color: #a40; color: #a40; }
+    .tag.mine { border-color: #070; color: #070; }
+    .tag.secret { border-color: #808; color: #808; }
+    .muted { color: #777; font-size: 12px; }
+    .stats { font-size: 12px; color: #333; margin-top: 4px; }
+    .bar { height: 6px; background: #ddd; border-radius: 3px; overflow: hidden; margin-top: 4px; }
+    .bar > i { display: block; height: 100%; background: #3a3; }
+    .bar > i.low { background: #c33; }
+    #out { background: #111; color: #6f6; padding: 10px; white-space: pre-wrap;
+           min-height: 40px; max-height: 200px; overflow-y: auto; border-radius: 4px; font-size: 12px; }
+    #log { background: #111; color: #9cf; padding: 8px; white-space: pre-wrap;
+           height: 180px; overflow-y: auto; border-radius: 4px; font-size: 11px; }
+    .sheet-head { margin-bottom: 6px; }
+    .sheet-group { border: 1px solid #ddd; margin: 8px 0; }
+    .sheet-group legend { font-size: 12px; }
+    .sheet-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+    .sheet-cell { flex: 1; min-width: 92px; }
+    .sheet-cell.wide { flex-basis: 100%; }
+    .sheet-cell.narrow { flex: 0 0 auto; min-width: 0; }
+    .sheet-cell.narrow input[type=text] { width: 52px; text-align: center; }
+    .sheet-cell.narrow input[type=checkbox] { width: auto; margin: 0 0 0 2px; }
+    .sheet-cell.narrow label { white-space: nowrap; font-size: 11px; }
+    .sheet-group .sheet-grid { align-items: flex-end; }
+    .sheet-cell label .tag { margin-left: 4px; opacity: .7; }
+    .field-error { color: #c00; font-size: 11px; min-height: 12px; }
+    .sheet-error { color: #c00; font-size: 12px; }
+
+    .assets { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+    .asset { width: 116px; border: 1px solid #ccc; border-radius: 4px; padding: 5px;
+             font-size: 11px; text-align: center; background: #fff; }
+    .asset img { width: 100%; height: 74px; object-fit: cover; border-radius: 3px;
+                 background: #eee; display: block; }
+    .asset .k { color: #777; }
+    .asset button { margin-top: 4px; padding: 1px 6px; font-size: 11px; }
+    /* External images are visually marked, because "we host this" and "your
+       browser will contact a stranger" are different things and the interface
+       should not pretend otherwise. */
+    .asset.external { border-color: #a40; }
+    .asset.external .k { color: #a40; }
+
+    /* M6 image framing. The preview is a token-sized square with overflow
+       hidden, so what is seen here is exactly the crop the canvas will draw —
+       the art layer carries the same transform scene.js applies. */
+    #frameModal { position: fixed; inset: 0; background: #0009; z-index: 60;
+                  display: none; align-items: center; justify-content: center; }
+    #frameModal.on { display: flex; }
+    .frame-box { background: #fff; padding: 16px; border-radius: 6px; max-width: 420px; }
+    .frame-stage { width: 220px; height: 220px; margin: 8px auto; position: relative;
+                   overflow: hidden; border: 2px solid #445; border-radius: 6px;
+                   background: #445; cursor: grab; touch-action: none; }
+    .frame-stage.dragging { cursor: grabbing; }
+    .frame-stage > .art { position: absolute; inset: 0; transform-origin: center;
+                          background: center/cover no-repeat; pointer-events: none; }
+    /* A thirds guide, so "centred" is checkable rather than a guess. */
+    .frame-stage::after { content: ''; position: absolute; inset: 0; pointer-events: none;
+      background:
+        linear-gradient(90deg, transparent 33%, #fff6 33%, #fff6 33.5%, transparent 33.5%,
+                        transparent 66%, #fff6 66%, #fff6 66.5%, transparent 66.5%),
+        linear-gradient(transparent 33%, #fff6 33%, #fff6 33.5%, transparent 33.5%,
+                        transparent 66%, #fff6 66%, #fff6 66.5%, transparent 66.5%); }
+    textarea:disabled, input:disabled, select:disabled { background: #f4f4f4; color: #555; }
+    .gm-only { display: none; }
+    body.is-gm .gm-only { display: block; }
+    body.is-gm .player-only { display: none; }
+  </style>
+  <link rel="stylesheet" href="/css/inventory.css" />
+  <link rel="stylesheet" href="/css/spellbook.css" />
+  <link rel="stylesheet" href="/css/characters.css" />
+</head>
+<body>
+  <h1>VTT actors / items / inventory (dev harness)</h1>
+  <p class="muted">
+    Log in via <a href="/">the landing page</a>, pick a campaign on
+    <a href="/dashboard.html">/dashboard.html</a>. <span id="whoami">checking…</span>
+  </p>
+  <p class="muted">
+    Open this page as the GM in one browser and as a player in another, against the same
+    campaign. The socket log below prints every payload verbatim, so the difference between
+    what the two roles receive is visible rather than asserted.
+  </p>
+
+  <fieldset>
+    <legend>campaign</legend>
+    <div class="row">
+      <div style="flex:3">
+        <label for="campaignId">campaign id</label>
+        <input id="campaignId" placeholder="uuid" />
+      </div>
+      <button id="loadCampaign">load</button>
+    </div>
+    <p class="muted" id="campaignInfo">no campaign loaded</p>
+  </fieldset>
+
+  <div class="cols">
+    <fieldset style="flex:1.2">
+      <legend>characters</legend>
+
+      <button id="newActor">+ new character</button>
+      <span class="muted" id="actorCap"></span>
+
+      <hr />
+      <input id="charSearch" type="search" />
+      <button id="charFilterToggle"><span id="charFilterCount" hidden>0</span></button>
+      <div id="charFilterPanel" hidden>
+        <div id="charFilterType"></div>
+        <div id="charFilterControl"></div>
+        <div id="charFilterParty" class="char-filter" role="group" aria-label="Filter by party"></div>
+      </div>
+      <div id="actorList"></div>
+    </fieldset>
+
+    <fieldset class="gm-only" style="flex:1">
+      <legend>new character</legend>
+      <div id="actorEditor"><p class="muted">use “+ new character” to open the creation form</p></div>
+    </fieldset>
+
+    <fieldset style="flex:1">
+      <legend>items</legend>
+      <div class="gm-only">
+        <button id="newItem">+ new item</button>
+      </div>
+      <p class="muted player-only">Only the GM authors items. You see the catalogue; unidentified entries show their category and picture only.</p>
+
+      <hr />
+      <input id="itemSearch" type="search" />
+      <button id="itemFilterToggle"><span id="itemFilterCount" hidden>0</span></button>
+      <div id="itemFilterPanel" hidden>
+        <div id="itemFilterType"></div>
+        <div id="itemFilterRarity"></div>
+      </div>
+      <div id="itemList"></div>
+    </fieldset>
+  </div>
+
+  <fieldset>
+    <legend>image library</legend>
+    <p class="muted">
+      Upload a file, or paste a link. An upload goes <b>straight from your browser
+      to the bucket</b> — it never passes through this server — and the server then
+      reads the first bytes back to check the file really is the image type it
+      claims to be. A pasted link is stored as-is: every player who views it
+      connects directly to that host, which discloses their IP address to it.
+    </p>
+    <div class="row">
+      <div>
+        <label for="assetKind">kind</label>
+        <select id="assetKind">
+          <option value="portrait">portrait</option>
+          <option value="token">token art</option>
+          <option value="item">item art</option>
+          <option value="map">map (GM only)</option>
+          <option value="avatar">my profile picture</option>
+        </select>
+      </div>
+      <div style="flex:2">
+        <label for="assetFile">upload a file</label>
+        <input id="assetFile" type="file" accept="image/png,image/jpeg,image/webp,image/gif" />
+      </div>
+      <button id="assetUpload">upload</button>
+    </div>
+    <div class="row">
+      <div style="flex:3">
+        <label for="assetUrl">…or paste an image link</label>
+        <input id="assetUrl" placeholder="https://example.com/portrait.png" />
+      </div>
+      <button id="assetLink">add link</button>
+    </div>
+    <p class="muted" id="assetMsg"></p>
+    <div id="assetList" class="assets"></div>
+  </fieldset>
+
+  <fieldset>
+    <legend>spell catalogue</legend>
+    <div class="gm-only">
+      <button id="newSpell">+ new spell</button>
+    </div>
+    <p class="muted">
+      The catalogue is a rules reference, so every member reads it in full —
+      there is no “unidentified” equivalent. What is confidential is which spells
+      a character has <b>prepared</b>, and that lives on the spellbook below.
+    </p>
+
+    <hr />
+    <input id="spellSearch" type="search" />
+    <button id="spellFilterToggle"><span id="spellFilterCount" hidden>0</span></button>
+    <div id="spellFilterPanel" hidden>
+      <div id="spellFilterLevel"></div>
+      <div id="spellFilterSchool"></div>
+    </div>
+    <div id="spellList"></div>
+  </fieldset>
+
+      <div id="sheetSpellbookBlock" hidden>
+        <span id="sbWho" hidden>select a character above</span>
+        <div class="spellbook-learn-row">
+          <div class="field spellbook-choice"><label for="sbSpell">Spell</label><select id="sbSpell"></select></div>
+          <div class="field"><label for="sbSource">Source</label>
+            <select id="sbSource"><option value="">Not specified</option><option value="class">Class</option><option value="race">Ancestry</option><option value="item">Item</option><option value="other">Other</option></select>
+          </div>
+          <button id="learnSpell" class="btn small secondary" type="button">Learn spell</button>
+        </div>
+        <p class="spellbook-error" role="alert" hidden></p>
+        <p class="spellbook-summary muted" aria-live="polite"></p>
+        <div id="sbList"></div>
+      </div>
+
+  <fieldset class="gm-only">
+    <legend>item editor — <span id="itemWho" class="muted">none selected</span></legend>
+    <div id="itemEditor"><p class="muted">pick an item, or “+ new item”</p></div>
+  </fieldset>
+
+  <fieldset class="gm-only">
+    <legend>spell editor — <span id="spellWho" class="muted">none selected</span></legend>
+    <div id="spellEditor"><p class="muted">pick a spell, or “+ new spell”</p></div>
+  </fieldset>
+
+  <fieldset>
+    <legend>character sheet — <span id="sheetWho" class="muted">none selected</span></legend>
+    <div id="sheetPanel"><p class="muted">select a character above</p></div>
+  </fieldset>
+
+  <fieldset>
+    <legend>inventory — <span id="invWho" class="muted">select a character above</span></legend>
+    <div class="row">
+      <div style="flex:3">
+        <label for="invItem-btn">item</label>
+        <div class="vtt-dd fo-inv-dd" id="invItemDd">
+          <input type="hidden" id="invItem" />
+          <button class="vtt-dd-btn" id="invItem-btn" type="button" aria-haspopup="listbox" aria-expanded="false">—</button>
+          <ul class="vtt-dd-list" role="listbox" tabindex="-1" hidden aria-label="Item"></ul>
+        </div>
+      </div>
+      <div><label for="invQty">qty</label><input id="invQty" type="number" value="1" min="1" /></div>
+      <button id="addToBag">add to bag</button>
+    </div>
+    <p class="muted">Attunement is capped at 3 per character, enforced atomically — a fourth returns 409.</p>
+    <div id="invList"></div>
+  </fieldset>
+
+  <fieldset>
+    <legend>last response</legend>
+    <div id="out">—</div>
+  </fieldset>
+
+  <fieldset>
+    <legend>socket log — every payload this account receives, verbatim</legend>
+    <div id="log"></div>
+    <button id="clearLog">clear</button>
+  </fieldset>
+
+  <div id="frameModal">
+    <div class="frame-box">
+      <b>Frame the picture</b>
+      <p class="muted">Drag to move · scroll to zoom. This is the crop tokens will use.</p>
+      <div class="frame-stage" id="frameStage"><div class="art" id="frameArt"></div></div>
+      <div class="row">
+        <div><label for="frameScale">zoom</label>
+          <input id="frameScale" type="number" step="0.05" min="0.1" max="5" value="1" /></div>
+        <div><label for="frameX">offset x</label>
+          <input id="frameX" type="number" step="0.01" min="-2" max="2" value="0" /></div>
+        <div><label for="frameY">offset y</label>
+          <input id="frameY" type="number" step="0.01" min="-2" max="2" value="0" /></div>
+      </div>
+      <div class="row">
+        <button id="frameReset">reset</button>
+        <button id="frameCancel">cancel</button>
+        <button id="frameSave">save framing</button>
+        <span class="muted" id="frameMsg"></span>
+      </div>
+    </div>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/js/ui/imageframe.js"></script>
+  <script src="/js/sheets/sheet.js"></script>
+  <script src="/js/sheets/itemsheet.js"></script>
+  <script src="/js/sheets/spellsheet.js"></script>
+  <script src="/js/sheets/actorsheet.js"></script>
+  <script src="/js/ui/imagepicker.js"></script>
+  <script src="/js/ui/closednotice.js"></script>
+  <script src="/js/game/actors.js"></script>
+</body>
+</html>

@@ -1,145 +1,93 @@
-# Architecture and bounded refactoring
+# Architecture and repository layout
 
-This describes the completed bounded refactoring: the documentation PR, campaign
-operations (PR #13), and the coordinated socket lifecycle (PR #14).
+## Backend
 
-## Current responsibilities
-
-| Area | Current responsibility and coupling |
+| Path | Responsibility |
 | --- | --- |
-| `src/server.js` | Compose Express, sessions, Passport, Socket.IO, routes, error handling, cleanup timers, and listening |
-| `src/db/`, `knexfile.js` | Database access and migrations; dedicated test-environment restrictions |
-| `src/middleware/` | Authentication, campaign read/access guards, CSRF origin checks, rate limiting |
-| `src/routes/campaigns.js` | Existing mounts/guards and production dependency wiring; retains reads and color/archive handlers |
-| `src/routes/campaignMutations.js` | Importable mutation HTTP handlers: status/headers, public responses, media rewriting, post-commit effects |
-| `src/services/campaigns/` | Mutation operations own validation/transactions/retries; presentation functions retain allow-listed responses; shared recovery-window constant |
-| `src/middleware/campaignAuthFactory.js` | Existing campaign guard bodies behind an explicit DB dependency; `campaignAuth.js` preserves existing exports with the production DB |
-| `src/routes/scenes.js` | Scenes, tokens, fog, shaping, and movement policy; imports actor/combat helpers |
-| `src/routes/actors.js` | Actors, actor-scoped inventory and spellbooks, disclosure/write policies; imports item helpers |
-| Other resource routers | Item/spell catalogues, combat, chat, assets, and media delivery |
-| `src/socket.js` | Connection/session enforcement and lifecycle wiring, existing broadcasts, token movement and pings; imports scene-route helpers |
-| `src/socket/roomLifecycle.js` | Admission generations, room admission/leave, eviction, shared user/socket tracking, distinct-user presence and disconnect coordination |
-| `src/services/socketSessions.js` | Live session-store checks and exact-SID disconnection for this process |
-| Other `src/services/` modules | Validators, scene access, atomic caps, dice/password/email helpers, media/storage, budget, cleanup, and reconciliation |
-| `public/` | Served HTML/CSS/JavaScript, including local vendored dice assets |
-| Root `test-*.js`, `break-*.js` | Regression suites selected explicitly by `run-tests.js` |
-| `scripts/` | Test isolation wrapper/server and maintenance/development utilities |
+| `src/server.js` | Express/HTTP composition, sessions, Passport, route mounts, Socket.IO and maintenance scheduling |
+| `src/db/`, `knexfile.js` | Database pools, ordered migrations and test-target restrictions |
+| `src/middleware/` | Authentication, campaign access, CSRF and rate limits |
+| `src/routes/` | HTTP resource handlers and response shaping |
+| `src/routes/campaignMutations.js` | Campaign mutation HTTP adapters and post-commit effects |
+| `src/services/campaigns/` | Campaign transactions, retries, presentation and constants |
+| `src/services/` | Shared validation, password/email, storage/media and accounting behavior |
+| `src/socket.js` | Session-enforced connection wiring, broadcasts, movement and pings |
+| `src/socket/roomLifecycle.js` | Admission generations, eviction, tracking and presence |
+| `scripts/` | Test launchers and storage/development utilities |
 
-Campaign routes mount authentication once before the nested resource routers.
-Resource guards resolve campaign/member state. HTTP handles structural writes;
-Socket.IO also handles token movement and transient pings. Mutations call the
-`campaignSockets` object installed on the Express app to update connected clients.
-See [invariants](invariants.md) for the important differences between early
-middleware authorization and transaction-protected authority checks.
+Campaign routes mount authentication before nested resources. Middleware checks
+are not a substitute for fresh authority checks inside protected transactions;
+see [invariants](invariants.md). Campaign operations own transactions and retries;
+HTTP adapters own responses and effects after successful commits.
 
-The database has a Knex pool and a separate `pg` pool for sessions. Importing
-`src/server.js` starts listening and schedules cleanup work. It is not currently
-an inert application factory.
+The Knex pool and the session `pg` pool are separate. Importing `src/server.js`
+starts listening and schedules maintenance: it is not an inert app factory.
+Socket admission and eviction share generation state under one lifecycle owner.
+Session revocation and room state are process-local.
 
-## Frontend composition
+All 23 migrations remain part of constructing/upgrading the current schema.
+There are no maintained seed files or seed command. Test fixtures use the existing
+isolated test setup rather than a seed directory.
 
-`public/game.html` composes scene, combat, actor, alignment, sheet, and shared UI
-scripts. `public/js/game.js` supplies the shell and reconnect catch-up behavior.
-Several components expose `window.VTT*` APIs; some use IIFEs to prevent collisions
-between names originally used on separate pages. The dice renderer is a browser
-ES module importing the vendored renderer. Preserve script order and existing
-entry points when changing this area.
+## Browser
 
-Standalone scene/actor/combat pages also support existing JSDOM suites. Shared
-helpers exist in `common.js`, sheets, image picking/framing, and closed notices,
-but page modules still duplicate some request/UI logic. Large modules and
-embedded styles are maintenance debt, not a requirement for a framework change.
+The public application has three pages: `index.html` (landing/authentication),
+`dashboard.html` (campaigns) and `game.html` (tabletop).
 
-## Bounded refactoring plan
+| Path | Contents |
+| --- | --- |
+| `public/css/` | Theme tokens, page styles and shared character/inventory/spell styles |
+| `public/js/pages/` | Landing, dashboard and game-shell entry points |
+| `public/js/game/` | Scene, actors, combat/chat/dice, alignment and the dice renderer adapter |
+| `public/js/sheets/` | Character editing/creation, item and spell forms |
+| `public/js/ui/` | Image picking/framing and closed-campaign notices |
+| `public/js/shared/` | Common helpers and the early theme script |
+| `public/assets/` | Referenced artwork |
+| `public/vendor/dice/` | Vendored dice renderer, textures and upstream license |
 
-1. **Documentation and necessary organization (merged).** Record actual architecture,
-   commands, invariants, and deployment backlog. Correct demonstrably stale
-   comments. That PR moved no tests and left paths, runner registration, package
-   scripts, and executable code unchanged. Do not
-   introduce a manifest or compatibility mechanism without a current use.
-2. **Campaign operations and affected tests (merged in PR #13).** Create, join,
-   leave, owner PATCH/DELETE, restore, transfer, kick/ban, and unban use plain
-   CommonJS operations. Authority checks, locks, writes, and retries stay together.
-   HTTP handlers preserve responses and existing post-commit socket ordering.
-   Five controlled suites import these production factories instead of slicing
-   source. The two middleware/transfer tests also import the unchanged campaign
-   guard bodies through a DB-injected factory. A focused contract suite controls
-   commit completion/failure and checks effects and response shaping. Real
-   PostgreSQL suites and all existing scenarios remain intact.
-3. **Coordinated socket lifecycle (merged in PR #14).** Keep admission cancellation, eviction,
-   tracking, and presence coordination under one owner. Preserve `src/socket.js`
-   as the entry point and its existing exports. Keep `socketSessions.js` focused
-   on session validity. Add a controlled delayed-`join()` regression. Extract
-   broadcasts only if doing so stays within this scope; token/ping and broad
-   scene/actor/combat extraction are not completion requirements.
+Most browser files are classic scripts, exposing `window.VTT*` interfaces.
+The dice adapter is an ES module with an absolute vendor import and asset path.
+HTML preserves script order and module/defer attributes. The theme script runs
+before paint. Page CSS is external but retains its original cascade position;
+shared styles are not reordered or deduplicated merely for neatness.
 
-`src/services/campaigns/operations.js` and `presentation.js` now exist.
-`createCampaignOperations` takes explicit database/password/ID-validation/limit
-dependencies; delay, randomness, and clock can be controlled without global
-patching. It takes caller IDs rather than middleware snapshots. Expected
-refusals return status/error data; unexpected errors reject. It never receives
-`req`/`res` or emits socket effects. `createCampaignMutationHandlers` is the same
-HTTP adapter factory used by the real router and controlled tests.
+`sheet.js` edits an existing character; `actorsheet.js` creates one. Similarly,
+`imageframe.js` renders stored framing while `frametool.js` supplies the editor.
+These pairs are different responsibilities, not obsolete copies.
 
-`createRoomLifecycle({ io, knex, isActiveMember })` owns the room lifecycle in
-`src/socket/roomLifecycle.js`. The entry point attaches it only after the existing
-user and session gates. Admission and eviction share its generation state, and
-broadcasts use its existing `socketsByUser` map. Disconnect captures game rooms
-before leaving and updates presence afterward. Broadcast implementations and
-token/ping handlers stay in the entry point. Existing exports and aliases remain.
-The admission suite imports this production factory; no VM loader or compatibility
-shim is needed. The event scanner includes the relocated lifecycle emitters.
-No tests move and no runner or npm command changes are needed.
+## Tests and historical material
 
-Authentication implementation is unchanged throughout this pass. No framework
-migration, TypeScript conversion, dependency upgrade, generic repository layer,
-global configuration rewrite, or new test framework is required. Deployment
-fixes and media-policy decisions stay in [the separate backlog](deployment.md).
+`tests/suites.js` explicitly registers 31 unit, 30 integration and 9 security
+suites. `run-tests.js` remains at the root; `scripts/test-local.js` supplies the
+isolated environment. Filesystem reads use `tests/helpers/paths.js`.
 
-## Repository layout: paths kept on purpose
+`tests/fixtures/pages/` preserves the scene, actor, combat and alignment DOM
+fixtures used by JSDOM and the game-page ID contract. These are non-served test
+documents, not alternate application entry points. The retired auth console has
+no fixture consumers. The dice CSP regression requests the real `game.html`.
 
-These paths look unusual but have recorded reasons. Revisit them only with new
-evidence.
+`tests/integration/test-media-integration.js` remains a separately selected,
+unregistered diagnostic; it is not part of the 70-suite run. Its loose media
+response checks still require review before registration.
 
-- **Root `test-*.js` / `break-*.js`.** `run-tests.js` lists them by root filename
-  and `scripts/test-local.js` accepts only root-level names; suites read `./src/…`
-  and `public/…` relative to the root. Moving them means editing the runner, the
-  wrapper, and the suites.
-- **`public/scene.html`, `combat.html`, `actors.html`, `align.html`.** Standalone
-  dev-harness pages no longer linked from the app UI. Eight suites load them
-  through JSDOM, `test-game-ui.js` compares their element IDs with `game.html`,
-  and `break-dice.js` fetches `/combat.html`. Whether to serve them in production
-  is a separate deployment decision.
-- **`public/vendor/dice/`.** Vendored `dice-box-threejs` with its MIT license;
-  textures load by name at runtime. Four texture files are not named literally in
-  the bundle or `dice3d.js`. Whether the library ever requests them is
-  unconfirmed, and they are small (about 79 KB), so they stay with the upstream
-  tree.
-- **`src/db/seeds/`.** Configured in `knexfile.js`; no seed files are tracked.
-  An empty local directory may exist and does not need removal.
-- **`test-media-integration.js`.** Present but unregistered; see [testing](testing.md).
-- **Untracked local files.** Backups, repair scripts, and diagnostics are not part
-  of the repository, and their owner decides whether to archive or remove them.
-  Ignore rules only prevent accidental staging; they do not mean a file was
-  reviewed.
+Current guides live directly in `docs/`; historical audit evidence lives in
+`docs/history/`. Local source snapshots and database-repair evidence belong in a
+private archive outside the checkout, not alongside current source. Preserve
+unique untracked material before removing its working copy.
 
-## Completion and verification
+## Remaining boundaries to improve
 
-Status: complete. The audit and the three planned refactoring PRs are done;
-recorded results are in [testing](testing.md), and deployment limitations
-remain in [the backlog](deployment.md).
+Scene and actor routers still combine several responsibilities, and some routers
+and socket handlers import helpers from other routers. Future extraction should
+move shared policy/queries behind clear services while preserving transaction
+and disclosure contracts. Folder moves alone would not resolve those couplings.
 
-Use affected checks while implementing each extraction. Preserve transaction,
-HTTP, socket, and test-isolation contracts. At the endpoint, run the registered
-full regression once and repeat the independent GM/player open/close/reopen
-browser check. New focused assertions may change the total; preserve scenarios
-rather than treating the historical count as a permanent target.
+Maintenance scheduling and an inert application factory should be coordinated
+with the [deployment work](deployment.md), not changed independently in parallel.
+Do not consolidate similar client API helpers without preserving their different
+closed-campaign handling and error behavior.
 
-Stop after these bounded PRs meet their criteria. Do not require moving every
-test, removing every cross-router import, or restructuring the frontend before
-finishing. If a behavior issue is found, record its scope separately instead of
-silently adding it to a refactoring diff.
-
-This small-change approach follows [Google's review guidance](https://google.github.io/eng-practices/review/developer/small-cls.html).
-Socket.IO's [application-structure examples](https://socket.io/docs/v4/server-application-structure/)
-are optional suggestions, not a required architecture.
+Legacy image references, historical dice formats, unknown character/spell fields
+and the existing upload-mode switch still support data or behavior. Their removal
+requires a migration/usage decision, not a filename cleanup. Complete upstream
+dice assets and their license remain intact.

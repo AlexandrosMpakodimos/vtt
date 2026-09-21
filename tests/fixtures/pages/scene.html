@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>VTT — Scene canvas (dev)</title>
+  <style>
+    body { font-family: monospace; max-width: 980px; margin: 24px auto; padding: 0 16px; }
+    fieldset { margin-bottom: 16px; border: 1px solid #999; }
+    legend { font-weight: bold; }
+    label { display: block; margin: 6px 0 2px; }
+    input, select { padding: 6px; box-sizing: border-box; }
+    .full { width: 100%; }
+    button { margin-top: 8px; padding: 6px 12px; cursor: pointer; }
+    .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .row > * { margin-top: 0; }
+    .muted { color: #777; font-size: 12px; }
+    #out { background: #111; color: #6f6; padding: 10px; white-space: pre-wrap;
+           min-height: 40px; border-radius: 4px; font-size: 12px; }
+    #log { background: #111; color: #9cf; padding: 8px; white-space: pre-wrap;
+           height: 110px; overflow-y: auto; border-radius: 4px; font-size: 12px; }
+    /* The canvas surface. Tokens are absolutely-positioned children so the
+       browser handles hit-testing on pointer events; the grid is a CSS
+       background so we don't repaint it per drag. */
+    /* The wrapper is the VIEWPORT and the stage is the world. Panning and
+       zooming transform the world; the viewport does not move, so a token's
+       screen position stays derivable from getBoundingClientRect — which is what
+       every coordinate conversion in scene.js already uses, and why this needed
+       no arithmetic changes.
+       overflow:hidden rather than auto: scrollbars and a transform are two
+       competing ways to move the same content, and having both makes the
+       resulting position depend on which one moved last. */
+    #stage-wrap { overflow: hidden; border: 1px solid #999; background: #222;
+                  height: 60vh; position: relative; cursor: grab; touch-action: none; }
+    #stage-wrap.panning { cursor: grabbing; }
+    #stage { position: relative; transform-origin: 0 0; will-change: transform; }
+    /* The grid extends BEYOND the map image in every direction.
+       Two reasons, both from using the thing: panning is unpleasant when the
+       map is pinned to the viewport edges with nowhere to overshoot, and a GM
+       wants somewhere to park tokens that are not on the board yet — reserves,
+       summons, the next wave — where they are one drag from being in play.
+       It is a child of #stage with NEGATIVE offsets rather than a resized
+       #stage, because #stage IS the coordinate origin: grid (0,0) is its
+       top-left, and every token position in the database is measured from
+       there. Growing the stage would move that origin and silently relocate
+       every token ever placed. */
+    #grid-pad { position: absolute; z-index: 0; pointer-events: none; }
+    /* Pings: RADAR RINGS. Two concentric circles expand outward from the
+       pinged point and fade, the second staggered behind the first so a new
+       ring appears as the previous one dies — which is what reads as "radar"
+       rather than as a single circle growing.
+       Expanding OUTWARD, deliberately: an inward-collapsing ring points at a
+       spot but draws the eye along with it, while an outward one leaves the eye
+       where the ping is. Roll20 describes its own as rings sprouting from the
+       cursor, and the direction is the reason it works.
+       pointer-events:none throughout, so a marker can never intercept a click
+       on the map beneath it — a ping that blocked interaction would be worse
+       than no ping.
+       The wrapper carries no size of its own: it is a point, and each ring is
+       centred on it by its own negative margin. That keeps the ping anchored to
+       one square regardless of how large the rings grow. */
+    .ping { position: absolute; width: 0; height: 0; pointer-events: none; z-index: 40; }
+    .ping i { position: absolute; display: block; border-radius: 50%;
+              border: 6px solid currentColor; opacity: 0;
+              width: 160px; height: 160px; margin: -80px 0 0 -80px;
+              animation: ping-ring 1.6s cubic-bezier(0.2, 0.6, 0.3, 1) forwards; }
+    /* The stagger is what makes it read as a repeating signal rather than as
+       one circle. Half a beat is enough: longer and they look unrelated. */
+    .ping i:nth-child(2) { animation-delay: 0.32s; }
+    @keyframes ping-ring {
+      0%   { transform: scale(0.15); opacity: 0; }
+      12%  { opacity: 0.95; }
+      100% { transform: scale(1); opacity: 0; }
+    }
+
+    #zoom-hud { position: absolute; right: 8px; bottom: 8px; z-index: 20;
+                background: rgba(0,0,0,0.6); color: #fff; font-size: 11px;
+                padding: 3px 7px; border-radius: 3px; pointer-events: none; }
+    #stage-bg { position: absolute; inset: 0; background-size: cover; background-position: center; opacity: 0.85; }
+    .token { position: absolute; box-sizing: border-box; border: 2px solid #fff;
+             border-radius: 6px; background: #445 center/cover no-repeat;
+             color: #fff; font-size: 10px; text-align: center; cursor: grab;
+             display: flex; align-items: flex-end; justify-content: center;
+             user-select: none; overflow: hidden; }
+    /* M6 image framing. The art is an INNER layer so a transform can be applied
+       to it without moving the token's border, caption or hit area. Keeping
+       `center/cover` here means the identity transform renders exactly as the
+       pre-M6 build did, and composes with cover without needing the image's
+       natural dimensions. */
+    /* The art sits BEHIND the caption. Both are absolutely positioned inside the
+       token, so without an explicit order the later element in the DOM wins —
+       and the art is appended first only because it was added first. Stating
+       both z-indexes makes the stacking a decision rather than a consequence of
+       insertion order. */
+    .token > .art { position: absolute; inset: 0; z-index: 0; background: center/cover no-repeat;
+                    transform-origin: center; pointer-events: none; }
+    .token.mine { border-color: #6f6; }
+    .token.dragging { cursor: grabbing; opacity: 0.8; z-index: 10; }
+    .token.selected { outline: 2px dashed #fc6; outline-offset: 2px; }
+    .token.locked { cursor: not-allowed; }
+    .token.hidden-tok { opacity: 0.4; border-style: dashed; }   /* GM-only view of a hidden token */
+    .token .cap { position: relative; z-index: 1;
+                  background: rgba(0,0,0,0.55); width: 100%; padding: 1px 2px;
+                  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    /* Marquee selection rectangle drawn on the stage. */
+    #marquee { position: absolute; border: 1px dashed #fc6; background: rgba(255,204,102,0.12);
+               pointer-events: none; display: none; z-index: 20; }
+    /* Fog overlay. z-index 15 puts it ABOVE tokens (which are appended to #stage
+       later in the DOM, and so would otherwise paint on top) but BELOW the
+       marquee. pointer-events stays none unless fog mode is on, so fog never
+       steals a token drag. */
+    #fog-layer { position: absolute; left: 0; top: 0; pointer-events: none; z-index: 15; }
+    #fog-layer.editing { pointer-events: auto; }
+    /* One transparent full-scene rect catches every pointer event while editing.
+       Which region a click actually hit is then decided in JS against the
+       geometry, not by SVG document order. */
+    .fog-catch { cursor: crosshair; }
+    #fog-layer.tool-select .fog-catch { cursor: default; }
+    .fog-outline { fill: none; stroke: #6cf; stroke-width: 2; stroke-dasharray: 5 4; }
+    .fog-outline.revealed { stroke: #6f6; }
+    .fog-outline.selected { stroke: #fc6; stroke-width: 3; stroke-dasharray: none; }
+    .fog-preview { fill: rgba(108,204,255,0.20); stroke: #6cf; stroke-width: 2; stroke-dasharray: 4 3; }
+    #fog-panel .row { margin-top: 6px; }
+    #fog-panel.hidden-panel { display: none; }
+    /* Right-click context menu. */
+    #ctx-menu { position: fixed; z-index: 100; background: #1a1a1a; border: 1px solid #555;
+                border-radius: 4px; font-size: 12px; display: none; min-width: 150px; padding: 4px 0; }
+    #ctx-menu .item { padding: 5px 12px; cursor: pointer; white-space: nowrap; color: #ddd; }
+    #ctx-menu .item:hover { background: #2c2c2c; }
+    #ctx-menu .sep { border-top: 1px solid #444; margin: 4px 0; }
+    #ctx-menu .head { padding: 3px 12px; color: #888; font-size: 11px; }
+    .scene-row { margin: 4px 0; display: flex; gap: 6px; align-items: center; }
+    .scene-row button { margin-top: 0; padding: 2px 8px; font-size: 12px; }
+    .active-scene { color: #2a7; font-weight: bold; }
+  </style>
+</head>
+<body>
+  <div id="ctx-menu"></div>
+  <h1>VTT scene canvas (dev harness)</h1>
+  <p class="muted">
+    Log in via <a href="/">the landing page</a>, get a campaign id from
+    <a href="/dashboard.html">/dashboard.html</a>. <span id="whoami">checking…</span>
+  </p>
+
+  <fieldset>
+    <legend>Campaign & scene</legend>
+    <label>Campaign id</label>
+    <input id="campaign-id" class="full" placeholder="uuid from the dashboard" />
+    <div class="row">
+      <button id="load-scenes">Load scenes</button>
+      <span class="muted">GM: <b>open</b> loads a scene for you only · <b>activate</b> moves every player into it. Players cannot switch scenes.</span>
+      <span class="muted">or make one (GM only):</span>
+      <input id="new-scene-name" placeholder="scene name" />
+      <button id="create-scene">Create scene</button>
+    </div>
+    <div id="scene-list"></div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Place a token</legend>
+    <div class="row">
+      <div class="vtt-dd" id="tokActorDD" data-value="">
+        <input type="hidden" id="tok-actor" value="" />
+        <button type="button" id="tok-actorBtn" class="vtt-dd-btn" aria-haspopup="listbox" aria-expanded="false" title="place a token for a character">— no character —</button>
+        <ul class="vtt-dd-list" role="listbox" aria-label="Character" tabindex="-1" hidden></ul>
+      </div>
+      <input id="tok-name" placeholder="token name" />
+      <input id="tok-img" placeholder="https://image… (optional)" style="min-width:220px" />
+      <label for="tok-count" style="display:inline;margin:0">×</label>
+      <input id="tok-count" type="number" min="1" max="50" value="1" style="width:60px" title="how many to place" />
+      <select id="tok-size" title="creature size">
+        <!-- An explicit "inherit" option. The server inherits a field only when
+             it is ABSENT from the body, and a select always has a value, so
+             without this the form could never let a character's own size
+             through. -->
+        <option value="">— from character —</option>
+        <option value="medium">Medium (1×1)</option>
+        <option value="tiny">Tiny (½×½)</option>
+        <option value="small">Small (1×1)</option>
+        <option value="large">Large (2×2)</option>
+        <option value="huge">Huge (3×3)</option>
+        <option value="gargantuan">Gargantuan (4×4)</option>
+      </select>
+      <button id="place-token">Place</button>
+    </div>
+    <div class="muted">
+      placed at the mouse pointer (or 0,0 if the pointer hasn't been over the canvas).
+      Multiples are packed into a compact block and numbered: <i>Goblin, Goblin 2, Goblin 3…</i>
+      · GM: unlimited · player: 1
+    </div>
+  </fieldset>
+
+  <fieldset id="fog-panel" class="hidden-panel">
+    <legend>Fog of war <span class="muted">(GM)</span></legend>
+    <div class="row">
+      <label for="fog-mode" style="display:inline;margin:0">
+        <input type="checkbox" id="fog-mode" /> fog mode <span class="muted">(F)</span>
+      </label>
+      <span class="muted">|</span>
+      <select id="fog-tool" title="what a drag does">
+        <option value="select">select / move</option>
+        <option value="cover">cover (draw fog)</option>
+        <option value="reveal">reveal (erase fog)</option>
+      </select>
+      <select id="fog-shape" title="shape to draw">
+        <option value="rect">rectangle</option>
+        <option value="circle">circle</option>
+        <option value="poly">polygon</option>
+      </select>
+      <button id="fog-cover-all">Cover whole scene</button>
+      <button id="fog-clear-all">Clear all fog</button>
+    </div>
+    <div class="muted">
+      <b>F</b> toggles fog mode from anywhere on the page (GM only), or use the checkbox.
+      Fog mode routes clicks to fog instead of tokens — tokens are untouched while it is on.
+      <b>Cover</b> paints fog; <b>Reveal</b> erases it (drag inside existing fog to open a window).
+      Drag for a rectangle or circle; for a polygon click each corner then press Enter
+      (Esc cancels). With <b>select</b>: click a region to pick it (the most recent one under
+      the pointer wins) · drag it to move · drag empty space (or Alt/Option+drag anywhere) to marquee-select ·
+      right-click for actions · <b>T</b> flips cover/reveal · arrows nudge ·
+      Ctrl/Cmd+A/C/X/V/D · Del deletes.
+      Rendering is <i>fog = everything covered, minus everything revealed</i>, so a reveal
+      is reversible — unlike a real eraser, you can flip it back to cover.
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Canvas <span class="muted" id="scene-title"></span></legend>
+    <div class="muted">drag a token to move (syncs on drop) · drag empty space to marquee-select · right-click for actions · green border = movable by you</div>
+    <div class="muted" id="shortcuts">
+      <b>shortcuts:</b>
+      arrows = nudge 1 · shift+arrows = nudge 5 · Esc = clear selection · Ctrl/Cmd+A = select all
+      <span class="gm-only"> · <i>GM only:</i> Ctrl/Cmd+C copy · Ctrl/Cmd+X cut ·
+      Ctrl/Cmd+V paste <i>(at the mouse pointer)</i> · Ctrl/Cmd+D duplicate <i>(+1/+1)</i> ·
+      Del/Backspace delete · F toggle fog mode</span>
+    </div>
+    <div id="stage-wrap">
+      <div id="stage"><div id="grid-pad"></div><div id="stage-bg"></div><svg id="fog-layer" xmlns="http://www.w3.org/2000/svg"></svg><div id="marquee"></div></div>
+      <div id="zoom-hud">100%</div>
+    </div>
+  </fieldset>
+
+  <div class="muted">socket log</div>
+  <div id="log"></div>
+  <div id="out">ready</div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/js/ui/imageframe.js"></script>
+  <script src="/js/ui/imagepicker.js"></script>
+  <script src="/js/ui/closednotice.js"></script>
+  <script src="/js/game/scene.js"></script>
+</body>
+</html>

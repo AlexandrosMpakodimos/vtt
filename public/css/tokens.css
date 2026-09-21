@@ -4,7 +4,7 @@
  * ground, antique gold, deep red — a League-of-Legends-adjacent register); light
  * is a parchment variant that keeps the same gold/red family on aged paper.
  * Selected by html[data-theme="light"|"dark"], set before first paint by
- * /js/theme.js. per-theme `color-scheme` makes native controls follow.
+ * /js/shared/theme.js. per-theme `color-scheme` makes native controls follow.
  *
  * Every value below is FROZEN and contrast-verified against WCAG 2.2 AA
  * (text >= 4.5:1, UI/focus >= 3:1, button text >= 4.5:1). Recomputed ratios:
