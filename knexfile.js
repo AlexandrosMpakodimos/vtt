@@ -92,6 +92,7 @@ if (environment === 'test') {
   require('dotenv').config();
 
   module.exports = {
+    ...(environment === 'production' ? { production: require('./src/config/database').knexConfiguration(process.env) } : {}),
     development: {
       ...shared,
       connection: process.env.DATABASE_URL,

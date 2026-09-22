@@ -3,6 +3,7 @@
 
 // No external server or database. Some suites start their own loopback server.
 const UNIT = [
+  'test-production-db-config.js', 'test-production-migrate-command.js',
   'test-campaign-mutation-contracts.js',
   'test-final-owner-boundaries.js', 'test-final-room-admission.js',
   'test-campaign-permission-races.js',
@@ -20,6 +21,7 @@ const UNIT = [
 
 // Functional. Real Postgres, server on npm run dev:test.
 const DB = [
+  'test-session-store-migration.js',
   'test-final-closed-broadcasts.js',
   'test-campaign-permission-races-db.js',
   'test-login-session-races-db.js',
