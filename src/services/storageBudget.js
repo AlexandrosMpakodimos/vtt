@@ -154,44 +154,54 @@ async function reserveBytes(bytes) {
 // An upload succeeded: move its reservation into committed. The reservation must
 // have existed, so reserved_bytes cannot go negative (the DB check would fail
 // the transaction if it tried, which is the correct loud failure).
-async function commitReservedBytes(bytes) {
+// Transaction-scoped core, so a caller already holding a SERIALIZABLE transaction
+// (for example, one that also transitions a row's status in the same commit) can
+// compose this instead of opening a second, separate transaction. Same validation,
+// same return shape, same error type as the standalone function below, which is
+// now a thin wrapper around this — moving the logic changes nothing about either
+// entry point's contract.
+async function commitReservedBytesIn(trx, bytes) {
   if (!Number.isInteger(bytes) || bytes <= 0) {
     throw new Error('commitReservedBytes requires a positive integer');
   }
-  return inSerializable(async (trx) => {
-    const row = await readRow(trx);
-    const reserved = Number(row.reserved_bytes);
-    if (reserved < bytes) {
-      // The reservation we are committing does not exist. Do NOT invent
-      // committed bytes from nothing; this is a bug in the caller's bookkeeping
-      // and must be visible.
-      const e = new Error('commit exceeds reserved bytes'); e.ledgerInconsistent = true; throw e;
-    }
-    await trx('storage_budget').where({ id: true }).update({
-      reserved_bytes: reserved - bytes,
-      committed_bytes: Number(row.committed_bytes) + bytes,
-      updated_at: trx.fn.now(),
-    });
-    return { committed: bytes };
+  const row = await readRow(trx);
+  const reserved = Number(row.reserved_bytes);
+  if (reserved < bytes) {
+    // The reservation we are committing does not exist. Do NOT invent
+    // committed bytes from nothing; this is a bug in the caller's bookkeeping
+    // and must be visible.
+    const e = new Error('commit exceeds reserved bytes'); e.ledgerInconsistent = true; throw e;
+  }
+  await trx('storage_budget').where({ id: true }).update({
+    reserved_bytes: reserved - bytes,
+    committed_bytes: Number(row.committed_bytes) + bytes,
+    updated_at: trx.fn.now(),
   });
+  return { committed: bytes };
+}
+async function commitReservedBytes(bytes) {
+  return inSerializable((trx) => commitReservedBytesIn(trx, bytes));
 }
 
 // An upload failed or was abandoned before commit: give the reservation back.
-async function releaseReservedBytes(bytes) {
+// Transaction-scoped core; see commitReservedBytesIn's comment above — same
+// relationship, same reason.
+async function releaseReservedBytesIn(trx, bytes) {
   if (!Number.isInteger(bytes) || bytes <= 0) {
     throw new Error('releaseReservedBytes requires a positive integer');
   }
-  return inSerializable(async (trx) => {
-    const row = await readRow(trx);
-    const reserved = Number(row.reserved_bytes);
-    // Clamp defensively: releasing more than is reserved is a bookkeeping bug,
-    // but the ledger must never read negative, so release only what exists and
-    // surface the discrepancy.
-    const give = Math.min(reserved, bytes);
-    await trx('storage_budget').where({ id: true })
-      .update({ reserved_bytes: reserved - give, updated_at: trx.fn.now() });
-    return { released: give, shortfall: bytes - give };
-  });
+  const row = await readRow(trx);
+  const reserved = Number(row.reserved_bytes);
+  // Clamp defensively: releasing more than is reserved is a bookkeeping bug,
+  // but the ledger must never read negative, so release only what exists and
+  // surface the discrepancy.
+  const give = Math.min(reserved, bytes);
+  await trx('storage_budget').where({ id: true })
+    .update({ reserved_bytes: reserved - give, updated_at: trx.fn.now() });
+  return { released: give, shortfall: bytes - give };
+}
+async function releaseReservedBytes(bytes) {
+  return inSerializable((trx) => releaseReservedBytesIn(trx, bytes));
 }
 
 // Committed bytes are leaving storage, but the object could not be deleted yet:
@@ -291,6 +301,8 @@ async function snapshot() {
 }
 
 module.exports = {
+  commitReservedBytesIn,
+  releaseReservedBytesIn,
   LIMITS,
   DEFAULTS,
   classOf,

@@ -685,21 +685,55 @@ router.post('/:id/confirm', requireStorage, async (req, res, next) => {
       // the durable cleanup queue exists to catch: try once, and if it does not
       // succeed, record the object so a worker retries until absence is
       // established. The size was never HEADed (we do not HEAD a liar), so no
-      // committed bytes are involved — only the presign reservation, which is
-      // released here rather than waiting on the 30-minute sweep.
+      // committed bytes are involved — only the presign reservation.
+      //
+      // The R2 call happens here, ONCE, before any transaction opens, and its
+      // result (removed) is a plain boolean closed over below — a retried
+      // transaction never re-calls R2, it only redoes the database-only work.
+      //
+      // The row's own read at the top of this handler is not trustworthy for a
+      // budget decision: it was taken before the HEAD call above, and the sweep
+      // (cleanupStaleAssets) may have claimed and removed this exact row in the
+      // meantime. So the guard, the queue insert and the reservation release all
+      // happen together, atomically, gated on a FRESH read of the row's current
+      // state, in one SERIALIZABLE transaction — the same discipline used
+      // throughout storageBudget.js. If the row is no longer 'pending' (the
+      // sweep, or a concurrent confirm request for the same id, already
+      // finished it), this request contributes nothing further: no release, no
+      // queue insert, no row write — whoever actually claimed the row already
+      // did all of that.
       const removed = await storage.remove(asset.storage_key);
-      if (!removed) {
-        await knex('storage_cleanup').insert({
-          storage_key: asset.storage_key,
-          bytes: null, // size unknown for a rejected upload
-          reason: 'rejected',
-        }).catch(() => {});
+      const claim = await budget.inSerializable(async (trx) => {
+        // Row lock, belt-and-braces alongside SERIALIZABLE (same pattern as the
+        // cleanup worker's own batch claim).
+        const current = await trx('assets').where({ id: asset.id }).forUpdate().first();
+        if (!current || current.status !== 'pending') return { claimed: false };
+
+        await trx('assets').where({ id: asset.id })
+          .update({ status: 'rejected', reserved_bytes: null, updated_at: trx.fn.now() });
+
+        if (!removed) {
+          await trx('storage_cleanup').insert({
+            storage_key: asset.storage_key,
+            bytes: null, // size unknown for a rejected upload
+            reason: 'rejected',
+          });
+        }
+        // reserved_bytes is a bigint column: node-pg returns it as a numeric
+        // string, never a JS number, so Number(...) is required — a typeof
+        // check against 'number' would never fire for a value read back from
+        // Postgres (a pre-existing defect in the code this replaced, confirmed
+        // present before this patch; see the scope notes).
+        if (active) {
+          const reservedBytes = Number(current.reserved_bytes);
+          if (reservedBytes > 0) await budget.releaseReservedBytesIn(trx, reservedBytes);
+        }
+        return { claimed: true };
+      });
+
+      if (!claim.claimed) {
+        return res.status(409).json({ error: 'asset is no longer pending' });
       }
-      if (active && typeof asset.reserved_bytes === 'number' && asset.reserved_bytes > 0) {
-        await budget.releaseReservedBytes(asset.reserved_bytes).catch(() => {});
-      }
-      await knex('assets').where({ id: asset.id })
-        .update({ status: 'rejected', reserved_bytes: null, updated_at: knex.fn.now() });
       return res.status(400).json({
         error: 'that file is not the image type it claims to be',
       });
@@ -741,46 +775,66 @@ router.post('/:id/confirm', requireStorage, async (req, res, next) => {
       return res.status(409).json({ error: 'stored object reported no size' });
     }
 
-    // Reconcile the reservation against the real stored size. We reserved the
-    // declared maximum at presign; the object may be smaller. Commit the ACTUAL
-    // bytes, and release the difference so the ledger reflects what is truly
-    // stored rather than what was promised. The signed content-length means the
-    // real size cannot EXCEED the reservation, so this only ever releases; a
-    // larger-than-reserved size would be a provider anomaly and is clamped by
-    // committing the reservation and flagging the row for reconciliation.
-    if (active) {
-      const reserved = typeof asset.reserved_bytes === 'number' ? asset.reserved_bytes : 0;
-      const realBytes = authoritative.bytes;
-      if (reserved > 0) {
-        const toCommit = Math.min(realBytes, reserved);
-        await budget.commitReservedBytes(toCommit);
-        if (reserved > toCommit) {
-          await budget.releaseReservedBytes(reserved - toCommit).catch(() => {});
+    // Same reasoning as the rejection path above: the row's state is re-read
+    // fresh, under a row lock, inside one SERIALIZABLE transaction that also
+    // performs the reservation commit/release and the final row write — not the
+    // stale pre-HEAD-call snapshot. The HEAD that produced `authoritative` has
+    // already happened, outside any transaction; nothing here calls R2, so a
+    // retry on serialization conflict only redoes database work.
+    const claim = await budget.inSerializable(async (trx) => {
+      const current = await trx('assets').where({ id: asset.id }).forUpdate().first();
+      if (!current || current.status !== 'pending') return { claimed: false };
+
+      // Reconcile the reservation against the real stored size. We reserved the
+      // declared maximum at presign; the object may be smaller. Commit the
+      // ACTUAL bytes, and release the difference so the ledger reflects what is
+      // truly stored rather than what was promised. The signed content-length
+      // means the real size cannot EXCEED the reservation, so this only ever
+      // releases; a larger-than-reserved size would be a provider anomaly and is
+      // clamped by committing the reservation and flagging the row for
+      // reconciliation.
+      // Same bigint-round-trips-as-string note as the rejection path above:
+      // Number(...), not typeof.
+      const reservedBytes = Number(current.reserved_bytes) || 0;
+      if (active) {
+        const realBytes = authoritative.bytes;
+        if (reservedBytes > 0) {
+          const toCommit = Math.min(realBytes, reservedBytes);
+          await budget.commitReservedBytesIn(trx, toCommit);
+          if (reservedBytes > toCommit) {
+            await budget.releaseReservedBytesIn(trx, reservedBytes - toCommit);
+          }
+          // realBytes should never exceed reserved (length is signed); if a
+          // provider ever reported otherwise, the extra is NOT silently
+          // committed — bytes_verified is left false below so the reconciler
+          // revisits it.
         }
-        // realBytes should never exceed reserved (length is signed); if a
-        // provider ever reported otherwise, the extra is NOT silently committed
-        // — bytes_verified is left false below so the reconciler revisits it.
       }
+
+      const trustworthy = !active
+        ? false // when inactive we still record the real size, but it is not yet
+        // ledger-charged; the reconciler will fold it in at initialisation.
+        : (Number.isFinite(reservedBytes) && current.reserved_bytes != null
+          ? authoritative.bytes <= reservedBytes
+          : false);
+
+      const [row] = await trx('assets').where({ id: asset.id }).update({
+        status: 'ready',
+        mime: declared,
+        bytes: authoritative.bytes,
+        bytes_verified: trustworthy,
+        etag: authoritative.etag || null,
+        reserved_bytes: null,
+        updated_at: trx.fn.now(),
+      }).returning('*');
+
+      return { claimed: true, row };
+    });
+
+    if (!claim.claimed) {
+      return res.status(409).json({ error: 'asset is no longer pending' });
     }
-
-    const trustworthy = !active
-      ? false // when inactive we still record the real size, but it is not yet
-      // ledger-charged; the reconciler will fold it in at initialisation.
-      : (typeof asset.reserved_bytes === 'number'
-        ? authoritative.bytes <= asset.reserved_bytes
-        : false);
-
-    const [row] = await knex('assets').where({ id: asset.id }).update({
-      status: 'ready',
-      mime: declared,
-      bytes: authoritative.bytes,
-      bytes_verified: trustworthy,
-      etag: authoritative.etag || null,
-      reserved_bytes: null,
-      updated_at: knex.fn.now(),
-    }).returning('*');
-
-    return res.json({ asset: publicAsset(row) });
+    return res.json({ asset: publicAsset(claim.row) });
   } catch (err) {
     return next(err);
   }

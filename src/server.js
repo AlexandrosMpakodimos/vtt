@@ -244,55 +244,7 @@ async function cleanupDeletedCampaigns() {
 setInterval(cleanupDeletedCampaigns, 60 * 60 * 1000);
 cleanupDeletedCampaigns();
 
-// Reclaim upload authorisations that were issued and never used.
-//
-// A presigned URL creates a `pending` asset row before the bytes exist, because
-// the quota has to be claimed before the authorisation is handed out. A client
-// that asks for a URL and never uploads therefore holds quota indefinitely, and
-// asking repeatedly would exhaust it without storing a single image.
-//
-// Same hourly cadence and fail-soft shape as the token and campaign sweeps
-// above. Rejected rows go too: the object was already deleted at the moment of
-// rejection, so the row is a record of something that no longer exists.
-async function cleanupStaleAssets() {
-  try {
-    // A stale pending row may have an OBJECT behind it: the client got a
-    // presigned URL and PUT the bytes but never confirmed, or confirmed and was
-    // rejected. Deleting the ROW without deleting the OBJECT turns a tracked
-    // upload into invisible storage — the exact leak the durable cleanup queue
-    // exists to close. So each stale row that has a storage_key is enqueued for
-    // deletion first, and its byte reservation (if the budget is active) is
-    // released, before the row itself is removed. Rows with no storage_key
-    // (external links never reach 'pending', but be defensive) just go.
-    const stale = await knex('assets')
-      .whereIn('status', ['pending', 'rejected'])
-      .whereRaw(`created_at < now() - interval '${PENDING_ASSET_TTL_MINUTES} minutes'`)
-      .select('id', 'storage_key', 'reserved_bytes');
-
-    if (stale.length === 0) return;
-
-    for (const row of stale) {
-      if (row.storage_key) {
-        // eslint-disable-next-line no-await-in-loop
-        await knex('storage_cleanup').insert({
-          storage_key: row.storage_key,
-          bytes: null, // an unconfirmed object's size was never established
-          reason: 'orphan_pending',
-        }).catch(() => {});
-      }
-      if (typeof row.reserved_bytes === 'number' && row.reserved_bytes > 0) {
-        // eslint-disable-next-line no-await-in-loop
-        await budget.releaseReservedBytes(row.reserved_bytes).catch(() => {});
-      }
-    }
-
-    const ids = stale.map((r) => r.id);
-    const n = await knex('assets').whereIn('id', ids).del();
-    if (n) console.log(`Cleared ${n} stale asset row(s); queued objects for deletion`);
-  } catch (err) {
-    console.error('Asset cleanup failed:', err.message);
-  }
-}
+const { cleanupStaleAssets } = require('./services/staleAssetCleanup');
 setInterval(cleanupStaleAssets, 60 * 60 * 1000);
 cleanupStaleAssets();
 
