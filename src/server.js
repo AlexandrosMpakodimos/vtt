@@ -32,11 +32,17 @@ const io = new Server(server);
 const pgPool = new Pool(
   process.env.NODE_ENV === 'test'
     ? { ...require('../knexfile').test.connection }
-    : { connectionString: process.env.DATABASE_URL }
+    : process.env.NODE_ENV === 'production'
+      ? require('./config/database').sessionConfiguration(process.env)
+      : { connectionString: process.env.DATABASE_URL }
 );
 
 const sessionMiddleware = session({
-  store: new PgSession({ pool: pgPool, createTableIfMissing: true }),
+  store: new PgSession({ pool: pgPool,
+    createTableIfMissing: process.env.NODE_ENV !== 'production',
+    ...(process.env.NODE_ENV === 'production' ? { schemaName: 'public', tableName: 'session',
+      errorLog: () => console.error('SESSION_STORE_ERROR: Session database operation failed.') } : {}),
+  }),
   secret: process.env.SESSION_SECRET,
   resave: false,
   saveUninitialized: false,

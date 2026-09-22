@@ -280,3 +280,88 @@ explicit re-entry behavior. Use the isolated environment for automated suites.
 
 Controlled operation/lifecycle tests supplement real HTTP/PostgreSQL coverage;
 they do not prove database isolation or real network scheduling on their own.
+
+## Production database profile / session ownership follow-up
+
+Locked-source verification: connect-pg-simple 10.0.0, pg 8.21.0, pg-pool 3.14.0,
+Knex 3.2.10, Tarn 3.0.2; URL parsers 2.6.2 (Knex) and 2.13.0 (nested under pg).
+Use npm ci; do not update the lockfile to run these tests. The package archives
+were checked against package-lock integrity values during review.
+
+Offline:
+
+```
+node tests/unit/test-production-db-config.js
+node tests/unit/test-production-migrate-command.js
+node tests/unit/test-auth-session-revocation.js
+node tests/unit/test-socket-sessions.js
+```
+
+The profile suite uses actual installed Knex/Tarn and pg-pool with fake network
+clients to verify hooks block acquisition until success and reject before use.
+It checks driver TLS options without a network connection. It is not a real TLS
+handshake or Neon pooler test. Production config has no local-test bypass.
+
+Real migration and session behavior uses the existing isolated local database
+and server setup documented above, then:
+
+```
+node scripts/test-local.js test-session-store-migration.js
+```
+
+This suite runs under NODE_ENV=test with the original vtt_test/vtt_test_runner
+URL and role-privilege guard. It creates random db_review_* schemas, runs the real
+migration chain and locked session store on synthetic rows, and removes only its
+own schemas in finally. The session pool also awaits the existing test identity
+check. Fixtures cover fresh creation, populated adoption, unchanged history,
+concurrent migration locking, repeat no-op, incompatible schema rollback,
+equivalent index adoption, session CRUD/touch and refusal of destructive down.
+The test must fail, not skip, if the guarded database is unavailable. Do not run
+it against any existing user database or supply a production URL.
+
+Required evidence before merge: offline suites pass; real guarded migration/store
+suite passes; historical migration hashes, root lockfile and Worker package tree
+remain unchanged. A source/syntax check is not a substitute for database evidence.
+
+### Revised teardown and rejection fixtures
+
+The database suite reports success only after teardown. Each store close, pool
+end, Knex destroy, fixture-schema drop and final administrator destroy is attempted
+independently with a three-second deadline. The original test/setup error remains
+primary; cleanup failures are collected by resource label. Any failure yields a
+nonzero exit. A final bounded termination prevents failed driver cleanup from
+holding the test process open. A failed schema drop can leave that invocation's
+synthetic schema; review the failure and do not run broad cleanup automatically.
+
+After the original local identity/privilege check passes, the suite launches its
+own guarded child invocations to inject partial setup failure, store cleanup
+failure, combined setup/cleanup failure, a stalled close, and multiple cleanup
+failures. It verifies nonzero normal termination, no success line or unhandled
+rejection, preservation of the primary failure, all cleanup attempts, and removal
+of the child-created schema. There is no production/local bypass or alternate
+connection environment. Run the normal isolated suite command; no manual injection
+flags are needed.
+
+Populated rejection fixtures cover timestamp mismatch, bounded sid, extra/nullable
+columns, missing/wrong/composite/deferrable primary keys, check/unique constraints,
+additional unique indexes, user triggers, enabled/forced RLS, inheritance parents
+and children, partition parents and children, and conflicting expiry-index names.
+Every failed adoption checks both rows and schema catalog snapshots (columns,
+relations, constraints, indexes, triggers, policies, inheritance and functions).
+A transaction-local marker table must also disappear, demonstrating rollback.
+Touch uses a substantially later TTL and asserts the stored expiry increased;
+retaining only the session payload is not sufficient evidence.
+
+### Owner verification: database configuration and session migration
+
+Owner verification on macOS with PostgreSQL 17 passed:
+- Unit: 33 suites, 2,204 assertions, zero failures.
+- Database/integration: 32 suites, 1,491 assertions, zero failures.
+- Security: 9 suites, 486 assertions, zero failures.
+- Combined application groups: 74 suites, 4,181 assertions, zero failures.
+- Session-store migration suite: 104 assertions, passing standalone and within
+  the database group.
+- Worker-to-router integration: 30 tests, zero failures.
+
+These are local isolated-database results. No production migration, live TLS
+handshake, Neon pooler validation or deployment was performed.

@@ -111,3 +111,121 @@ coordination work; this is a recommendation, not an already selected topology.
 
 These sources explain framework behavior. The specific backlog and bounded
 scope are application recommendations, not mandatory directory patterns.
+
+## Database configuration and migration ownership (eacfc6e follow-up)
+
+This patch supports a deliberately narrow production profile. These restrictions
+are application decisions, not universal PostgreSQL requirements. It does not
+establish deployment readiness, zero spend, or provider identity.
+
+### Connections and schema
+
+Production Knex and the session pool share explicit PostgreSQL fields derived
+from DATABASE_URL. Knex permits 0–5 connections, sessions 0–2; migration Knex
+permits 0–2. All evict idle clients after 30 seconds and establish connections
+within 10 seconds. Knex acquisition is bounded at 15 seconds and Tarn creation
+at 10 seconds. pg-pool uses its 10-second connectionTimeoutMillis for both
+connection establishment and waiting for a pool slot. These are not SQL
+execution timeouts or whole-process deadlines. Deployment overlap can double
+the application connection budget.
+
+TLS always uses rejectUnauthorized=true, normal Node trust roots and hostname
+verification. Neither client receives a connectionString after validation.
+Development connection handling and the isolated local test branch are unchanged.
+
+Application queries are still generally unqualified. Therefore the application
+and migration roles must each have a database-specific default search_path of
+exactly public. Establish that through the separately authorized operator role
+configuration; this application neither changes roles nor sends SET search_path
+through the Neon transaction pooler. The effective setting must remain stable
+across backends for the same role/database. The application role must not create
+shadow schemas or change its search path during normal work.
+
+Every new production Knex connection is withheld by afterCreate until the
+schema assertion succeeds. Every session connection is withheld by pg-pool's
+awaited onConnect hook. This is not an async event listener. The assertion checks
+current_schema(), current_schemas(false), and current_setting('search_path');
+it accepts only public, [public], and public (optionally quoted), respectively.
+Its query has a 10-second timeout. A failed Knex assertion closes the raw client
+before rejecting; the locked pg-pool closes rejected onConnect clients itself.
+
+Production sessions explicitly target public.session. Migration history and its
+lock explicitly target public.knex_migrations and public.knex_migrations_lock.
+Historical migrations continue to use their existing unqualified names under the
+asserted public search path. The migrator additionally rejects shadow history or
+session relations. No historical table/history movement is performed.
+
+### Exact supported production inputs
+
+- NODE_ENV must be production. Application configuration reads DATABASE_URL;
+  the migration runner reads only DIRECT_DATABASE_URL, with no fallback.
+- URLs must use postgres: or postgresql:, have a nonempty user/password/database,
+  a Neon DNS hostname, and an optional port 1–65535 (default 5432). Percent-encode
+  credentials. Malformed escapes, controls, whitespace, fragments, multi-component
+  database paths, sockets and multi-host forms are refused.
+- The complete query-option allowlist is one optional sslmode=require or
+  sslmode=verify-full. No parameter also means verified TLS. require is deliberately
+  strengthened to full verification. Duplicates and every other option are rejected.
+- In particular: ssl, sslcert, sslkey, sslrootcert, uselibpqcompat, sslnegotiation,
+  channel_binding (all values), options, search_path, host, hostaddr, user, password,
+  dbname, connect_timeout and pool settings are unsupported URL options.
+- No defined environment key matching ^PG[A-Z0-9_]*$ is allowed, even if empty.
+  This includes PGHOST, PGPORT, PGUSER, PGPASSWORD, PGDATABASE, PGOPTIONS,
+  PGAPPNAME, PGSSLMODE and PGCONNECT_TIMEOUT.
+- NODE_TLS_REJECT_UNAUTHORIZED must be absent or exactly 1. Defined
+  NODE_EXTRA_CA_CERTS, SSL_CERT_FILE and SSL_CERT_DIR are rejected, including empty
+  values. Do not use NODE_OPTIONS to alter TLS or load configuration-changing code.
+- The pooled hostname must have the Neon -pooler endpoint suffix; the direct
+  hostname must not. These are routing-shape checks, never identity proof.
+
+pg 8.21.0 can prefer SCRAM channel binding with enableChannelBinding, but can
+fall back to ordinary SCRAM. Consequently channel_binding=require is rejected
+rather than silently weakened. If mandatory channel binding is required, stop
+and review the supported profile separately; do not simply remove the requirement.
+
+### Operator gate and release sequence
+
+Before any production migration, independently verify in the provider's trusted
+control plane that both endpoints belong to the intended project, branch and
+database. Hostname syntax alone cannot prove that. From an independently trusted
+operator connection, verify current_database(), current_user, current_schema(),
+current_schemas(false) and current_setting('search_path') through each endpoint.
+Compare existing migration history with the approved release. Database names
+alone do not prove branch/project identity. Verify both roles if they differ.
+No such provider/identity verification was performed while preparing this patch.
+
+Then, from a reviewed release checkout and separately authorized migration
+environment, set NODE_ENV=production and supply DIRECT_DATABASE_URL privately;
+run npm run migrate:production. Do not put URLs on the command line or in logs.
+Application/Worker/mail secrets are not required by this command.
+
+The runner calls migrate.latest once with normal Knex locking, list validation
+and transactions, then destroys its own pool. It never auto-unlocks, retries,
+rolls back, initializes accounting or imports the server. Lock failure stops the
+release pending operator review. Generic npm run migrate remains the local
+development/test route; only migrate:production is supported for production.
+Never attach migrations to build or application start. Render Free's lack of a
+pre-deploy migration hook and release overlap remain separate deployment gates.
+
+Only after the migration succeeds should the new production application run.
+Production session auto-creation is disabled; there is no readiness coordinator
+in this patch. Existing development/test auto-creation is retained.
+
+The additive session migration creates sid varchar, sess json and expire
+timestamp(6) without time zone, all non-null, with a nondeferrable sid primary
+key and expiry B-tree index. It accepts existing unbounded varchar/text sid and
+json/jsonb sess with the same timestamp contract. It refuses extra columns,
+incompatible constraints, RLS, user triggers, partitions/inheritance and index-name
+collisions. Equivalent expiry indexes are retained. Compatible rows are neither
+updated nor deleted. Adoption uses an exclusive table lock in the migration
+transaction; plan the separately approved maintenance window accordingly.
+Its down refuses to delete a potentially adopted table; use reviewed forward
+repair, not automatic rollback.
+
+Diagnostics in this patch's configuration, Knex logger, migration runner and
+session-store logger use fixed safe categories. No raw connection/driver error,
+URL, SQL, binding, stack or nested cause is forwarded. Existing unrelated runtime
+logs and idle-pool failure handling are not redesigned here.
+
+Worker/media, startup/readiness, runtime outage tracking, shutdown, scheduling,
+proxy trust, mail transport and root advisory remediation remain separate work.
