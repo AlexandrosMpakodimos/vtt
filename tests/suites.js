@@ -54,6 +54,12 @@ const SEC = [
 
 // This diagnostic is selectable explicitly, but never part of a registered run.
 const manual = ['test-media-integration.js'];
+
+// test-stale-asset-atomicity.js is intentionally NOT registered or mapped here.
+// It invokes the unfiltered production stale-asset sweep and therefore requires
+// exclusive vtt_test ownership with the shared dev:test server/background
+// maintenance stopped. Run it directly using the guarded command in its header.
+
 const byName = new Map();
 for (const [group, directory, files, registered] of [
   ['unit', 'unit', UNIT, true],
