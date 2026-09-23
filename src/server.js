@@ -1,5 +1,22 @@
 if (process.env.NODE_ENV !== 'test') require('dotenv').config();
 
+const { createLifecycle } = require('./lifecycle');
+const lifecycle = createLifecycle();
+process.on('SIGTERM', () => lifecycle.shutdown());
+process.on('SIGINT', () => lifecycle.shutdown());
+const startupCheckDeadline = setTimeout(() => {
+  console.error('STARTUP_CHECK_DEADLINE');
+  lifecycle.shutdown(1);
+}, 20000);
+const startupDeadline = setTimeout(() => {
+  console.error('STARTUP_DEADLINE');
+  // Hard limit includes partial-setup cleanup begun at the check deadline.
+  lifecycle.shutdown(1);
+  process.exit(1);
+}, 30000);
+
+async function start() {
+require('./config/startup').validate(process.env);
 const express = require('express');
 const http = require('http');
 const path = require('path');
@@ -11,6 +28,7 @@ const PgSession = require('connect-pg-simple')(session);
 const { Pool } = require('pg');
 
 const knex = require('./db');
+lifecycle.pools.push(() => knex.destroy());
 const { router: assetRoutes, PENDING_TTL_MINUTES: PENDING_ASSET_TTL_MINUTES } = require('./routes/assets');
 const { router: mediaRoutes } = require('./routes/media');
 const budget = require('./services/storageBudget');
@@ -26,8 +44,27 @@ const {
 } = require('./middleware/rateLimit');
 
 const app = express();
+app.set('workLifecycle', lifecycle);
 const server = http.createServer(app);
-const io = new Server(server);
+let io;
+const connections = new Set();
+server.on('connection', connection => {
+  connections.add(connection);
+  connection.once('close', () => connections.delete(connection));
+});
+// One owner closes HTTP: Socket.IO when attached, the raw server on partial setup.
+lifecycle.transports.push(() => new Promise((resolve, reject) => {
+  const complete = error => error && error.code !== 'ERR_SERVER_NOT_RUNNING' ? reject(error) : resolve();
+  if (io) io.close(complete).catch(reject);
+  else server.close(complete);
+  server.closeIdleConnections?.();
+}));
+lifecycle.forceTransports.push(() => {
+  io?.disconnectSockets(true);
+  io?.engine.close();
+  for (const connection of connections) connection.destroy();
+});
+io = new Server(server);
 
 const pgPool = new Pool(
   process.env.NODE_ENV === 'test'
@@ -37,12 +74,19 @@ const pgPool = new Pool(
       : { connectionString: process.env.DATABASE_URL }
 );
 
-const sessionMiddleware = session({
-  store: new PgSession({ pool: pgPool,
+pgPool.on('error', () => { console.error('SESSION_POOL_ERROR'); lifecycle.shutdown(1); });
+lifecycle.pools.push(() => pgPool.end());
+const sessionStore = new PgSession({ pool: pgPool,
     createTableIfMissing: process.env.NODE_ENV !== 'production',
     ...(process.env.NODE_ENV === 'production' ? { schemaName: 'public', tableName: 'session',
       errorLog: () => console.error('SESSION_STORE_ERROR: Session database operation failed.') } : {}),
-  }),
+  });
+// Track the store's complete query promise, including lazy development setup.
+const storeQuery = sessionStore._asyncQuery.bind(sessionStore);
+sessionStore._asyncQuery = (...args) => lifecycle.track(storeQuery(...args));
+lifecycle.stoppers.push(() => sessionStore.close());
+const sessionMiddleware = session({
+  store: sessionStore,
   secret: process.env.SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
@@ -120,6 +164,9 @@ app.use(helmet({
     },
   },
 }));
+app.all('/healthz', lifecycle.health);
+app.use(lifecycle.admit);
+
 if (process.env.NODE_ENV === 'test') {
   // Test-only control: invoke the real worker against memory storage.
   if (require('./services/storage').testBackend === 'memory') {
@@ -163,9 +210,9 @@ if (process.env.NODE_ENV === 'test') {
 }
 
 app.use(express.json());
-app.use(sessionMiddleware);
-app.use(passport.initialize());
-app.use(passport.session());
+app.use(lifecycle.middleware(sessionMiddleware));
+app.use(lifecycle.middleware(passport.initialize()));
+app.use(lifecycle.middleware(passport.session()));
 
 // Media routes must be mounted on the real app. Put them after session/passport
 // (the token endpoint requires auth) but before static files so /media/:id can
@@ -196,17 +243,30 @@ app.use('/api/campaigns', verifyOrigin);
 app.use('/api/assets', assetRoutes);
 app.use('/api/campaigns', campaignRoutes);
 
-io.engine.use(sessionMiddleware);
-io.engine.use(passport.initialize());
-io.engine.use(passport.session());
+io.engine.use((req, res, next) => {
+  if (lifecycle.state !== 'ready') return next(new Error('unavailable'));
+  next();
+});
+// Callback-based handshake work must survive a transport disconnect.
+for (const middleware of [sessionMiddleware, passport.initialize(), passport.session()]) {
+  io.engine.use(lifecycle.middleware(middleware));
+}
+io.use((socket, next) => lifecycle.state === 'ready' ? next() : next(new Error('unavailable')));
+io.on('connection', socket => lifecycle.instrumentSocket(socket));
+
 
 // Campaign rooms + their authorisation. Exposed on the app so the kick/ban
 // routes can evict a live socket, not merely update the database row.
-app.set('campaignSockets', initSockets(io));
+const campaignSockets = initSockets(io, lifecycle);
+// Some callers intentionally broadcast without awaiting. Keep those promises.
+for (const [name, fn] of Object.entries(campaignSockets)) {
+  if (typeof fn === 'function') campaignSockets[name] = (...args) => lifecycle.track(fn(...args));
+}
+app.set('campaignSockets', campaignSockets);
 
 // eslint-disable-next-line no-unused-vars
 app.use((err, req, res, next) => {
-  console.error(err);
+  console.error('HTTP_REQUEST_FAILED');
   res.status(err.status || 500).json({ error: 'Something went wrong' });
 });
 
@@ -219,11 +279,10 @@ async function cleanupExpiredTokens() {
     const r = await sweep('password_reset_tokens');
     if (v || r) console.log(`Cleaned up ${v} verification + ${r} password-reset expired/used tokens`);
   } catch (err) {
-    console.error('Token cleanup failed:', err.message);
+    console.error('TOKEN_CLEANUP_FAILED');
   }
 }
-setInterval(cleanupExpiredTokens, 60 * 60 * 1000);
-cleanupExpiredTokens();
+
 
 // Hard-delete campaigns whose 30-day soft-delete window has fully elapsed.
 // Nothing reads these rows past the window (every listing filters deleted_at
@@ -238,15 +297,13 @@ async function cleanupDeletedCampaigns() {
       .del();
     if (n) console.log(`Hard-deleted ${n} campaign(s) past the ${SOFT_DELETE_DAYS}-day recovery window`);
   } catch (err) {
-    console.error('Campaign cleanup failed:', err.message);
+    console.error('CAMPAIGN_CLEANUP_FAILED');
   }
 }
-setInterval(cleanupDeletedCampaigns, 60 * 60 * 1000);
-cleanupDeletedCampaigns();
+
 
 const { cleanupStaleAssets } = require('./services/staleAssetCleanup');
-setInterval(cleanupStaleAssets, 60 * 60 * 1000);
-cleanupStaleAssets();
+
 
 // The durable cleanup worker drains storage_cleanup: objects that must not
 // exist but whose deletion has not yet been confirmed. It runs more often than
@@ -254,12 +311,26 @@ cleanupStaleAssets();
 // the sooner it clears the sooner the ledger frees the capacity. Fail-soft, and
 // a no-op when storage is unconfigured. Bounded per tick (see the worker).
 const cleanupWorker = require('./services/storageCleanup');
-setInterval(() => { cleanupWorker.tick().catch((e) => console.error('cleanup tick:', e.message)); }, 5 * 60 * 1000);
-cleanupWorker.tick().catch(() => {});
-
+// Instrument after all routes are mounted, excluding the SQL-free health route.
+lifecycle.instrumentExpress(app._router.stack.filter(layer => layer.route?.path !== '/healthz'));
+await lifecycle.track(require('./startupChecks').checkStartup(knex, pgPool, isProd));
+if (lifecycle.state !== 'starting') return;
 const PORT = process.env.PORT || 3000;
-server.listen(
-  PORT,
-  process.env.NODE_ENV === 'test' ? '127.0.0.1' : undefined,
-  () => console.log(`Server running at http://localhost:${PORT}`)
-);
+await new Promise((resolve, reject) => {
+  server.once('error', reject);
+  server.listen(PORT, process.env.NODE_ENV === 'test' ? '127.0.0.1' : undefined, resolve);
+});
+if (lifecycle.state !== 'starting') return;
+lifecycle.ready();
+clearTimeout(startupDeadline);
+clearTimeout(startupCheckDeadline);
+lifecycle.schedule(cleanupExpiredTokens, 60 * 60 * 1000);
+lifecycle.schedule(cleanupDeletedCampaigns, 60 * 60 * 1000);
+lifecycle.schedule(cleanupStaleAssets, 60 * 60 * 1000);
+lifecycle.schedule(() => cleanupWorker.tick(), 5 * 60 * 1000);
+console.log('STARTUP_READY');
+}
+start().catch(error => {
+  console.error(require('./config/startup').diagnostic(error));
+  lifecycle.shutdown(1).then(() => { clearTimeout(startupDeadline); clearTimeout(startupCheckDeadline); });
+});

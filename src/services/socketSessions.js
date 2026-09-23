@@ -1,6 +1,6 @@
 // Session revocation for this server's sockets. The shared session store remains
 // authoritative; neither a handshake snapshot nor campaign membership is a login.
-function createSocketSessions(io) {
+function createSocketSessions(io, workLifecycle) {
   function reject(socket) {
     if (!socket.connected) return;
     socket.emit('unauthorized', { error: 'authentication required' });
@@ -33,7 +33,8 @@ function createSocketSessions(io) {
     });
     // This also catches handshakes that loaded a session before its deletion,
     // but reached the connection handler after the revocation sweep.
-    valid().then(ok => { if (!ok) reject(socket); });
+    const initial = valid().then(ok => { if (!ok) reject(socket); });
+    workLifecycle?.track(initial);
     return true;
   }
 
