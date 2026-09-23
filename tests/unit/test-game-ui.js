@@ -82,20 +82,19 @@ function installFakeIo(window) {
     const sock = {
       connected: false,
       on(ev, fn) { (handlers[ev] = handlers[ev] || []).push(fn); return sock; },
-      emit(ev, payload, ack) { sock._emits.push({ ev, payload }); if (typeof ack === 'function') ack({ ok: true }); return sock; },
+      emit(ev, payload, ack) { sock._emits.push({ ev, payload }); if (typeof ack === 'function') { if (sock._holdAck) sock._acks.push(ack); else ack(sock._reply || { ok: true }); } return sock; },
       // combat.js/scene.js tear down a prior socket before reconnecting; the fake
       // needs these no-ops so those cleanup paths don't throw.
       disconnect() { sock.connected = false; return sock; },
       close() { sock.connected = false; return sock; },
       off(ev, fn) { if (handlers[ev]) handlers[ev] = handlers[ev].filter((h) => h !== fn); return sock; },
-      _emits: [],
-      _fire(ev, a) { (handlers[ev] || []).forEach((fn) => fn(a)); },
+      _emits: [], _acks: [],
+      _fire(ev, a) { if (ev === 'connect') sock.connected = true; if (ev === 'disconnect') sock.connected = false; (handlers[ev] || []).forEach((fn) => fn(a)); },
     };
     sockets.push(sock);
     return sock;
   };
-  // The last socket created is the shell's connection-state observer (game.js
-  // opens io() last, after scene.js and combat.js).
+  // Keep each real module's connection independently controllable.
   window.__sockets = sockets;
   return sockets;
 }
@@ -351,29 +350,80 @@ const SHELL = [
     t('End selects the last tab', tabs[2].getAttribute('aria-selected') === 'true');
   }
 
-  // ── 8. Connection state: disconnect → banner; reconnect → refetch ──────────
+  // Actual sockets reconnect independently. The shell creates no observer.
   {
     const d = gm.document; const w = gm.window;
-    const sockets = w.__sockets;
-    t('an observer socket was created by the shell', sockets.length >= 1);
-    // game.js exposes its connection-state observer socket directly; use that
-    // rather than guessing "the last io() call" (combat.js also opens a socket,
-    // so ordering is not a reliable way to find the shell's observer).
-    const sock = (w.VTTGame && w.VTTGame._connSocket) || sockets[sockets.length - 1];
-    // First connect: banner blank, no catch-up.
-    sock._fire('connect');
+    const sockets = w.__sockets.slice();
+    for (const sock of sockets) sock._fire('connect');
+    await wait(100);
+    t('all active modules report ready after their own joins', w.VTTCommon.connectionStates().every(s => s === 'ready'));
+    t('ready connections clear the status', d.getElementById('connState').textContent === '');
+    t('shell creates no observer socket', !w.VTTGame._connSocket && sockets.length === 3);
+    const sceneSocket = sockets[0];
+    const joins = () => sceneSocket._emits.filter(e => e.ev === 'campaign:join').length;
+    const beforeJoins = joins();
+    const beforeReads = gm.calls.length;
+    sceneSocket._fire('disconnect', 'transport close');
+    t('scene-only disconnect shows reconnecting', /Reconnecting/.test(d.getElementById('connState').textContent));
+    t('other game sockets stay connected', sockets.slice(1).every(s => s.connected));
+    sceneSocket._holdAck = true;
+    sceneSocket._fire('connect');
+    t('scene reconnect issues a fresh join', joins() === beforeJoins + 1);
+    t('waiting for admission is not shown ready', /Catching up/.test(d.getElementById('connState').textContent));
+    sceneSocket._acks.shift()({ ok: true });
+    await wait(100);
+    t('scene recovery reloads authorized campaign state', gm.calls.slice(beforeReads).some(c => /\/api\/campaigns\/[^/]+$/.test(c.path)));
+    t('scene recovery reloads scene list', gm.calls.slice(beforeReads).some(c => /\/scenes$/.test(c.path)));
+    t('scene recovery restores readiness', d.getElementById('connState').textContent === '');
+    sceneSocket._fire('disconnect');
+    sceneSocket._fire('connect');
+    const staleAck = sceneSocket._acks.shift();
+    sceneSocket._fire('disconnect');
+    sceneSocket._fire('connect');
+    staleAck({ ok: true });
+    t('stale join acknowledgement cannot mark current connection ready', w.VTTCommon.connectionStates()[0] === 'joining');
+    sceneSocket._acks.shift()({ ok: false });
     await wait(10);
-    t('first connect leaves connState blank', d.getElementById('connState').textContent === '');
-    // Disconnect → "Reconnecting…".
-    sock._fire('disconnect', 'transport close');
-    await wait(10);
-    t('disconnect shows Reconnecting…', /Reconnecting/i.test(d.getElementById('connState').textContent));
-    // Reconnect after a drop → re-invoke scene + combat boot (refetch the board).
-    const s0 = gm.bootSpies.scene; const c0 = gm.bootSpies.combat;
-    sock._fire('connect');
-    await wait(60);
-    t('reconnect re-invokes scene.boot (refetch)', gm.bootSpies.scene === s0 + 1, 'scene=' + gm.bootSpies.scene);
-    t('reconnect re-invokes combat.boot (refetch)', gm.bootSpies.combat === c0 + 1, 'combat=' + gm.bootSpies.combat);
+    t('refused rejoin remains visibly blocked', /Access changed/.test(d.getElementById('connState').textContent));
+    sceneSocket._holdAck = false;
+    sceneSocket._fire('disconnect'); sceneSocket._fire('connect');
+    await wait(100);
+    for (const [index, suffix] of [[1, '/messages?limit=50'], [2, '/actors']]) {
+      const sock = sockets[index]; const reads = gm.calls.length;
+      sock._fire('disconnect'); sock._fire('connect');
+      await wait(100);
+      t('independent reconnect refreshes ' + suffix, gm.calls.slice(reads).some(c => c.path.endsWith(suffix)));
+      t('recovery keeps existing socket ' + index, w.__sockets.length === sockets.length);
+    }
+  }
+
+  // A player whose active scene changed while disconnected must follow the
+  // current authorized scene, including its tokens/fog snapshot.
+  {
+    const page = bootPage({ isGm: false, activeSceneId: 'S1' });
+    await wait(120);
+    for (const sock of page.window.__sockets) sock._fire('connect');
+    await wait(100);
+    const sceneSocket = page.window.__sockets[0];
+    const originalFetch = page.window.fetch;
+    const recovered = [];
+    page.window.fetch = async (path, options) => {
+      recovered.push(String(path));
+      if (/\/api\/campaigns\/[^/]+$/.test(path)) return { status: 200, json: async () => ({ campaign: { id: 'C', owner_id: 'GM', active_scene_id: 'S2', is_open: true } }) };
+      if (/\/scenes$/.test(path)) return { status: 200, json: async () => ({ scenes: [{ id: 'S2', name: 'New map' }] }) };
+      if (/\/scenes\/S2$/.test(path)) return { status: 200, json: async () => ({ scene: { id: 'S2', name: 'New map', width: 1000, height: 800, grid: {} }, tokens: [], fog: [] }) };
+      return originalFetch(path, options);
+    };
+    sceneSocket._fire('disconnect'); sceneSocket._fire('connect');
+    await wait(100);
+    t('player reconnect loads newly active scene snapshot', recovered.some(path => /\/scenes\/S2$/.test(path)));
+    t('player reconnect renders the new scene', /New map/.test(page.document.getElementById('scene-title').textContent));
+    t('player reconnect does not refetch the obsolete scene', !recovered.some(path => /\/scenes\/S1$/.test(path)));
+    page.window.fetch = async () => { throw new Error('simulated network failure'); };
+    sceneSocket._fire('disconnect'); sceneSocket._fire('connect');
+    await wait(30);
+    t('network failure during recovery stays visible', /Could not synchronize/.test(page.document.getElementById('connState').textContent));
+    page.dom.window.close();
   }
 
   // ── 9. Player construction: no throw, no is-gm, rail restricted ────────────

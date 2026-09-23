@@ -418,7 +418,84 @@
     };
   }
 
+  // Each game module owns a distinct Socket.IO connection. Room admission and
+  // state recovery belong to that connection, not to an unrelated observer.
+  var campaignConnections = new Map();
+  function connectionStates() {
+    return Array.from(campaignConnections.values(), function (entry) { return entry.state; });
+  }
+  function watchCampaignSocket(name, socket, campaignId, refresh, membership) {
+    var previous = campaignConnections.get(name);
+    if (previous) previous.dispose();
+    var generation = 0, pending = null, joined = false, disposed = false, admissionStopped = false;
+    var recovery = Promise.resolve();
+    var entry = { state: 'connecting', dispose: dispose };
+    campaignConnections.set(name, entry);
+    function publish(state) {
+      if (disposed) return;
+      entry.state = state;
+      window.dispatchEvent(new window.CustomEvent('vtt:connection-state'));
+    }
+    function invalidate() {
+      generation += 1;
+      joined = false;
+      if (membership) membership(false);
+      if (pending) { window.clearTimeout(pending.timer); pending = null; }
+    }
+    function down() { invalidate(); publish('disconnected'); }
+    function blocked() { admissionStopped = true; invalidate(); publish('blocked'); }
+    function evicted(data) { if (data && data.campaign_id === campaignId()) blocked(); }
+    function join() {
+      var id = campaignId();
+      if (disposed || admissionStopped || !socket.connected || !id || joined || pending) return;
+      var version = generation;
+      var attempt = {};
+      pending = attempt;
+      publish('joining');
+      attempt.timer = window.setTimeout(function () {
+        if (pending !== attempt) return;
+        pending = null;
+        generation += 1; // a late acknowledgement cannot mark this attempt ready
+        admissionStopped = true;
+        publish('failed');
+      }, 10000);
+      socket.emit('campaign:join', { campaign_id: id }, function (ack) {
+        if (disposed || pending !== attempt || version !== generation || !socket.connected || campaignId() !== id) return;
+        window.clearTimeout(attempt.timer);
+        pending = null;
+        if (!ack || !ack.ok) { admissionStopped = true; publish('blocked'); return; }
+        joined = true;
+        if (membership) membership(true);
+        publish('recovering');
+        // Serialize snapshots: an older slow reload must finish before a newer
+        // connection's reload starts. Stale work can never announce readiness.
+        recovery = recovery.then(async function () {
+          if (disposed || version !== generation || !socket.connected) return;
+          try {
+            await refresh();
+            if (!disposed && version === generation && socket.connected) publish('ready');
+          } catch (error) {
+            if (!disposed && version === generation) publish('failed');
+          }
+        });
+      });
+    }
+    function connected() { admissionStopped = false; invalidate(); join(); }
+    function dispose() {
+      invalidate(); disposed = true;
+      for (var pair of listeners) socket.off(pair[0], pair[1]);
+    }
+    var listeners = [['connect', connected], ['disconnect', down],
+      ['connect_error', down], ['unauthorized', blocked], ['campaign:evicted', evicted]];
+    for (var pair of listeners) socket.on(pair[0], pair[1]);
+    publish('connecting');
+    if (socket.connected) join();
+    return { join: join, dispose: dispose };
+  }
+
   window.VTTCommon = {
+    watchCampaignSocket: watchCampaignSocket,
+    connectionStates: connectionStates,
     resolveTheme: resolveTheme,
     localGet: localGet,
     localSet: localSet,

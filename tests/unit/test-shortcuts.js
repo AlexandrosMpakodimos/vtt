@@ -36,6 +36,7 @@ let pass=0, fail=0;
 window.__check=(n,c,d='')=>{ if(c){pass++;console.log('  PASS  '+n);} else {fail++;console.log('  FAIL  '+n+'  '+d);} };
 window.__calls = calls;
 
+window.eval(fs.readFileSync(rootPath('public/js/shared/common.js'), 'utf8'));
 window.eval(fs.readFileSync(rootPath('public/js/game/scene.js'),'utf8') + `
 ;(function(){
   const calls = window.__calls;

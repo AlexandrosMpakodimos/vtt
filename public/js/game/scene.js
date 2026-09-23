@@ -33,6 +33,7 @@ function log(msg) {
   logEl.scrollTop = logEl.scrollHeight;
 }
 
+let recoveringSocket = false, recoveryFailed = false;
 async function api(method, path, body) {
   const res = await fetch(path, {
     method,
@@ -42,6 +43,7 @@ async function api(method, path, body) {
   });
   const data = await res.json().catch(() => ({}));
   const out = { status: res.status, data };
+  if (recoveringSocket && res.status >= 400) recoveryFailed = true;
   // Surface a closed-campaign refusal wherever it happens, rather than leaving
   // the page to render nothing and look broken. Hooked into api() rather than
   // into each caller because EVERY request can hit it — the gate is on the
@@ -164,7 +166,7 @@ async function loadScenes() {
   // Scenes modal). If nothing is active, the canvas shows an empty state.
   if (!scene) {
     if (activeSceneId) {
-      openScene(activeSceneId);
+      await openScene(activeSceneId);
     } else {
       closeScene(isGm()
         ? (lastSceneList.length ? 'no scene is active yet — open one from Scenes' : '')
@@ -387,7 +389,7 @@ async function openScene(sceneId) {
 
   // M6: refresh the character picker. Deliberately NOT from r.data.actors —
   // see renderActorPicker's header for why that array is the wrong source.
-  loadActorPicker();
+  await loadActorPicker();
 
   // Fog arrives in the same "load heavy" payload as the tokens.
   fog.clear();
@@ -2467,6 +2469,18 @@ document.addEventListener('keydown', (e) => {
 
 // --- socket wiring ---
 const socket = io({ withCredentials: true });
+const roomConnection = window.VTTCommon.watchCampaignSocket('scene', socket,
+  () => campaignId, async () => {
+    recoveringSocket = true; recoveryFailed = false;
+    try {
+      const selected = scene && scene.id;
+      await loadScenes();
+      const target = isGm() ? (selected || activeSceneId) : activeSceneId;
+      if (target) await openScene(target);
+      else closeScene('the GM has not opened a scene yet');
+      if (recoveryFailed) throw new Error('State refresh failed');
+    } finally { recoveringSocket = false; }
+  }, value => { joinedRoom = value; });
 socket.on('connect', () => log(`socket connected (${socket.id})`));
 socket.on('unauthorized', (d) => log(`UNAUTHORIZED: ${d.error} — log in first`));
 socket.on('disconnect', (r) => log(`socket disconnected: ${r}`));
@@ -2630,13 +2644,7 @@ socket.on('scene:activated', (d) => {
   renderSceneList([]);
 });
 
-function joinRoom() {
-  socket.emit('campaign:join', { campaign_id: campaignId }, (ack) => {
-    joinedRoom = !!(ack && ack.ok);
-    log(joinedRoom ? `joined room campaign:${campaignId}` : `join failed: ${ack && ack.error}`);
-    if (joinedRoom) fetchOwner();
-  });
-}
+function joinRoom() { roomConnection.join(); }
 async function fetchOwner() {
   const r = await api('GET', `/api/campaigns/${campaignId}`);
   if (r.status === 200) {

@@ -32,7 +32,6 @@
   var isGm = false;
   var activeSceneObj = null;   // the scene align injects; kept current by scene events
   var actorsBooted = false;    // VTTActors.boot is deferred to first Chars/Library open
-  var wasConnected = false;    // so we only "catch up" after a real drop, not first connect
 
   // ── Boot (spec §3) ─────────────────────────────────────────────────────────
   // URL campaign → /me → campaign (gate or proceed) → scene.boot → combat.boot →
@@ -436,54 +435,20 @@
     return false;
   }
 
-  // ── Connection state (spec §7; the load-bearing requirement) ───────────────
-  // Blank while live; on disconnect → "Reconnecting…"; on connect after a drop →
-  // re-join the room and refetch scene tokens + fog + encounter + chat backlog,
-  // because deltas were missed while down. The refetch reuses the boot loaders,
-  // which are idempotent (they re-render from server truth) and re-join the room.
-  // This ends the silent-stale-board failure that cost two debugging sessions.
-  //
-  // scene.js and combat.js each hold their own module-scoped socket and neither
-  // re-joins on reconnect (scene's connect handler only logs). Rather than add a
-  // seam to expose those sockets, the shell opens its OWN io() connection purely
-  // to OBSERVE the transport: socket.io-client multiplexes over one Manager per
-  // URL, so this rides the same WebSocket the harness scripts already opened and
-  // sees the same connect/disconnect lifecycle. It never emits campaign:join —
-  // re-joining is the boot loaders' job — so it adds no new server interaction.
+  // All active game modules report their own admission/recovery state. A
+  // character module that has not been opened contributes no connection yet.
   function initConnectionState() {
-    if (typeof window.io !== 'function') return;   // jsdom without a fake io()
-    var sock;
-    try { sock = window.io({ withCredentials: true }); } catch (e) { return; }
-    if (!sock || typeof sock.on !== 'function') return;
-    if (sock.connected) wasConnected = true;
-
-    sock.on('connect', function () {
-      var firstConnect = !wasConnected;
-      wasConnected = true;
-      setText('connState', '');
-      if (firstConnect) return;            // nothing to catch up on the first join
-      setText('connState', 'catching up…');
-      catchUp();
-      window.setTimeout(function () {
-        var el = $('connState'); if (el && el.textContent === 'catching up…') el.textContent = '';
-      }, 1200);
-    });
-
-    sock.on('disconnect', function () {
-      wasConnected = true;
-      setText('connState', 'Reconnecting…');
-    });
-
-    // Expose for the suite's rejoin/refetch spies.
-    window.VTTGame._connSocket = sock;
-  }
-
-  function catchUp() {
-    // The same loaders boot() uses; each re-renders from the server, so calling
-    // them again simply reconciles the board. scene re-joins its room inside boot.
-    if (window.VTTScene && window.VTTScene.boot) window.VTTScene.boot(campaignId);
-    if (window.VTTCombat && window.VTTCombat.boot) window.VTTCombat.boot(campaignId);
-    if (actorsBooted && window.VTTActors && window.VTTActors.boot) window.VTTActors.boot(campaignId);
+    function renderConnectionState() {
+      var states = C.connectionStates();
+      var text = '';
+      if (states.includes('blocked')) text = 'Access changed — reload the page.';
+      else if (states.includes('failed')) text = 'Could not synchronize — reload the page.';
+      else if (states.some(function (state) { return state === 'disconnected' || state === 'connecting'; })) text = 'Reconnecting…';
+      else if (states.some(function (state) { return state !== 'ready'; })) text = 'Catching up…';
+      setText('connState', text);
+    }
+    window.addEventListener('vtt:connection-state', renderConnectionState);
+    renderConnectionState();
   }
 
   // ── Go ─────────────────────────────────────────────────────────────────────
