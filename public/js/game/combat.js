@@ -56,6 +56,7 @@ function log(msg) {
   logEl.scrollTop = logEl.scrollHeight;
 }
 
+let recoveringSocket = false, recoveryFailed = false;
 async function api(method, path, body) {
   const res = await fetch(path, {
     method,
@@ -65,6 +66,7 @@ async function api(method, path, body) {
   });
   const data = await res.json().catch(() => ({}));
   const out = { status: res.status, data };
+  if (recoveringSocket && res.status >= 400) recoveryFailed = true;
   // Surface a closed-campaign refusal wherever it happens, rather than leaving
   // the page to render nothing and look broken. Hooked into api() rather than
   // into each caller because EVERY request can hit it — the gate is on the
@@ -621,7 +623,7 @@ function renderMessage(m) {
 
 function combatPath() { return `/api/campaigns/${campaign.id}/combat/${combat.id}`; }
 
-async function loadCampaign(idArg) {
+async function loadCampaign(idArg, reconnect = false) {
   // Seam: the harness reads the campaign id from the #campaignId input; the game
   // shell passes it in through boot(). str() would throw on a page without the
   // input, so only read it when no id was supplied.
@@ -658,7 +660,7 @@ async function loadCampaign(idArg) {
   await loadScene();
   await loadCombat();
   await loadMessages();
-  connectSocket();
+  if (!reconnect) connectSocket();
 }
 
 async function loadMembers() {
@@ -1193,11 +1195,15 @@ function connectSocket() {
   if (socket) socket.disconnect();
   socket = io({ withCredentials: true });
 
-  socket.on('connect', () => {
-    socket.emit('campaign:join', { campaign_id: campaign.id }, (ack) => {
-      log(ack && ack.ok ? `joined room for ${campaign.name}` : `room join refused: ${JSON.stringify(ack)}`);
+  window.VTTCommon.watchCampaignSocket('combat', socket, () => campaign && campaign.id,
+    async () => {
+      recoveringSocket = true; recoveryFailed = false;
+      try {
+        await loadCampaign(campaign.id, true);
+        if (recoveryFailed) throw new Error('State refresh failed');
+      }
+      finally { recoveringSocket = false; }
     });
-  });
 
   // Printed VERBATIM and un-prettified on purpose. The GM's combat:updated
   // carries every combatant including hidden-token ones, each with hp_override

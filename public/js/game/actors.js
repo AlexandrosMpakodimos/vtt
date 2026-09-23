@@ -23,6 +23,7 @@ function log(msg) {
   logEl.scrollTop = logEl.scrollHeight;
 }
 
+let recoveringSocket = false, recoveryFailed = false;
 async function api(method, path, body) {
   const res = await fetch(path, {
     method,
@@ -32,6 +33,7 @@ async function api(method, path, body) {
   });
   const data = await res.json().catch(() => ({}));
   const out = { status: res.status, data };
+  if (recoveringSocket && res.status >= 400) recoveryFailed = true;
   // Surface a closed-campaign refusal wherever it happens, rather than leaving
   // the page to render nothing and look broken. Hooked into api() rather than
   // into each caller because EVERY request can hit it — the gate is on the
@@ -1508,7 +1510,7 @@ function renderInventory(rows) {
 // actions
 // ---------------------------------------------------------------------------
 
-async function loadCampaign(idArg) {
+async function loadCampaign(idArg, reconnect = false) {
   // Seam: the harness reads the id from #campaignId; the game shell passes it in
   // via boot() (deferred to the first Characters/Library open). Reading the
   // input would throw on a page without it, so only read when no id was given.
@@ -1533,7 +1535,7 @@ async function loadCampaign(idArg) {
   if (isGm) renderItemEditor();
   if (isGm) renderSpellEditor();
   await refresh();
-  connectSocket();
+  if (!reconnect) connectSocket();
 }
 
 // Active members, for the creation modal's "Controlled by" dropdown. Stored in a
@@ -2035,11 +2037,15 @@ function connectSocket() {
   if (socket) socket.disconnect();
   socket = io({ withCredentials: true });
 
-  socket.on('connect', () => {
-    socket.emit('campaign:join', { campaign_id: campaign.id }, (ack) => {
-      log(ack && ack.ok ? `joined room for ${campaign.name}` : `room join refused: ${JSON.stringify(ack)}`);
+  window.VTTCommon.watchCampaignSocket('actors', socket, () => campaign && campaign.id,
+    async () => {
+      recoveringSocket = true; recoveryFailed = false;
+      try {
+        await loadCampaign(campaign.id, true);
+        if (recoveryFailed) throw new Error('State refresh failed');
+      }
+      finally { recoveringSocket = false; }
     });
-  });
 
   // Printed VERBATIM and un-prettified on purpose. On the GM's screen an
   // actor:updated for an NPC carries hp_current, armor_class and notes; on a

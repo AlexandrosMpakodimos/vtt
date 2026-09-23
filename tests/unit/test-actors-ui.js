@@ -132,6 +132,7 @@ try {
   // Loading them here mirrors the real page's <script> order — and the first run
   // of this suite failed on exactly that omission, which is a fair illustration
   // of why an 800-line client file wants a load probe at all.
+  window.eval(fs.readFileSync(rootPath('public/js/shared/common.js'), 'utf8'));
   window.eval(fs.readFileSync(rootPath('public/js/ui/imageframe.js'), 'utf8'));
   window.eval(fs.readFileSync(rootPath('public/js/sheets/sheet.js'), 'utf8'));
   window.eval(fs.readFileSync(rootPath('public/js/sheets/itemsheet.js'), 'utf8'));

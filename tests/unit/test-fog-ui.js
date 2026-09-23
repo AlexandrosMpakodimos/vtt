@@ -34,6 +34,7 @@ window.Element.prototype.setPointerCapture=function(){}; window.Element.prototyp
 let pass=0, fail=0;
 window.__check=(name,cond,d='')=>{ if(cond){pass++;console.log('  PASS  '+name);} else {fail++;console.log('  FAIL  '+name+'  '+d);} };
 
+window.eval(fs.readFileSync(rootPath('public/js/shared/common.js'), 'utf8'));
 window.eval(fs.readFileSync(rootPath('public/js/game/scene.js'),'utf8') + `
 ;(function(){
   scene={id:'S',width:1000,height:800,img_url:null}; currentCampaignOwnerId='GM'; me={id:'GM'};
