@@ -117,7 +117,7 @@ router.post('/register', async (req, res, next) => {
 // POST /api/auth/login — blocked until the email is verified.
 router.post('/login', (req, res, next) => {
   if (req.body) req.body.email = normalizeEmail(req.body.email);
-  passport.authenticate('local', async (err, user, info) => {
+  const authenticated = async (err, user, info) => {
     if (err) return next(err);
     if (!user) return res.status(401).json({ error: (info && info.message) || 'Invalid email or password' });
     let loginStarted = false;
@@ -137,6 +137,7 @@ router.post('/login', (req, res, next) => {
         // express-session can save the regenerated session again at response end.
         // Keep revocation serialized until that final save has completed too.
         await new Promise((resolve, reject) => {
+          if (res.destroyed) return reject(new Error('Login response closed before completion'));
           const cleanup = () => { res.removeListener('finish', finish); res.removeListener('close', close); };
           const finish = () => { cleanup(); resolve(); };
           const close = () => { cleanup(); reject(new Error('Login response closed before completion')); };
@@ -154,11 +155,21 @@ router.post('/login', (req, res, next) => {
       // The session store uses a separate connection: a transaction failure
       // cannot roll back a saved session. Remove it before returning an error.
       if (loginStarted && req.session) {
-        return req.session.destroy(destroyError => next(destroyError || error));
+        return new Promise(resolve => req.session.destroy(destroyError => {
+          next(destroyError || error);
+          resolve();
+        }));
       }
       return next(error);
     }
-  })(req, res, next);
+  };
+  // Cover password verification as well as the asynchronous login callback;
+  // neither is completed merely because the client has disconnected.
+  return new Promise((resolve, reject) => {
+    passport.authenticate('local', (...args) => {
+      Promise.resolve(authenticated(...args)).then(resolve, reject);
+    })(req, res, error => { next(error); resolve(); });
+  });
 });
 
 // POST /api/auth/resend-verification — generic response (no enumeration).
@@ -190,7 +201,7 @@ router.post('/forgot-password', async (req, res, next) => {
 
     const user = await knex('users').where({ email }).first();
     if (user) {
-      issuePasswordResetEmail(user).catch((err) =>
+      await issuePasswordResetEmail(user).catch((err) =>
         console.error('Failed to issue password reset:', err.message));
     }
   } catch (err) {
@@ -201,13 +212,16 @@ router.post('/forgot-password', async (req, res, next) => {
 router.post('/logout', (req, res, next) => {
   // Passport regenerates the session during logout; capture the old SID first.
   const sessionId = req.sessionID;
-  req.logout((err) => {
-    req.app.get('campaignSockets')?.disconnectSessions([sessionId]);
-    if (err) return next(err);
-    req.session.destroy((destroyErr) => {
-      if (destroyErr) return next(destroyErr);
-      res.clearCookie('connect.sid');
-      res.json({ ok: true });
+  return new Promise(resolve => {
+    req.logout((err) => {
+      req.app.get('campaignSockets')?.disconnectSessions([sessionId]);
+      if (err) { next(err); resolve(); return; }
+      req.session.destroy((destroyErr) => {
+        if (destroyErr) { next(destroyErr); resolve(); return; }
+        res.clearCookie('connect.sid');
+        res.json({ ok: true });
+        resolve();
+      });
     });
   });
 });

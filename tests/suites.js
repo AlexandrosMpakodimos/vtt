@@ -3,6 +3,7 @@
 
 // No external server or database. Some suites start their own loopback server.
 const UNIT = [
+  'test-lifecycle.js',
   'test-production-db-config.js', 'test-production-migrate-command.js',
   'test-campaign-mutation-contracts.js',
   'test-final-owner-boundaries.js', 'test-final-room-admission.js',

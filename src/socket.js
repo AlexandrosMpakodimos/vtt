@@ -37,8 +37,8 @@ const { mayUseSceneFor, validUuid } = require('./services/sceneAccess');
 
 const { createRoomLifecycle, roomName, lobbyName } = require('./socket/roomLifecycle');
 
-function initSockets(io) {
-  const socketSessions = createSocketSessions(io);
+function initSockets(io, workLifecycle) {
+  const socketSessions = createSocketSessions(io, workLifecycle);
   const lifecycle = createRoomLifecycle({ io, knex, isActiveMember });
   const { evictUser, evictCampaign, evictGamePlayers, socketsByUser, onlineCount } = lifecycle;
 
@@ -169,6 +169,7 @@ function initSockets(io) {
   }
 
   io.on('connection', (socket) => {
+    if (workLifecycle && workLifecycle.state !== 'ready') return socket.disconnect(true);
     // Populated by the handshake middleware chain in server.js.
     const user = socket.request.user;
 
