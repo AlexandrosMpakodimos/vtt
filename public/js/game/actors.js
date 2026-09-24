@@ -2035,7 +2035,7 @@ async function dropInv(r0) {
 
 function connectSocket() {
   if (socket) socket.disconnect();
-  socket = io({ withCredentials: true });
+  socket = io({ withCredentials: true, transports: ['websocket'] });
 
   window.VTTCommon.watchCampaignSocket('actors', socket, () => campaign && campaign.id,
     async () => {

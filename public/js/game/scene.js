@@ -2468,7 +2468,7 @@ document.addEventListener('keydown', (e) => {
 });
 
 // --- socket wiring ---
-const socket = io({ withCredentials: true });
+const socket = io({ withCredentials: true, transports: ['websocket'] });
 const roomConnection = window.VTTCommon.watchCampaignSocket('scene', socket,
   () => campaignId, async () => {
     recoveringSocket = true; recoveryFailed = false;

@@ -77,9 +77,9 @@ const emitAck = (s, event, payload) => new Promise((resolve) => {
   s.emit(event, payload, resolve);
   setTimeout(() => resolve({ ok: false, error: 'timeout' }), 3000);
 });
-function recorder(socket, events) {
+function recorder(socket, events, matches = () => true) {
   const seen = [];
-  for (const ev of events) socket.on(ev, (d) => seen.push({ ev, d }));
+  for (const ev of events) socket.on(ev, (d) => { if (matches(d)) seen.push({ ev, d }); });
   return seen;
 }
 const settle = (ms = 500) => new Promise((r) => setTimeout(r, ms));
@@ -257,8 +257,10 @@ const STAT_FIELDS = [
   await emitAck(gmSock, 'campaign:join', { campaign_id: C });
   await emitAck(plSock, 'campaign:join', { campaign_id: C });
 
-  const gmHeard = recorder(gmSock, ['actor:updated']);
-  const plHeard = recorder(plSock, ['actor:updated']);
+  // PC updates legitimately carry stats and may arrive after earlier HTTP
+  // responses. These disclosure assertions specifically concern this NPC.
+  const gmHeard = recorder(gmSock, ['actor:updated'], d => d.id === gob.id);
+  const plHeard = recorder(plSock, ['actor:updated'], d => d.id === gob.id);
   await gm.req('PATCH', `${A}/${gob.id}`, { hp_current: 3 });
   await settle();
   check('the GM is told an NPC changed', gmHeard.length >= 1, `heard ${gmHeard.length}`);
@@ -304,12 +306,12 @@ const STAT_FIELDS = [
   check('and the detail route now projects it identically to the list',
     oneNpcNow.status === 200 && !('hp_max' in oneNpcNow.data.actor), JSON.stringify(oneNpcNow.data));
 
-  const gmHeard2 = recorder(gmSock, ['actor:updated']);
-  const plHeard2 = recorder(plSock, ['actor:updated']);
-  await gm.req('PATCH', `${A}/${gob.id}`, { hp_current: 3, armor_class: 16 });
+  const gmHeard2 = recorder(gmSock, ['actor:updated'], d => d.id === gob.id);
+  const plHeard2 = recorder(plSock, ['actor:updated'], d => d.id === gob.id);
+  await gm.req('PATCH', `${A}/${gob.id}`, { name: 'Goblin updated', hp_current: 3, armor_class: 16 });
   await settle();
   check('editing an on-board NPC DOES reach the player (its token re-renders)',
-    plHeard2.length >= 1, `heard ${plHeard2.length}`);
+    plHeard2.some(h => h.d.name === 'Goblin updated'), JSON.stringify(plHeard2));
   const plLeak2 = plHeard2.filter((h) => STAT_FIELDS.some((f) => f in h.d));
   check('and that payload still carries no statistics', plLeak2.length === 0, JSON.stringify(plLeak2.map((h) => h.d)));
   check('while the GM receives the full row', gmHeard2.some((h) => h.d.armor_class === 16), JSON.stringify(gmHeard2.map((h) => h.d)));
