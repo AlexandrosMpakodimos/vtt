@@ -2,7 +2,7 @@
 const keys = new Set(['NODE_ENV', 'DATABASE_URL', 'SESSION_SECRET', 'PORT', 'BASE_URL',
   'R2_ACCOUNT_ID', 'R2_BUCKET', 'R2_PUBLIC_BASE_URL', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY',
   'R2_MAX_TOTAL_BYTES', 'R2_MAX_CLASS_A', 'R2_MAX_CLASS_B', 'R2_MAINT_CLASS_A', 'R2_MAINT_CLASS_B',
-  'MEDIA_ORIGIN', 'MEDIA_PROXY_SECRET']);
+  'MEDIA_ORIGIN', 'MEDIA_PROXY_SECRET', 'COORDINATION_URL']);
 function invalid(key) {
   const error = new Error(`STARTUP_CONFIG_INVALID: ${key}`);
   error.configKey = key;
@@ -41,6 +41,8 @@ function validate(env) {
     try { url = new URL(env.MEDIA_ORIGIN.trim()); } catch { invalid('MEDIA_ORIGIN'); }
     if (!['http:', 'https:'].includes(url.protocol)) invalid('MEDIA_ORIGIN');
   }
+  if (!env.COORDINATION_URL) invalid('COORDINATION_URL');
+  require('../coordination/config').configuration(env);
   if (env.MEDIA_PROXY_SECRET && (env.MEDIA_PROXY_SECRET.length < 32 ||
       env.MEDIA_PROXY_SECRET === env.SESSION_SECRET || env.MEDIA_PROXY_SECRET === env.MEDIA_TOKEN_SECRET)) invalid('MEDIA_PROXY_SECRET');
 }

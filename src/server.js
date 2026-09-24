@@ -17,6 +17,7 @@ const startupDeadline = setTimeout(() => {
 
 async function start() {
 require('./config/startup').validate(process.env);
+const coordinationConfig = require('./coordination/config').configuration(process.env);
 const express = require('express');
 const http = require('http');
 const path = require('path');
@@ -64,7 +65,7 @@ lifecycle.forceTransports.push(() => {
   io?.engine.close();
   for (const connection of connections) connection.destroy();
 });
-io = new Server(server);
+io = new Server(server, coordinationConfig ? { transports: ['websocket'] } : {});
 
 const pgPool = new Pool(
   process.env.NODE_ENV === 'test'
@@ -257,10 +258,29 @@ io.on('connection', socket => lifecycle.instrumentSocket(socket));
 
 // Campaign rooms + their authorisation. Exposed on the app so the kick/ban
 // routes can evict a live socket, not merely update the database row.
-const campaignSockets = initSockets(io, lifecycle);
+let coordination;
+if (coordinationConfig) {
+  const { createBus } = require('./coordination/bus');
+  const { createCoordinatedSockets } = require('./coordination/sockets');
+  const bus = createBus({ ...coordinationConfig, onFailure(reason) {
+    console.error('COORDINATION_FAILED', reason);
+    // Transport closure permits the clients' normal reconnect + state reload.
+    for (const socket of io.sockets.sockets.values()) socket.conn.close();
+    lifecycle.shutdown(1);
+  } });
+  coordination = createCoordinatedSockets({ io, knex, bus, workLifecycle: lifecycle,
+    rewritePayload: require('./services/mediaGateway').rewritePayload });
+  lifecycle.stoppers.push(() => coordination.stop());
+  lifecycle.forceTransports.push(() => coordination.stop());
+}
+const campaignSockets = initSockets(io, lifecycle, coordination);
 // Some callers intentionally broadcast without awaiting. Keep those promises.
 for (const [name, fn] of Object.entries(campaignSockets)) {
-  if (typeof fn === 'function') campaignSockets[name] = (...args) => lifecycle.track(fn(...args));
+  if (typeof fn === 'function') campaignSockets[name] = (...args) => {
+    const result = lifecycle.track(fn(...args));
+    result?.catch?.(() => console.error('SOCKET_DELIVERY_FAILED'));
+    return result;
+  };
 }
 app.set('campaignSockets', campaignSockets);
 
@@ -314,6 +334,7 @@ const cleanupWorker = require('./services/storageCleanup');
 // Instrument after all routes are mounted, excluding the SQL-free health route.
 lifecycle.instrumentExpress(app._router.stack.filter(layer => layer.route?.path !== '/healthz'));
 await lifecycle.track(require('./startupChecks').checkStartup(knex, pgPool, isProd));
+if (coordination) await lifecycle.track(coordination.start());
 if (lifecycle.state !== 'starting') return;
 const PORT = process.env.PORT || 3000;
 await new Promise((resolve, reject) => {

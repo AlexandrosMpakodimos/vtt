@@ -59,6 +59,7 @@ const original = Module._load;
 Module._load = function(request, parent, isMain) {
   // Keep synthetic lifecycle fixtures independent of the owner's local .env.
   if (request === 'dotenv') return { config: () => ({ parsed: {} }) };
+  if (request === './coordination/config') return { configuration: () => null };
   const resolved = request.startsWith('.') ? Module._resolveFilename(request, parent) : request;
   if (resolved === path.join(root, 'src/db/index.js')) return db;
   if (request === 'socket.io') {
@@ -110,6 +111,7 @@ Module._load = function(request, parent, isMain) {
   } };
   return original.call(this, request, parent, isMain);
 };
+process.env.COORDINATION_URL = 'redis://127.0.0.1:6379';
 process.env.NODE_ENV = mode === 'env-fail' ? 'unknown-value-sentinel' : 'production';
 process.env.BASE_URL = mode === 'base-fail' ? 'http://base-value-sentinel.invalid' : 'https://fixture.invalid';
 if (mode === 'storage-fail') process.env.R2_ACCOUNT_ID='storage-value-sentinel';

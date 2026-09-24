@@ -1370,10 +1370,7 @@ router.post('/:sceneId/tokens/copy', requireOwner, async (req, res, next) => {
           );
         }
       }
-      for (const t of shaped) {
-        if (t.hidden) sockets.broadcastToOwner(req.campaign.id, 'token:created', t);
-        else sockets.broadcastScene(req.campaign.id, scene.id, 'token:created', t);
-      }
+      await sockets.broadcastCreatedTokens(req.campaign.id, scene.id, shaped);
     }
 
     // M5. Paste is how a GM populates an encounter, so it is the auto-add path
@@ -1660,7 +1657,7 @@ router.post('/:sceneId/fog/copy', requireOwner, async (req, res, next) => {
     const shaped = inserted.map(publicFog);
     const sockets = req.app.get('campaignSockets');
     if (sockets) {
-      for (const f of shaped) sockets.broadcastScene(req.campaign.id, scene.id, 'fog:created', f);
+      await sockets.broadcastSceneBatch(req.campaign.id, scene.id, 'fog:created', shaped);
     }
 
     return res.status(201).json({ fog: shaped });

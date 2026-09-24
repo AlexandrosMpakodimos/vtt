@@ -3,7 +3,7 @@
 
 // No external server or database. Some suites start their own loopback server.
 const UNIT = [
-  'test-lifecycle.js', 'test-game-reconnect.js',
+  'test-lifecycle.js', 'test-coordination.js', 'test-coordination-routing.js', 'test-game-reconnect.js',
   'test-production-db-config.js', 'test-production-migrate-command.js',
   'test-campaign-mutation-contracts.js',
   'test-final-owner-boundaries.js', 'test-final-room-admission.js',
@@ -77,3 +77,6 @@ for (const [group, directory, files, registered] of [
 const resolveSuite = name => byName.get(name);
 
 module.exports = { UNIT, DB, SEC, resolveSuite };
+
+// test-coordination-processes.js under integration/ is direct-only: it needs local Redis
+// and creates its own two child servers plus an owned schema in guarded vtt_test.

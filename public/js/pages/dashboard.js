@@ -1869,7 +1869,7 @@
   function initLobby() {
     // If socket.io's io() isn't present, run REST-only (spec §4 boot).
     if (typeof window.io !== 'function') return;
-    try { socket = window.io(); } catch (e) { socket = null; return; }
+    try { socket = window.io({ withCredentials: true, transports: ['websocket'] }); } catch (e) { socket = null; return; }
     if (!socket) return;
 
     socket.on('connect', function () {

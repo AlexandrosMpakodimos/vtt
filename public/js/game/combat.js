@@ -1193,7 +1193,7 @@ async function sendRoll() {
 
 function connectSocket() {
   if (socket) socket.disconnect();
-  socket = io({ withCredentials: true });
+  socket = io({ withCredentials: true, transports: ['websocket'] });
 
   window.VTTCommon.watchCampaignSocket('combat', socket, () => campaign && campaign.id,
     async () => {

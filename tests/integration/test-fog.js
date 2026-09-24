@@ -75,10 +75,10 @@ const emitAck = (s, event, payload) =>
     s.emit(event, payload, resolve);
     setTimeout(() => resolve({ ok: false, error: 'timeout' }), 3000);
   });
-function waitFor(s, event, ms = 1200) {
+function waitFor(s, event, ms = 1200, matches = () => true) {
   return new Promise((resolve) => {
     const t = setTimeout(() => { s.off(event, h); resolve(null); }, ms);
-    const h = (d) => { clearTimeout(t); s.off(event, h); resolve(d); };
+    const h = (d) => { if (!matches(d)) return; clearTimeout(t); s.off(event, h); resolve(d); };
     s.on(event, h);
   });
 }
@@ -282,7 +282,8 @@ const tri = (x, y) => [{ x, y }, { x: x + 4, y }, { x, y: y + 4 }];
   check('paste STILL works after the source was deleted (cut works)', afterCut.status === 201, JSON.stringify(afterCut.data));
 
   // ---- deletion ----
-  const wantDelete = waitFor(playerSock, 'fog:deleted');
+  // The earlier cut deletion may still be in transit after its HTTP response.
+  const wantDelete = waitFor(playerSock, 'fog:deleted', 1200, d => d.id === windowId);
   const del = await gm.req('DELETE', `${fogPath}/${windowId}`);
   check('GM deletes a region (200)', del.status === 200, JSON.stringify(del.data));
   const gotDelete = await wantDelete;

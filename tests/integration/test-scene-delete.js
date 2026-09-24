@@ -62,9 +62,9 @@ const connected = (s) => new Promise((res, rej) => {
 const emitAck = (s, ev, p) => new Promise((r) => {
   s.emit(ev, p, r); setTimeout(() => r({ ok: false, error: 'timeout' }), 3000);
 });
-function recorder(socket, events) {
+function recorder(socket, events, matches = () => true) {
   const seen = [];
-  for (const ev of events) socket.on(ev, (d) => seen.push({ ev, d }));
+  for (const ev of events) socket.on(ev, (d) => { if (matches(d)) seen.push({ ev, d }); });
   return seen;
 }
 const settle = (ms = 600) => new Promise((r) => setTimeout(r, ms));
@@ -147,7 +147,10 @@ const rect = (a, b, c, d) => [{ x: a, y: b }, { x: c, y: d }];
   const active = await knex('campaigns').where({ id: camp.id }).first();
   check('the keeper is now active', active.active_scene_id === keeper.id);
 
-  const plHeard2 = recorder(plSock, ['scene:activated']);
+  // The keeper activation can arrive after the HTTP response; count only
+  // the deletion's clear notification, retaining the exactly-once assertion.
+  const plHeard2 = recorder(plSock, ['scene:activated'],
+    d => d.campaign_id === camp.id && d.scene_id === null);
   const delActive = await gm.req('DELETE', `${S}/${keeper.id}`);
   check('GM deletes the ACTIVE scene (200)', delActive.status === 200, JSON.stringify(delActive.data));
   check('the response flags it as active', delActive.data.was_active === true, String(delActive.data.was_active));

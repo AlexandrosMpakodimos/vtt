@@ -37,9 +37,9 @@ const { mayUseSceneFor, validUuid } = require('./services/sceneAccess');
 
 const { createRoomLifecycle, roomName, lobbyName } = require('./socket/roomLifecycle');
 
-function initSockets(io, workLifecycle) {
+function initSockets(io, workLifecycle, coordination) {
   const socketSessions = createSocketSessions(io, workLifecycle);
-  const lifecycle = createRoomLifecycle({ io, knex, isActiveMember });
+  const lifecycle = coordination || createRoomLifecycle({ io, knex, isActiveMember });
   const { evictUser, evictCampaign, evictGamePlayers, socketsByUser, onlineCount } = lifecycle;
 
   // Exported so HTTP routes can push a lobby event (PATCH /:id uses it for
@@ -47,7 +47,33 @@ function initSockets(io, workLifecycle) {
   // Image URLs in the payload are routed through the media gateway (a room-scoped
   // bearer token, since a broadcast has many recipients) — a no-op when the
   // gateway is disabled.
+  // A legal paste can contain 500 tokens. Keep the Redis work proportional to
+  // HTTP operations, while preserving existing per-token browser events.
+  async function broadcastCreatedTokens(campaignId, sceneId, tokens) {
+    if (coordination) {
+      const visible = tokens.filter(t => !t.hidden);
+      const hidden = tokens.filter(t => t.hidden);
+      await coordination.broadcastBatch(campaignId, 'scene', 'token:created', visible, { sceneId });
+      await coordination.broadcastBatch(campaignId, 'owner', 'token:created', hidden);
+      return;
+    }
+    for (const token of tokens) {
+      if (token.hidden) await broadcastToOwner(campaignId, 'token:created', token);
+      else await broadcastScene(campaignId, sceneId, 'token:created', token);
+    }
+  }
+
+  // Keep bulk scene operations in one coordination envelope, without changing
+  // the individual browser events or the active-scene authorization rule.
+  async function broadcastSceneBatch(campaignId, sceneId, event, payloads) {
+    if (coordination) {
+      return coordination.broadcastBatch(campaignId, 'scene', event, payloads, { sceneId });
+    }
+    for (const payload of payloads) await broadcastScene(campaignId, sceneId, event, payload);
+  }
+
   async function broadcastLobby(campaignId, event, payload) {
+    if (coordination) return coordination.broadcast(campaignId, 'lobby', event, payload);
     await gateway.rewritePayload(payload);
     io.to(lobbyName(campaignId)).emit(event, payload);
   }
@@ -58,6 +84,7 @@ function initSockets(io, workLifecycle) {
   // shaped row here to fan out. Emitting to io.to(room) rather than a single
   // socket means the acting user's own other tabs get the update too.
   async function broadcastToken(campaignId, event, payload) {
+    if (coordination) return coordination.broadcast(campaignId, 'room', event, payload);
     await gateway.rewritePayload(payload);
     io.to(roomName(campaignId)).emit(event, payload);
   }
@@ -75,6 +102,7 @@ function initSockets(io, workLifecycle) {
   // Built from the two helpers below rather than duplicating their logic, so
   // there is one definition of "the GM" (derived live from owner_id) everywhere.
   async function broadcastScene(campaignId, sceneId, event, payload) {
+    if (coordination) return coordination.broadcast(campaignId, 'scene', event, payload, { sceneId });
     const campaign = await knex('campaigns')
       .where({ id: campaignId }).whereNull('deleted_at').first();
     if (!campaign) return;
@@ -88,6 +116,7 @@ function initSockets(io, workLifecycle) {
   // Players only, and only on the active scene. Used by the hide/show transition,
   // where the GM's copy is sent separately as a different event.
   async function broadcastScenePlayers(campaignId, sceneId, event, payload) {
+    if (coordination) return coordination.broadcast(campaignId, 'scenePlayers', event, payload, { sceneId });
     const campaign = await knex('campaigns')
       .where({ id: campaignId }).whereNull('deleted_at').first();
     if (!campaign || campaign.active_scene_id !== sceneId) return;
@@ -99,6 +128,7 @@ function initSockets(io, workLifecycle) {
   // The owner is derived from campaigns.owner_id (single source of truth), and
   // ownership can transfer, so it is looked up live rather than cached.
   async function broadcastToOwner(campaignId, event, payload) {
+    if (coordination) return coordination.broadcast(campaignId, 'owner', event, payload);
     const campaign = await knex('campaigns')
       .where({ id: campaignId }).whereNull('deleted_at').first();
     if (!campaign) return;
@@ -133,6 +163,7 @@ function initSockets(io, workLifecycle) {
   // and this project already chose prevention over surveillance in M4 when it
   // took a restricted field allow-list over a change history.
   async function broadcastToUsers(campaignId, userIds, event, payload) {
+    if (coordination) return coordination.broadcast(campaignId, 'users', event, payload, { userIds: [...new Set(userIds || [])] });
     const campaign = await knex('campaigns')
       .where({ id: campaignId }).whereNull('deleted_at').first();
     if (!campaign) return;
@@ -155,6 +186,7 @@ function initSockets(io, workLifecycle) {
   // must not receive it, but the "not owner" set is the safe target for the
   // player-facing half of a visibility change).
   async function broadcastToPlayers(campaignId, event, payload) {
+    if (coordination) return coordination.broadcast(campaignId, 'players', event, payload);
     const campaign = await knex('campaigns')
       .where({ id: campaignId }).whereNull('deleted_at').first();
     if (!campaign) return;
@@ -169,7 +201,7 @@ function initSockets(io, workLifecycle) {
   }
 
   io.on('connection', (socket) => {
-    if (workLifecycle && workLifecycle.state !== 'ready') return socket.disconnect(true);
+    if ((coordination && !coordination.ready) || (workLifecycle && workLifecycle.state !== 'ready')) return socket.disconnect(true);
     // Populated by the handshake middleware chain in server.js.
     const user = socket.request.user;
 
@@ -545,10 +577,10 @@ function initSockets(io, workLifecycle) {
   });
 
   return {
-    disconnectSessions: socketSessions.disconnectSessions,
+    disconnectSessions: coordination ? coordination.disconnectSessions : socketSessions.disconnectSessions,
     evictUser, evictCampaign, evictGamePlayers, roomName, socketsByUser,
-    broadcastToken, broadcastToOwner, broadcastToPlayers,
-    broadcastScene, broadcastScenePlayers,
+    broadcastToken, broadcastToOwner, broadcastToPlayers, broadcastCreatedTokens,
+    broadcastScene, broadcastScenePlayers, broadcastSceneBatch,
     // §7 lobby: the dashboard's presence/state channel. broadcastLobby is called
     // by PATCH /campaigns/:id to fan out campaign:state; lobbyName/onlineCount
     // are exported alongside so the lobby suite can assert the contract directly.
