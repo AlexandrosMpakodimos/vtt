@@ -16,7 +16,7 @@ const { broker, database, socket, user, campaignId } = require('./fixtures/coord
     assert.throws(()=>configuration({COORDINATION_URL:'redis://host',COORDINATION_PREFIX:'bad space'}));
   });
   await test('production requires coordination and sanitized errors',()=>{
-    const env={NODE_ENV:'production',DATABASE_URL:'postgresql://u:p@ep-fixture-pooler.us.aws.neon.tech/vtt',SESSION_SECRET:'fixture-secret-12345678901234567890',BASE_URL:'https://fixture.invalid'};
+    const env={TRUST_PROXY_HOPS:'0',NODE_ENV:'production',DATABASE_URL:'postgresql://u:p@ep-fixture-pooler.us.aws.neon.tech/vtt',SESSION_SECRET:'fixture-secret-12345678901234567890',BASE_URL:'https://fixture.invalid'};
     assert.throws(()=>validate(env),/COORDINATION_URL/);
     try{configuration({COORDINATION_URL:'secret-value'});}catch(error){assert.equal(diagnostic(error),'STARTUP_FAILED: STARTUP_CONFIG_INVALID: COORDINATION_URL');}
   });

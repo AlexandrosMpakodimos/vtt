@@ -44,8 +44,20 @@ const {
   campaignJoinLimiter, campaignSearchLimiter, campaignCreateLimiter,
 } = require('./middleware/rateLimit');
 
+const rateLimits = require('./middleware/rateLimit');
+let rateLimitBackend;
+lifecycle.stoppers.push(() => rateLimits.stop());
+if (coordinationConfig) {
+  rateLimitBackend = require('./rateLimit/backend').createBackend({ ...coordinationConfig,
+    secret: process.env.SESSION_SECRET,
+    onFailure() { console.error('RATE_LIMIT_BACKEND_FAILED'); lifecycle.shutdown(1); },
+  });
+  rateLimits.configureBackend(rateLimitBackend);
+}
+
 const app = express();
 app.set('workLifecycle', lifecycle);
+app.set('trust proxy', require('./config/proxy').proxyHops(process.env));
 const server = http.createServer(app);
 let io;
 const connections = new Set();
@@ -335,6 +347,7 @@ const cleanupWorker = require('./services/storageCleanup');
 lifecycle.instrumentExpress(app._router.stack.filter(layer => layer.route?.path !== '/healthz'));
 await lifecycle.track(require('./startupChecks').checkStartup(knex, pgPool, isProd));
 if (coordination) await lifecycle.track(coordination.start());
+if (rateLimitBackend) await lifecycle.track(rateLimitBackend.start());
 if (lifecycle.state !== 'starting') return;
 const PORT = process.env.PORT || 3000;
 await new Promise((resolve, reject) => {

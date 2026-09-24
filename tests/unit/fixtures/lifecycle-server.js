@@ -111,6 +111,7 @@ Module._load = function(request, parent, isMain) {
   } };
   return original.call(this, request, parent, isMain);
 };
+process.env.TRUST_PROXY_HOPS = '0';
 process.env.COORDINATION_URL = 'redis://127.0.0.1:6379';
 process.env.NODE_ENV = mode === 'env-fail' ? 'unknown-value-sentinel' : 'production';
 process.env.BASE_URL = mode === 'base-fail' ? 'http://base-value-sentinel.invalid' : 'https://fixture.invalid';
