@@ -2,7 +2,7 @@
 const keys = new Set(['NODE_ENV', 'DATABASE_URL', 'SESSION_SECRET', 'PORT', 'BASE_URL',
   'R2_ACCOUNT_ID', 'R2_BUCKET', 'R2_PUBLIC_BASE_URL', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY',
   'R2_MAX_TOTAL_BYTES', 'R2_MAX_CLASS_A', 'R2_MAX_CLASS_B', 'R2_MAINT_CLASS_A', 'R2_MAINT_CLASS_B',
-  'MEDIA_ORIGIN', 'MEDIA_PROXY_SECRET', 'COORDINATION_URL']);
+  'MEDIA_ORIGIN', 'MEDIA_PROXY_SECRET', 'COORDINATION_URL', 'TRUST_PROXY_HOPS']);
 function invalid(key) {
   const error = new Error(`STARTUP_CONFIG_INVALID: ${key}`);
   error.configKey = key;
@@ -19,6 +19,7 @@ function httpsUrl(value, key) {
 function validate(env) {
   // Unset retains the historical development default; explicit unknown/blank fails.
   if (env.NODE_ENV !== undefined && !['development', 'test', 'production'].includes(env.NODE_ENV)) invalid('NODE_ENV');
+  require('./proxy').proxyHops(env);
   if (env.NODE_ENV !== 'production') return;
   require('./database').connection(env);
   if (!env.SESSION_SECRET || env.SESSION_SECRET.trim().length < 32 ||
