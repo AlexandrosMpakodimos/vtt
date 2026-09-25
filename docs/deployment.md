@@ -18,8 +18,8 @@ and `NODE_ENV`; it is not a complete production template.
 | `DATABASE_URL`, `SESSION_SECRET` | Non-test database/session-pool connection and session signing; supply privately |
 | `TEST_DATABASE_URL` | Dedicated local test DB only; see [testing](testing.md) |
 | `BASE_URL`, `EXTRA_ALLOWED_ORIGINS` | Email-link base and CSRF origins. Email base defaults to localhost:3000. CSRF also includes local port-3000 origins in current code |
-| `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS` | SMTP transport outside tests; port defaults to 587, secure is enabled by the string `true` |
-| `MAIL_JSON` | Test/JSON mail behavior; `1` also logs links. Test mode forces JSON transport. Outside tests configured SMTP takes precedence over JSON transport selection |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`, `MAIL_FROM` | SMTP transport outside tests; port defaults to 587, secure is enabled by the string `true`. Production requires host, user, password and `MAIL_FROM` (optional display name plus one address the SMTP account may send as), requires STARTTLS when `SMTP_SECURE` is not `true`, and never relaxes certificate verification |
+| `MAIL_JSON` | Development/test only: `1` selects JSON transport and logs links. Production refuses startup if it is set to any non-empty value |
 | `SKIP_HIBP` | `1` skips the external breached-password lookup after the built-in common-password check; supplied by test tooling |
 | `R2_ACCOUNT_ID`, `R2_BUCKET`, `R2_PUBLIC_BASE_URL`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | Together configure live storage outside tests; absence leaves it disabled |
 | `UPLOAD_MODE` | Defaults to `proxy`; `strict` disables legacy presign issuance. Isolated tests force strict mode |
@@ -36,9 +36,11 @@ Storage budget limits accept non-negative integers and reject invalid values.
 Other settings do not all share that validation. The table describes current
 behavior rather than introducing a new global configuration contract.
 
-The mailer's no-SMTP fallback is an Ethereal test account outside JSON/test mode;
-the sender is currently `VTT <no-reply@vtt.local>`. Neither is a configured public
-email delivery setup. Asset upload accounting requires an initialized budget;
+Outside production, the mailer's no-SMTP fallback is an Ethereal test account
+outside JSON/test mode, and the default sender is `VTT <no-reply@vtt.local>`.
+Production has neither fallback: startup validation refuses missing SMTP or
+sender settings, and the mailer itself refuses to send without them. Validation
+does not prove delivery; verify each flow with a real inbox. Asset upload accounting requires an initialized budget;
 the current `budgetActive()` implementation refuses unavailable/uninitialized
 accounting with 503 despite older comments suggesting an inactive bypass.
 

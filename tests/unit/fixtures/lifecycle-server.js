@@ -117,5 +117,9 @@ process.env.NODE_ENV = mode === 'env-fail' ? 'unknown-value-sentinel' : 'product
 process.env.BASE_URL = mode === 'base-fail' ? 'http://base-value-sentinel.invalid' : 'https://fixture.invalid';
 if (mode === 'storage-fail') process.env.R2_ACCOUNT_ID='storage-value-sentinel';
 process.env.DATABASE_URL = 'postgresql://fixture:fixture@ep-fixture-pooler.us.aws.neon.tech/fixture';
+process.env.SMTP_HOST = 'smtp.fixture.invalid';
+process.env.SMTP_USER = 'fixture-user';
+process.env.SMTP_PASS = 'fixture-pass';
+process.env.MAIL_FROM = 'VTT <no-reply@fixture.invalid>';
 process.env.SESSION_SECRET = mode === 'config-fail' ? '' : 'fixture-only-not-a-real-secret-123456';
 require(path.join(root, 'src/server'));

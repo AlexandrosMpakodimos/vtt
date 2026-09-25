@@ -2,7 +2,11 @@
 const keys = new Set(['NODE_ENV', 'DATABASE_URL', 'SESSION_SECRET', 'PORT', 'BASE_URL',
   'R2_ACCOUNT_ID', 'R2_BUCKET', 'R2_PUBLIC_BASE_URL', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY',
   'R2_MAX_TOTAL_BYTES', 'R2_MAX_CLASS_A', 'R2_MAX_CLASS_B', 'R2_MAINT_CLASS_A', 'R2_MAINT_CLASS_B',
-  'MEDIA_ORIGIN', 'MEDIA_PROXY_SECRET', 'COORDINATION_URL', 'TRUST_PROXY_HOPS']);
+  'MEDIA_ORIGIN', 'MEDIA_PROXY_SECRET', 'COORDINATION_URL', 'TRUST_PROXY_HOPS',
+  'SMTP_HOST', 'SMTP_PORT', 'SMTP_SECURE', 'SMTP_USER', 'SMTP_PASS', 'MAIL_FROM', 'MAIL_JSON']);
+// Display name (optional) plus one plain address; no CR/LF or header syntax.
+const MAIL_ADDRESS = '[A-Za-z0-9._%+-]+@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+';
+const MAIL_FROM = new RegExp(`^(?:${MAIL_ADDRESS}|[A-Za-z0-9 ._'-]{1,64} <${MAIL_ADDRESS}>)$`);
 function invalid(key) {
   const error = new Error(`STARTUP_CONFIG_INVALID: ${key}`);
   error.configKey = key;
@@ -46,6 +50,15 @@ function validate(env) {
   require('../coordination/config').configuration(env);
   if (env.MEDIA_PROXY_SECRET && (env.MEDIA_PROXY_SECRET.length < 32 ||
       env.MEDIA_PROXY_SECRET === env.SESSION_SECRET || env.MEDIA_PROXY_SECRET === env.MEDIA_TOKEN_SECRET)) invalid('MEDIA_PROXY_SECRET');
+  // Production email: an authenticated SMTP transport and an explicit sender.
+  // No Ethereal/JSON fallback, and never link logging (MAIL_JSON).
+  for (const key of ['SMTP_HOST', 'SMTP_USER', 'SMTP_PASS', 'MAIL_FROM']) if (!String(env[key] || '').trim()) invalid(key);
+  if (!/^[A-Za-z0-9.-]+$/.test(env.SMTP_HOST)) invalid('SMTP_HOST');
+  if (env.SMTP_PORT !== undefined && env.SMTP_PORT !== '' &&
+      (!/^\d+$/.test(env.SMTP_PORT) || +env.SMTP_PORT < 1 || +env.SMTP_PORT > 65535)) invalid('SMTP_PORT');
+  if (env.SMTP_SECURE !== undefined && env.SMTP_SECURE !== '' && !['true', 'false'].includes(env.SMTP_SECURE)) invalid('SMTP_SECURE');
+  if (!MAIL_FROM.test(env.MAIL_FROM)) invalid('MAIL_FROM');
+  if (env.MAIL_JSON !== undefined && env.MAIL_JSON !== '') invalid('MAIL_JSON');
 }
 function diagnostic(error) {
   if (keys.has(error?.configKey)) return `STARTUP_FAILED: STARTUP_CONFIG_INVALID: ${error.configKey}`;
