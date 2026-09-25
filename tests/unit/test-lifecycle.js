@@ -39,7 +39,7 @@ async function fixture(mode) {
     assert.doesNotThrow(() => validate({ NODE_ENV: 'development' }));
   });
   await test('production config rejects bad captured values without printing them', async () => {
-    const env={TRUST_PROXY_HOPS:'0',COORDINATION_URL:'redis://127.0.0.1:6379',BASE_URL:'https://fixture.invalid',NODE_ENV:'production',DATABASE_URL:'postgresql://fixture:fixture@ep-fixture-pooler.us.aws.neon.tech/fixture',SESSION_SECRET:'fixture-only-not-a-real-secret-123456'};
+    const env={TRUST_PROXY_HOPS:'0',COORDINATION_URL:'redis://127.0.0.1:6379',BASE_URL:'https://fixture.invalid',NODE_ENV:'production',DATABASE_URL:'postgresql://fixture:fixture@ep-fixture-pooler.us.aws.neon.tech/fixture',SESSION_SECRET:'fixture-only-not-a-real-secret-123456',SMTP_HOST:'smtp.fixture.invalid',SMTP_USER:'fixture-user',SMTP_PASS:'fixture-pass',MAIL_FROM:'VTT <no-reply@fixture.invalid>'};
     for(const override of [{SESSION_SECRET:''},{PORT:'0'},{R2_MAX_TOTAL_BYTES:'secret'},{MEDIA_PROXY_SECRET:env.SESSION_SECRET},{MEDIA_HOST:'media.example',MEDIA_ORIGIN:'bad'}]) {
       assert.throws(()=>validate({...env,...override}), /STARTUP_CONFIG_INVALID/);
     }
