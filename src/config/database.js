@@ -1,7 +1,7 @@
 // Deliberately narrow production profile. Development and test use knexfile.js.
 const path = require('node:path');
 const SCHEMA_SQL = `SELECT current_schema() AS schema,
-  current_schemas(false) AS schemas, current_setting('search_path') AS search_path`;
+  current_schemas(false)::text[] AS schemas, current_setting('search_path') AS search_path`;
 const messages = {
   DB_CONFIG_INVALID: 'Expected a supported Neon PostgreSQL URL and production environment.',
   DB_ENV_UNSUPPORTED: 'Remove unsupported PostgreSQL or TLS environment overrides.',
