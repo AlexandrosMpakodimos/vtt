@@ -10,7 +10,7 @@ function check(fn) { fn(); passed++; }
 (async () => {
   const config = policy.knexConfiguration(env);
   check(() => assert.deepEqual(config.connection, {
-    host: 'ep-example-pooler.eu-central-1.aws.neon.tech', port: 5432, user: 'runner', password: 's@fe', database: 'vtt', ssl: { rejectUnauthorized: true }, connectionTimeoutMillis: 10000,
+    host: 'ep-example-pooler.eu-central-1.aws.neon.tech', port: 5432, user: 'runner', password: 's@fe', database: 'vtt', ssl: { rejectUnauthorized: true }, connectionTimeoutMillis: 10000, enableChannelBinding: true,
   }));
   check(() => assert.equal(config.pool.max, 5));
   check(() => assert.equal(config.pool.min, 0));
@@ -34,6 +34,15 @@ function check(fn) { fn(); passed++; }
   const client = new pg.Client(config.connection);
   check(() => assert.equal(client.connectionParameters.ssl.rejectUnauthorized, true));
   check(() => assert.equal(client.host, config.connection.host));
+  check(() => assert.equal(client.enableChannelBinding, true));
+  check(() => assert.equal(new pg.Client(policy.sessionConfiguration(env)).enableChannelBinding, true));
+  check(() => assert.equal(new pg.Client(policy.knexConfiguration({ NODE_ENV: 'production', DIRECT_DATABASE_URL: pooled.replace('-pooler', '') }, true).connection).enableChannelBinding, true));
+  // Locked SASL behaviour: binding when offered; 'y' (downgrade signal), never 'n', when not offered.
+  const sasl = require('pg/lib/crypto/sasl');
+  const tlsStream = { getPeerCertificate: () => ({ raw: Buffer.alloc(0) }) };
+  check(() => assert.equal(sasl.startSession(['SCRAM-SHA-256', 'SCRAM-SHA-256-PLUS'], tlsStream).mechanism, 'SCRAM-SHA-256-PLUS'));
+  check(() => assert.match(sasl.startSession(['SCRAM-SHA-256', 'SCRAM-SHA-256-PLUS'], tlsStream).response, /^p=tls-server-end-point,,/));
+  check(() => assert.match(sasl.startSession(['SCRAM-SHA-256'], tlsStream).response, /^y,,/));
   // Real pg-pool onConnect must hold acquisition and destroy rejected clients.
   let finish, used = false, ended = false;
   class FakeClient extends EventEmitter {

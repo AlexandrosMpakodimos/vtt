@@ -180,10 +180,38 @@ session relations. No historical table/history movement is performed.
 - The pooled hostname must have the Neon -pooler endpoint suffix; the direct
   hostname must not. These are routing-shape checks, never identity proof.
 
-pg 8.21.0 can prefer SCRAM channel binding with enableChannelBinding, but can
-fall back to ordinary SCRAM. Consequently channel_binding=require is rejected
-rather than silently weakened. If mandatory channel binding is required, stop
-and review the supported profile separately; do not simply remove the requirement.
+Channel binding: every production connection sets enableChannelBinding. pg 8.21.0
+then uses SCRAM-SHA-256-PLUS (tls-server-end-point) whenever the server offers it.
+It cannot require it: if PLUS is not offered, pg uses plain SCRAM with the `y`
+flag, which a binding-capable server rejects as a downgrade. The URL parameter
+channel_binding=require therefore stays rejected, because accepting it would
+promise a guarantee the driver does not enforce. Store Neon URLs with only
+sslmode=verify-full (or no query). Deployment decision (September 2026): verified
+TLS plus opportunistic binding is accepted; mandatory binding is not a blocker.
+
+### Runtime role
+
+The running application connects as a dedicated role, `vtt_app`, through the
+pooled endpoint. `neondb_owner` is used only for migrations and role
+administration, over the direct endpoint. `vtt_app` has LOGIN and no other
+attributes (no superuser, CREATEROLE, CREATEDB, REPLICATION or BYPASSRLS) and
+belongs to no role. It holds:
+
+- `CONNECT` on the database and `USAGE` on `public`; `search_path = public` set
+  for the role in this database;
+- `SELECT, INSERT, UPDATE, DELETE` on every application table;
+- `SELECT` only on `knex_migrations` and `knex_migrations_lock`, which the startup
+  checks read;
+- `USAGE, SELECT` on sequences;
+- default privileges from `neondb_owner` in `public` granting the same table and
+  sequence rights, so tables added by later migrations need no manual grant.
+
+It cannot create tables or schemas, alter, drop or truncate tables, write the
+migration history or create roles. It can create temporary tables, which is the
+PostgreSQL default for PUBLIC. This limits what a compromised application can
+change structurally; it does not limit its reads or writes of application data.
+The role's password is generated on the server by the deployment helper and
+written straight into the private `.env`; rotating it repeats that step.
 
 ### Operator gate and release sequence
 

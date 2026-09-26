@@ -58,8 +58,11 @@ function connection(env, direct = false) {
     if (params.length > 1 || params.some(([key, value]) => key !== 'sslmode' || !['require', 'verify-full'].includes(value))) throw 0;
     const port = Number(url.port || 5432);
     if (!Number.isInteger(port) || port < 1 || port > 65535) throw 0;
+    // Channel binding is used whenever the server offers SCRAM-SHA-256-PLUS.
+    // pg cannot require it; if it is not offered, pg authenticates with plain
+    // SCRAM and sends the 'y' flag, which a binding-capable server rejects.
     return { host: url.hostname, port, user, password, database,
-      ssl: { rejectUnauthorized: true }, connectionTimeoutMillis: 10000 };
+      ssl: { rejectUnauthorized: true }, connectionTimeoutMillis: 10000, enableChannelBinding: true };
   } catch { throw failure('DB_CONFIG_INVALID'); }
 }
 async function assertPublic(client) {
