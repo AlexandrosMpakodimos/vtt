@@ -47,6 +47,23 @@ const { broker, database, socket, user, campaignId } = require('./fixtures/coord
       await buses[0].refresh();assert.equal(buses[0].nodes.length,2);
     }finally{await Promise.all(buses.map(b=>b.close()));}
   });
+  await test('slow connection setup uses the connect bound; commands keep the short bound',async()=>{
+    const bus=require('../../src/coordination/bus');assert.equal(bus.COMMAND_TIMEOUT_MS,2500);assert.equal(bus.CONNECT_TIMEOUT_MS,10000);
+    const network=broker(),original=network.createClient;const reasons=[];
+    network.createClient=o=>{const c=original(o);c.connect=()=>new Promise(r=>setTimeout(r,80));return c;};
+    const b=createBus({url:'redis://fixture',prefix:'test',createClient:network.createClient,commandTimeoutMs:20,connectTimeoutMs:400,onFailure:r=>reasons.push(r)});
+    try{
+      await b.start(()=>{},()=>({}));assert.equal(b.ready,true);assert.deepEqual(reasons,[]);
+      for(const c of network.clients)c.publish=()=>new Promise(()=>{});
+      await assert.rejects(b.publish({type:'event'}),/COORDINATION_/);assert.equal(b.ready,false);assert.deepEqual(reasons,['TIMEOUT']);
+    }finally{await b.close();}
+  });
+  await test('connection setup beyond the connect bound fails closed',async()=>{
+    const network=broker(),original=network.createClient;const reasons=[];
+    network.createClient=o=>{const c=original(o);c.connect=()=>new Promise(r=>setTimeout(r,200));return c;};
+    const b=createBus({url:'redis://fixture',prefix:'test',createClient:network.createClient,commandTimeoutMs:20,connectTimeoutMs:60,onFailure:r=>reasons.push(r)});
+    try{await assert.rejects(b.start(()=>{},()=>({})));assert.equal(b.ready,false);assert.deepEqual(reasons,['TIMEOUT']);}finally{await b.close();}
+  });
   for(const mode of ['reset','full','receiver','size','close'])await test(`bounded failure: ${mode}`,async()=>{
     const network=broker();let failed=0;
     const bus=createBus({url:'redis://fixture',prefix:'test',createClient:network.createClient,onFailure:()=>failed++});

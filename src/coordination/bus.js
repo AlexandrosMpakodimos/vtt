@@ -14,7 +14,13 @@ redis.call('HSET',KEYS[2],ARGV[1],ARGV[2])
 redis.call('ZADD',KEYS[1],ms,ARGV[1])
 redis.call('PEXPIRE',KEYS[1],16000); redis.call('PEXPIRE',KEYS[2],16000)
 local result = redis.call('HVALS',KEYS[2]); table.insert(result,1,epoch); return result`;
-function createBus({ url, prefix, onFailure, createClient = require('redis').createClient }) {
+// Connection setup (TCP, TLS, AUTH) is bounded separately from commands; see
+// CONNECT_TIMEOUT_MS in rateLimit/backend.js for the measured reason. Commands,
+// heartbeats and registry refreshes keep the 2.5 s bound that detects failure.
+const COMMAND_TIMEOUT_MS = 2500;
+const CONNECT_TIMEOUT_MS = 10000;
+function createBus({ url, prefix, onFailure, createClient = require('redis').createClient,
+  commandTimeoutMs = COMMAND_TIMEOUT_MS, connectTimeoutMs = CONNECT_TIMEOUT_MS }) {
   const id = randomUUID(), channel = `${prefix}:events`;
   const options = { url, disableOfflineQueue: true, commandsQueueMaxLength: 128, socket: { connectTimeout: 2000, reconnectStrategy: false } };
   const command = createClient(options), subscriber = createClient(options);
@@ -32,9 +38,9 @@ function createBus({ url, prefix, onFailure, createClient = require('redis').cre
     try { subscriber.destroy(); } catch {}
     onFailure(safeReason);
   }
-  function bounded(promise) {
+  function bounded(promise, limitMs = commandTimeoutMs) {
     return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => { fail('TIMEOUT'); reject(new Error('COORDINATION_TIMEOUT')); }, 2500);
+      const timeout = setTimeout(() => { fail('TIMEOUT'); reject(new Error('COORDINATION_TIMEOUT')); }, limitMs);
       waits.add(reject);
       Promise.resolve(promise).then(resolve, reject).finally(() => { clearTimeout(timeout); waits.delete(reject); });
     });
@@ -92,7 +98,7 @@ function createBus({ url, prefix, onFailure, createClient = require('redis').cre
   async function start(receiver, getSnapshot) {
     handler = receiver; snapshot = getSnapshot;
     try {
-      await bounded(Promise.all([command.connect(), subscriber.connect()]));
+      await bounded(Promise.all([command.connect(), subscriber.connect()]), connectTimeoutMs);
       await bounded(subscriber.subscribe(channel, receive));
       await heartbeat();
       await refresh();
@@ -123,4 +129,4 @@ function createBus({ url, prefix, onFailure, createClient = require('redis').cre
   }
   return { start, publish, refresh, close, fail, get ready() { return ready && !closed && !failed; }, get nodes() { return nodes; } };
 }
-module.exports = { createBus };
+module.exports = { createBus, COMMAND_TIMEOUT_MS, CONNECT_TIMEOUT_MS };
