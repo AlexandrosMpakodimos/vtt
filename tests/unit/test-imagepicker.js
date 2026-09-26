@@ -89,6 +89,7 @@ t('...placed immediately after the field',
   document.getElementById('target').nextElementSibling === btn);
 t('...and no input was added or removed',
   document.body.querySelectorAll('input').length === before);
+t('the button takes the <id>Btn id so a label can point at it', btn.id === 'targetBtn');
 t('attach is idempotent — a second call adds nothing',
   P.attach('target', { campaignId: 'C1', kind: 'portrait' }) === null
     && document.querySelectorAll('.vttpick-open').length === 1,

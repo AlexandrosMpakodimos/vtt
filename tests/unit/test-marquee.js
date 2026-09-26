@@ -177,6 +177,20 @@ window.eval(fs.readFileSync(rootPath('public/js/game/scene.js'),'utf8') + `
   __check('...and the selection survived', selection.has('T1'), [...selection].join(','));
   hideCtxMenu();
 
+  // [ADDED 2026-09-26] Windows fires contextmenu AFTER the release, so it lands
+  // on whatever is under the pointer then: the game menu that the release just
+  // opened there, which sits outside #stage. Found by players on Windows Chrome,
+  // who got the browser's own menu drawn over the game's. The event is dispatched
+  // on the menu's first item, as the browser would.
+  setSelection(['T1']);
+  fire(bg,'pointerdown',250,250); fire(stg,'pointerup',250,250);
+  const winCtx = new MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:250,clientY:250});
+  (ctxEl.firstElementChild || ctxEl).dispatchEvent(winCtx);
+  __check('Windows order: the native menu is suppressed over the game menu',
+    winCtx.defaultPrevented === true, String(winCtx.defaultPrevented));
+  __check('...and the game menu stays open', ctxEl.style.display === 'block', ctxEl.style.display);
+  hideCtxMenu();
+
   // ...and a drag immediately afterwards still leaves no menu: there is no
   // one-shot state to get out of step, because there is no state at all.
   fire(bg,'pointerdown',20,20); fire(stg,'pointermove',300,300); fire(stg,'pointerup',300,300);
