@@ -61,7 +61,23 @@ function errors(e,req,res,next){res.status(e.status||500).json({error:'unavailab
   const m=limits();m.configureBackend(c);const x=express();x.get('/',m.loginLimiter,(req,res)=>res.end('bad'));x.use(errors);assert.equal((await fetch(await listen(x))).status,503);
  });
  await test('hung startup times out and closes the client',async()=>{
-  const n=network(),original=n.createClient;n.createClient=o=>{const c=original(o);c.connect=()=>new Promise(()=>{});return c;};const c=backend(n,{timeoutMs:20});await assert.rejects(c.start(),e=>e.status===503);assert(n.clients[0].destroyed);
+  const n=network(),original=n.createClient;n.createClient=o=>{const c=original(o);c.connect=()=>new Promise(()=>{});return c;};const c=backend(n,{timeoutMs:20,connectTimeoutMs:40});await assert.rejects(c.start(),e=>e.status===503);assert(n.clients[0].destroyed);
+ });
+ await test('slow connection setup uses the connect bound while commands keep the short bound',async()=>{
+  assert.equal(require('../../src/rateLimit/backend').CONNECT_TIMEOUT_MS,10000);
+  const n=network(),original=n.createClient;let failures=0;
+  n.createClient=o=>{const c=original(o);c.connect=()=>new Promise(r=>setTimeout(r,80));return c;};
+  const c=backend(n,{timeoutMs:20,connectTimeoutMs:400,onFailure(){failures++;}});
+  await c.start();assert.equal(failures,0);assert.equal(n.clients[0].destroyed,undefined);
+  assert.equal((await c.increment('scope','ip',1000)).totalHits,1);
+  n.clients[0].eval=()=>new Promise(r=>setTimeout(()=>r([2,Date.now()+1000]),80));
+  await assert.rejects(c.increment('scope','ip',1000),e=>e.status===503);assert.equal(failures,1);assert(n.clients[0].destroyed);
+ });
+ await test('connection setup beyond the connect bound still fails closed',async()=>{
+  const n=network(),original=n.createClient;let failures=0;
+  n.createClient=o=>{const c=original(o);c.connect=()=>new Promise(r=>setTimeout(r,200));return c;};
+  const c=backend(n,{timeoutMs:20,connectTimeoutMs:60,onFailure(){failures++;}});
+  await assert.rejects(c.start(),e=>e.status===503);assert.equal(failures,1);assert(n.clients[0].destroyed);
  });
  await test('shutdown cancels pending commands and is idempotent',async()=>{
   const n=network(),c=backend(n);await c.start();n.clients[0].eval=()=>new Promise(()=>{});const p=c.increment('scope','ip',1000),checked=assert.rejects(p,e=>e.status===503);await new Promise(r=>setImmediate(r));c.stop();c.stop();await checked;

@@ -23,6 +23,17 @@ Tests with a URL reject non-loopback Redis hosts. Production has no local-only
 fallback. Existing database guards, migrations, Worker package and media storage
 behavior are unchanged.
 
+Connection setup (TCP, TLS and `AUTH`) is bounded at 10 seconds per process
+start, separately from the 2.5-second bound on every command, heartbeat and
+registry refresh. The first IP.GR deployment reaches Render's external TLS
+endpoint (IP allowlist) rather than the internal URL above. From that host,
+`AUTH` took 3.2–4.2 seconds per new connection, while TCP and TLS took under
+40 ms and commands on an open connection about 9 ms. A single shared bound made
+startup fail intermittently. Because running processes never reconnect, the
+longer bound applies only at startup; failure detection in use is unchanged.
+Both coordination and the HTTP rate-limit backend connect sequentially inside the
+existing 20-second startup check deadline.
+
 ## Transport and authorization
 
 The dedicated Pub/Sub channel transports room, scene, owner, player and explicit

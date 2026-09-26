@@ -15,8 +15,13 @@ return 0`;
 function unavailable() {
   return Object.assign(new Error('RATE_LIMIT_UNAVAILABLE'), { status: 503 });
 }
+// Connection setup (TCP, TLS, AUTH) has its own, longer bound than commands:
+// a managed endpoint may answer AUTH slowly (measured 3.2-4.2 s on Render's
+// external Key Value endpoint) while commands on an open link take ~10 ms.
+// Commands keep the short bound, which is what detects a dead link in use.
+const CONNECT_TIMEOUT_MS = 10000;
 function createBackend({ url, prefix, secret, onFailure = () => {},
-  createClient = require('redis').createClient, timeoutMs = 2500 }) {
+  createClient = require('redis').createClient, timeoutMs = 2500, connectTimeoutMs = CONNECT_TIMEOUT_MS }) {
   if (typeof secret !== 'string' || secret.length < 32) throw unavailable();
   const client = createClient({ url, disableOfflineQueue: true, commandsQueueMaxLength: 128,
     socket: { connectTimeout: 2000, reconnectStrategy: false } });
@@ -31,7 +36,7 @@ function createBackend({ url, prefix, secret, onFailure = () => {},
   }
   client.on('error', fail);
   client.on('end', () => { if (!closed) fail(); });
-  async function bounded(fn) {
+  async function bounded(fn, limitMs = timeoutMs) {
     if (closed || failed || waits.size >= 128) throw unavailable();
     return new Promise((resolve, reject) => {
       let settled = false;
@@ -41,7 +46,7 @@ function createBackend({ url, prefix, secret, onFailure = () => {},
         if (error) reject(error); else resolve(value);
       }
       const done = error => finish(error);
-      const timer = setTimeout(fail, timeoutMs);
+      const timer = setTimeout(fail, limitMs);
       waits.add(done);
       Promise.resolve().then(() => {
         if (closed || failed) throw unavailable();
@@ -58,7 +63,7 @@ function createBackend({ url, prefix, secret, onFailure = () => {},
   }
   return {
     async start() {
-      await bounded(() => client.connect());
+      await bounded(() => client.connect(), connectTimeoutMs);
       await bounded(() => client.ping());
       if (closed || failed) throw unavailable();
       ready = true;
@@ -80,4 +85,4 @@ function createBackend({ url, prefix, secret, onFailure = () => {},
     },
   };
 }
-module.exports = { createBackend, unavailable, INCREMENT, DECREMENT };
+module.exports = { createBackend, unavailable, INCREMENT, DECREMENT, CONNECT_TIMEOUT_MS };
