@@ -1655,6 +1655,11 @@ function sendPing(gx, gy, focus) {
 //
 // contextmenu therefore only suppresses the NATIVE menu. It decides nothing.
 stage.addEventListener('contextmenu', (e) => { e.preventDefault(); });
+// [ADDED 2026-09-26] ...and on the game menu itself. On Windows contextmenu
+// fires AFTER the release, so it lands on whatever is under the pointer then:
+// the menu the release just opened there, which lives outside #stage. Without
+// this the browser's own menu is drawn over the game's.
+ctxMenu.addEventListener('contextmenu', (e) => { e.preventDefault(); });
 
 // Open the menu for a right-click that did not turn into a drag.
 function openMenuAt(e) {

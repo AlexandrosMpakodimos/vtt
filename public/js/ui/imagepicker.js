@@ -466,6 +466,10 @@
     btn.type = 'button';
     btn.textContent = 'choose…';
     btn.className = 'vttpick-open';
+    // [ADDED 2026-09-26] `<id>Btn`, the convention the page's other custom
+    // controls follow, so a <label for="…Btn"> reaches this button. The token
+    // dialog's "Image" label pointed at an id nothing had.
+    if (input.id && !document.getElementById(`${input.id}Btn`)) btn.id = `${input.id}Btn`;
     btn.addEventListener('click', () => open({
       campaignId: typeof opts.campaignId === 'function' ? opts.campaignId() : opts.campaignId,
       kind: typeof opts.kind === 'function' ? opts.kind() : opts.kind,
