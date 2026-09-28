@@ -2608,6 +2608,34 @@ socket.on('actor:updated', (a) => {
     }
   }
   if (touched) log(`actor:updated — repainted ${touched} token(s)`);
+  if (pickerNeedsRefresh(a)) schedulePickerRefresh();
+});
+
+// [ADDED 2026-09-28] Keep the placement picker current. It is loaded with the
+// scene, so a character created, renamed, reassigned or deleted afterwards did
+// not appear (or disappear) until the page was reloaded. The server already
+// announces these changes; the picker now re-reads the same role-shaped
+// /actors endpoint it loads from. Only a change the picker can SHOW triggers
+// that: a character this viewer may place (any, for the GM; their own, for a
+// player) that is missing or has a different name, or one that is listed but
+// no longer placeable. Stat-only updates — hit points during combat — fetch
+// nothing. Several events in a burst share one re-read.
+function pickerNeedsRefresh(a) {
+  if (!a || !a.id) return false;
+  const placeable = isGm() || !!(me && a.user_id === me.id);
+  if (placeable) return actorNameById.get(a.id) !== a.name;
+  return actorNameById.has(a.id);
+}
+let pickerRefreshTimer = null;
+function schedulePickerRefresh() {
+  if (pickerRefreshTimer) clearTimeout(pickerRefreshTimer);
+  pickerRefreshTimer = setTimeout(() => {
+    pickerRefreshTimer = null;
+    if (scene) loadActorPicker().catch(() => {});
+  }, 250);
+}
+socket.on('actor:deleted', (d) => {
+  if (d && actorNameById.has(d.id)) schedulePickerRefresh();
 });
 
 // [ADDED 2026-08-10] The map or the grid alignment changed. Repaint the
