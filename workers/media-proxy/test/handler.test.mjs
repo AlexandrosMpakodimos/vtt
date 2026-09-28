@@ -105,7 +105,7 @@ describe('outbound request: fixed origin, fresh headers, no redirects', () => {
   it('builds the URL from validated parts on the configured origin only', async () => {
     const { calls } = await run(okPng, req(`https://attacker.example/media/${ID}?t=${TOKEN}`));
     assert.equal(calls.length, 1);
-    assert.equal(calls[0].url, `${ORIGIN}/media/${ID}?t=${TOKEN}`);
+    assert.equal(calls[0].url, `${ORIGIN}/media/${ID}`, 'no query string: the host access log records URLs');
     assert.equal(new URL(calls[0].url).protocol, 'https:');
   });
   it('sends exactly the header allowlist and drops every browser header', async () => {
@@ -113,15 +113,17 @@ describe('outbound request: fixed origin, fresh headers, no redirects', () => {
       headers: {
         cookie: 'sid=victim', authorization: 'Bearer x', referer: 'https://app.example/scene',
         origin: 'https://app.example', 'x-forwarded-for': '203.0.113.9', 'cf-connecting-ip': '203.0.113.9',
-        'x-media-proxy-auth': 'client-supplied-guess', 'user-agent': 'browser', accept: 'text/html',
+        'x-media-proxy-auth': 'client-supplied-guess', 'x-media-token': 'client-supplied-token',
+        'user-agent': 'browser', accept: 'text/html',
         'accept-encoding': 'gzip', range: 'bytes=0-5', 'if-modified-since': 'Sat, 01 Jan 2000 00:00:00 GMT',
         'if-none-match': 'not a valid etag',
       },
     });
     const { calls } = await run(okPng, hostile);
     const sent = new Headers(calls[0].init.headers);
-    assert.deepEqual([...sent.keys()].sort(), ['accept', 'accept-encoding', 'user-agent', 'x-media-proxy-auth']);
+    assert.deepEqual([...sent.keys()].sort(), ['accept', 'accept-encoding', 'user-agent', 'x-media-proxy-auth', 'x-media-token']);
     assert.equal(sent.get('x-media-proxy-auth'), SECRET, 'the client cannot supply the secret');
+    assert.equal(sent.get('x-media-token'), TOKEN, 'only the validated URL token is sent, never a browser-supplied header');
     assert.equal(sent.get('accept-encoding'), 'identity');
   });
   it('forwards If-None-Match only when it is one valid entity tag', async () => {

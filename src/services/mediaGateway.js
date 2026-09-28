@@ -99,15 +99,47 @@ function isEnabled() { return !!MEDIA_HOST; }
 // deliberately not used: it joins repeated headers with ", ", which could turn
 // two values into one that happens to equal a secret containing that text.
 function singleProxyHeader(req) {
+  return singleRawHeader(req, PROXY_HEADER).value;
+}
+
+// Scan the raw header list for one lower-case name. Returns { count, value },
+// where value is the only occurrence's value, or null unless count is exactly 1.
+function singleRawHeader(req, name) {
   const raw = req.rawHeaders;
-  if (!Array.isArray(raw)) return null;
+  if (!Array.isArray(raw)) return { count: 0, value: null };
+  let count = 0;
   let value = null;
   for (let i = 0; i + 1 < raw.length; i += 2) {
-    if (String(raw[i]).toLowerCase() !== PROXY_HEADER) continue;
-    if (value !== null) return null;
+    if (String(raw[i]).toLowerCase() !== name) continue;
+    count += 1;
     value = raw[i + 1];
   }
-  return typeof value === 'string' ? value : null;
+  return { count, value: count === 1 && typeof value === 'string' ? value : null };
+}
+
+// Where the media route reads the token from.
+//
+// In PROXY MODE the Worker sends it in the X-Media-Token header rather than in
+// the URL, because the hosting server's access log records every request URL:
+// a token in the query string would be copied into those logs on each read.
+// Headers are not logged. Exactly one header is accepted, and never together
+// with a ?t= parameter — an ambiguous request is refused, not resolved. With no
+// header, the ?t= parameter is still read: that keeps images working while the
+// app and the Worker are updated one after the other, and it is the only form
+// in host mode, where the browser itself requests the media origin.
+//
+// Returns the token string, undefined when none was sent, or null when the
+// request is ambiguous. verifyMediaToken refuses anything but a string.
+const TOKEN_HEADER = 'x-media-token';
+function mediaTokenFrom(req) {
+  if (PROXY_DIGEST) {
+    const header = singleRawHeader(req, TOKEN_HEADER);
+    if (header.count > 0) {
+      if (header.count > 1 || req.query.t !== undefined) return null;
+      return header.value;
+    }
+  }
+  return req.query.t;
 }
 
 // Origin gate. Media is served only on the media origin, so the separate-origin
@@ -168,7 +200,9 @@ function onMediaHost(req) {
 // REFRESH: implicit. Clients do not refresh tokens; they re-request the data
 //          (asset list, scene, token list) which carries freshly-minted URLs.
 // LOGGING: the token MUST NOT be logged — it is a capability. The media origin
-//          logs the asset id and outcome, never the query string.
+//          logs the asset id and outcome, never the query string. Behind the
+//          Worker the token travels in a header (mediaTokenFrom), because the
+//          hosting server's own access log records every request URL.
 // NOT A CREDENTIAL: it carries no account identity and grants nothing beyond
 //          reading one image for a few minutes. It must not become a session.
 //
@@ -509,7 +543,7 @@ async function sendJson(req, res, payload, status = 200) {
 }
 
 module.exports = {
-  isEnabled, onMediaHost, MEDIA_HOST, MEDIA_ORIGIN,
+  isEnabled, onMediaHost, mediaTokenFrom, MEDIA_HOST, MEDIA_ORIGIN,
   mintMediaToken, verifyMediaToken, TOKEN_TTL_SECONDS,
   resolveVisible, fetchBytes, cacheStats,
   storageKeyFromUrl, resolveUrlsToAssetIds, gatewayUrlFor, rewriteUrl, rewriteBatch,

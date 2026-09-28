@@ -143,10 +143,13 @@ export function createHandler({ fetchImpl }) {
     const conditional = ETAG.test(ifNoneMatch) ? ifNoneMatch : null;
 
     // Fresh outbound headers: nothing is copied from the browser request.
+    // The token goes upstream in a header, not in the URL: the hosting server's
+    // access log records every request URL, and a token there would be copied
+    // into the log on each read. The app reads X-Media-Token behind this proxy.
     const target = new URL(`/media/${route[1]}`, cfg.origin);
-    target.search = `?t=${token}`;
     const outbound = new Headers({
       'x-media-proxy-auth': cfg.secret,
+      'x-media-token': token,
       accept: 'image/png, image/jpeg, image/webp, image/gif',
       'accept-encoding': 'identity',
       'user-agent': 'vtt-media-proxy/0.1',

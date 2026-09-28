@@ -9,6 +9,8 @@
 //     token. This is the only place a session is consulted.
 //
 //   MEDIA ORIGIN GET /media/:id?t=<token>
+//     (behind the Worker: GET /media/:id with the token in X-Media-Token, so
+//     the hosting access log, which records URLs, never holds a token)
 //     A separate origin (MEDIA_HOST), so its responses cannot read app cookies —
 //     the defence-4 boundary, preserved. It trusts the signed token, not a
 //     session. It meters a Class B op on a cache miss, serves validated raster
@@ -59,7 +61,9 @@ router.get('/media/:id', async (req, res, next) => {
     // separate-origin boundary is a security property, not a nicety.
     if (!gateway.onMediaHost(req)) return res.status(404).end();
 
-    const claim = gateway.verifyMediaToken(req.query.t);
+    // Behind the Worker the token arrives in a header, not the URL, so the
+    // hosting access log never records it (see mediaTokenFrom).
+    const claim = gateway.verifyMediaToken(gateway.mediaTokenFrom(req));
     if (!claim || claim.assetId !== req.params.id) {
       return res.status(403).end();
     }
