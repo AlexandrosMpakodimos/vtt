@@ -13,7 +13,7 @@ const UNIT = [
   'test-auth-session-revocation.js', 'test-socket-sessions.js',
   'test-campaign-ownership.js',
   'test-campaign-join-retry.js',
-  'test-shortcuts.js', 'test-bulk-place.js', 'test-marquee.js',
+  'test-shortcuts.js', 'test-bulk-place.js', 'test-actor-picker-refresh.js', 'test-marquee.js',
   'test-fog-ui.js', 'test-fog-validators.js', 'test-sheet-ui.js',
   'test-dice.js', 'test-dice3d.js',
   'test-combat-ui.js', 'test-align-ui.js', 'test-landing-ui.js', 'test-dashboard-ui.js', 'test-actors-ui.js', 'test-game-ui.js',
