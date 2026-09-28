@@ -313,8 +313,9 @@ function cacheStats() {
 // Only OUR hosted uploads are rewritten. An EXTERNAL link (a pasted third-party
 // URL) has no storage_key and no row we host; it is returned unchanged — the
 // gateway hosts nothing for it, and rewriting it would be a proxy we explicitly
-// do not build. So this is idempotent and safe on mixed data: hosted URLs get a
-// gateway URL, everything else passes through untouched.
+// do not build. So this is idempotent and safe on mixed data: hosted URLs of
+// ready assets get a gateway URL, hosted URLs with no ready asset become null
+// (see rewriteUrl), and everything else passes through untouched.
 
 const PUBLIC_BASE = (process.env.R2_PUBLIC_BASE_URL || '').replace(/\/+$/, '');
 
@@ -328,6 +329,13 @@ function storageKeyFromUrl(url) {
   // fragment (cache-buster amplification) or traversal.
   if (!key || key.includes('..') || key.includes('?') || key.includes('#')) return null;
   return key;
+}
+
+// True for any URL under our stored-reference prefix, including malformed ones
+// that storageKeyFromUrl refuses (a query, a fragment, traversal). None of those
+// can be served, so none of them may reach a browser either.
+function underPublicBase(url) {
+  return typeof url === 'string' && !!PUBLIC_BASE && url.startsWith(`${PUBLIC_BASE}/`);
 }
 
 // Resolve a batch of stored URLs to their asset ids in one query. Returns a Map
@@ -359,32 +367,46 @@ function gatewayUrlFor(assetId, viewerId) {
   return `${MEDIA_ORIGIN}/media/${assetId}?t=${token}`;
 }
 
-// Rewrite a single URL field. Async because it may need a lookup. Falls back to
-// the original URL on any miss — never throws into a response path.
+// A stored reference to one of OUR objects that has no ready asset row behind it
+// — the image was deleted (references are by value, see the assets migration),
+// or never finished uploading — is sent to the browser as null, "no image".
+// With the gateway on, the stored form is only an internal reference: the bucket
+// is private and the prefix may be a reserved name that never resolves (such as
+// a .invalid host), so passing it through would only make the browser request an
+// address that cannot work. Every image field already renders null as "none".
+// The stored value itself is not changed here.
+
+// Rewrite a single URL field. Async because it may need a lookup. A hosted
+// reference with no ready asset, or one that cannot be checked because the
+// lookup failed, becomes null — never throws into a response path.
 async function rewriteUrl(url, viewerId) {
   if (!isEnabled() || !url) return url;
   const key = storageKeyFromUrl(url);
-  if (!key) return url; // external link or already non-hosted
+  if (!key) return underPublicBase(url) ? null : url; // external links pass through
   try {
     const row = await knex('assets')
       .where({ storage_key: key, status: 'ready' }).select('id').first();
-    if (!row) return url;
+    if (!row) return null;
     return gatewayUrlFor(row.id, viewerId);
   } catch {
-    return url;
+    return null;
   }
 }
 
 // Rewrite many URLs at once (one DB round-trip). Given an array of stored URLs
-// and a viewer, returns a Map url -> gatewayUrl (only for hosted objects; others
-// are absent, meaning "use the original"). This is what response shapers use so
-// a payload with fifty tokens costs one query, not fifty.
+// and a viewer, returns a Map url -> gatewayUrl for hosted objects that are
+// ready, and url -> null for hosted references with no ready asset. URLs that
+// are not ours (external links, gateway URLs) are absent, meaning "use the
+// original". This is what response shapers use so a payload with fifty tokens
+// costs one query, not fifty.
 async function rewriteBatch(urls, viewerId) {
   const out = new Map();
   if (!isEnabled()) return out;
-  const ids = await resolveUrlsToAssetIds(urls.filter(Boolean));
-  for (const [url, assetId] of ids) {
-    out.set(url, gatewayUrlFor(assetId, viewerId));
+  const present = urls.filter(Boolean);
+  const ids = await resolveUrlsToAssetIds(present);
+  for (const url of present) {
+    if (ids.has(url)) out.set(url, gatewayUrlFor(ids.get(url), viewerId));
+    else if (underPublicBase(url)) out.set(url, null);
   }
   return out;
 }
