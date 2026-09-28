@@ -289,6 +289,8 @@ async function runTests() {
     t('host mode: no cookie is set', onMedia.headers['set-cookie'] === undefined);
     t('host mode: the app host is refused (404)', (await req(server, path, { Host: 'app.test' })).status === 404);
     t('host mode: a proxy header is ignored, not honoured', (await req(server, path, { Host: 'app.test', 'X-Media-Proxy-Auth': PROXY_SECRET })).status === 404);
+    t('host mode: the token is read from the URL only; an X-Media-Token header is not honoured (403)',
+      (await req(server, `/media/${ready}`, { Host: 'media.test', 'X-Media-Token': tok })).status === 403);
     t('host mode: token endpoint refuses on the media host (400)', (await req(server, `/api/media/${ready}/token`, { Host: 'media.test', 'X-Test-User': owner2 })).status === 400);
     const minted = await req(server, `/api/media/${ready}/token`, { Host: 'app.test', 'X-Test-User': owner2 });
     t('host mode: token endpoint mints on the app host', minted.status === 200 && /\/media\//.test(JSON.parse(minted.body).url));
@@ -359,6 +361,27 @@ async function runTests() {
     t('proxy mode: an asset serves before deletion', (await req(server, doomedPath, good)).status === 200);
     await knex('assets').where({ id: doomed }).del(); // the app deletes the row
     t('proxy mode: the same still-valid token is 404 after deletion (live row check; a request that reaches the origin)', (await req(server, doomedPath, good)).status === 404);
+
+    console.log('  (token in the X-Media-Token header: the URL, which the host logs, carries none)');
+    {
+      const bare = `/media/${ready}`;
+      const hdr = (tok) => ({ ...good, 'X-Media-Token': tok });
+      gw._cacheClear();
+      const viaHeader = await req(server, bare, hdr(tokFor(ready)));
+      t('header: a valid token in the header serves the image with no query string', viaHeader.status === 200 && viaHeader.body.equals(PNG), `got ${viaHeader.status}`);
+      t('header: a forged token is 403', (await req(server, bare, hdr(`${tokFor(ready)}x`))).status === 403);
+      t('header: a token for another asset is 403', (await req(server, bare, hdr(tokFor(pending)))).status === 403);
+      t('header: an expired token is 403', (await req(server, bare, hdr(expired))).status === 403);
+      t('header: an empty header is 403', (await req(server, bare, hdr(''))).status === 403);
+      t('header: a header AND a ?t= parameter together are refused (403), even when both are valid',
+        (await req(server, `${bare}?t=${tokFor(ready)}`, hdr(tokFor(ready)))).status === 403);
+      t('header: two X-Media-Token headers are refused (403)',
+        (await rawStatus(server, bare, [`Host: ${APP_HOST}`, `X-Media-Proxy-Auth: ${PROXY_SECRET}`, `X-Media-Token: ${tokFor(ready)}`, `x-media-token: ${tokFor(ready)}`])) === 403);
+      t('header: the name matches in any capitalisation', (await rawStatus(server, bare, [`Host: ${APP_HOST}`, `X-Media-Proxy-Auth: ${PROXY_SECRET}`, `X-MEDIA-TOKEN: ${tokFor(ready)}`])) === 200);
+      t('header: a valid token without the proxy secret is still 404', (await req(server, bare, { Host: APP_HOST, 'X-Media-Token': tokFor(ready) })).status === 404);
+      t('header: the ?t= form still works while the Worker is being updated (no header sent)',
+        (await req(server, `${bare}?t=${tokFor(ready)}`, good)).status === 200);
+    }
 
     console.log('  (metering and cache are unchanged behind the proxy)');
     await initLedger(); gw._cacheClear(); getCount = 0;

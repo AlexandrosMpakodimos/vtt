@@ -188,7 +188,7 @@ async function viaWorker(runtime, url, init = {}, { wrong = false } = {}) {
 const mediaUrl = (id, token) => `https://${WORKER_HOST}/media/${id}?t=${token}`;
 const tokenFor = (id) => gw.mintMediaToken({ assetId: id, viewerId: owner });
 const FORBIDDEN = ['cookie', 'authorization', 'referer', 'origin', 'x-forwarded-for', 'cf-connecting-ip'];
-const WORKER_HEADERS = ['accept', 'accept-encoding', 'user-agent', 'x-media-proxy-auth', 'if-none-match'];
+const WORKER_HEADERS = ['accept', 'accept-encoding', 'user-agent', 'x-media-proxy-auth', 'x-media-token', 'if-none-match'];
 // Added by the workerd runtime itself, not by the Worker's code: `cache: 'no-store'` becomes
 // Cache-Control: no-cache and Pragma: no-cache (per the Fetch specification), and cf-worker identifies
 // the calling Worker. None of them carries a client value or a secret.
@@ -390,6 +390,8 @@ describe('integration against the real media router', () => {
         const seen = routerSeen[0];
         assert.equal(seen.headers['x-media-proxy-auth'], PROXY_SECRET, 'the Worker, not the client, supplies the proxy header');
         assert.equal(seen.rawHeaders.filter((h, i) => i % 2 === 0 && h.toLowerCase() === 'x-media-proxy-auth').length, 1, 'exactly one proxy header reaches the gate');
+        assert.equal(seen.rawHeaders.filter((h, i) => i % 2 === 0 && h.toLowerCase() === 'x-media-token').length, 1, 'exactly one token header reaches the gate');
+        assert.equal(seen.url, `/media/${readyId}`, 'the request line the router sees (and the host would log) carries no token');
         for (const h of FORBIDDEN) assert.equal(seen.headers[h], undefined, `${h} never reaches the router`);
         const sent = runtime === 'Node' ? nodeOutbound.at(-1).init : workerdOutbound.at(-1);
         const names = Object.keys(sent.headers).filter((h) => h !== 'host');
@@ -404,7 +406,7 @@ describe('integration against the real media router', () => {
           assert.equal(nodeOutbound.at(-1).init.redirect, 'manual');
           assert.equal(nodeOutbound.at(-1).init.cache, 'no-store');
           assert.equal(nodeOutbound.at(-1).init.hasSignal, true);
-          assert.equal(nodeOutbound.at(-1).url, `${UPSTREAM}/media/${readyId}?t=${new URL(nodeOutbound.at(-1).url).searchParams.get('t')}`);
+          assert.equal(nodeOutbound.at(-1).url, `${UPSTREAM}/media/${readyId}`, 'no token in the URL the host would log');
         }
       });
 

@@ -59,7 +59,8 @@ describe('workerd: success paths', () => {
     assert.equal(res.headers.get('cross-origin-resource-policy'), 'cross-origin');
     assert.equal(res.headers.get('cache-control'), 'private, max-age=300');
     assert.equal(outbound.length, 1, '`cache: no-store` and `redirect: manual` are accepted by workerd');
-    assert.equal(outbound[0].url, `${ORIGIN}/media/${ID}?t=${TOKEN}`);
+    assert.equal(outbound[0].url, `${ORIGIN}/media/${ID}`, 'no token in the upstream URL');
+    assert.equal(outbound[0].headers['x-media-token'], TOKEN, 'the token travels in a header');
     assert.equal(outbound[0].method, 'GET');
     assert.equal(outbound[0].headers['x-media-proxy-auth'], SECRET);
     for (const h of ['cookie', 'authorization', 'referer', 'origin', 'x-forwarded-for', 'cf-connecting-ip']) {
