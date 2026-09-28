@@ -6,8 +6,9 @@
 // Proves the stored-URL -> gateway-URL mapping that the whole client migration
 // rests on: hosted URLs map to a tokenised gateway URL for the right asset id,
 // external links and foreign URLs pass through untouched, cache-buster/traversal
-// tricks are refused, batch resolution is one query, and the flag (MEDIA_HOST
-// unset) makes the whole thing a no-op.
+// tricks are refused, batch resolution is one query, a hosted reference with no
+// ready asset (a deleted image) becomes null instead of leaking the stored
+// reference, and the flag (MEDIA_HOST unset) makes the whole thing a no-op.
 
 process.env.MEDIA_HOST = process.env.MEDIA_HOST || 'media.test';
 process.env.MEDIA_TOKEN_SECRET = process.env.MEDIA_TOKEN_SECRET || 'testsecret';
@@ -89,7 +90,8 @@ async function main() {
   t('both hosted URLs are in the batch result', map.has(urls[0]) && map.has(urls[1]));
   t('the external link is NOT rewritten', !map.has(urls[2]));
   t('the foreign URL is NOT rewritten', !map.has(urls[3]));
-  t('a hosted-shaped URL with no row is NOT rewritten', !map.has(urls[4]));
+  t('a hosted-shaped URL with no row maps to null (no image), not to itself',
+    map.has(urls[4]) && map.get(urls[4]) === null);
   t('batch maps to the right ids',
     map.get(urls[0]).includes(`/media/${id1}?`) && map.get(urls[1]).includes(`/media/${id2}?`));
 
@@ -124,8 +126,41 @@ async function main() {
   console.log('\n--- a non-ready asset is not rewritten ---');
   await knex('assets').where({ id: id1 }).update({ status: 'pending' });
   const notReady = await gw.rewriteUrl(`${BASE}/c/rw/map/one.png`, u.id);
-  t('a pending asset URL passes through unchanged', notReady === `${BASE}/c/rw/map/one.png`);
+  t('a pending asset URL becomes null, never the stored reference', notReady === null);
   await knex('assets').where({ id: id1 }).update({ status: 'ready' });
+
+  console.log('\n--- a deleted image: the stored reference never reaches the browser ---');
+  {
+    // References are by value, so deleting an asset leaves scenes/actors/tokens
+    // still holding its stored URL. The response must say "no image" (null),
+    // not hand the browser an internal reference it cannot fetch.
+    const gone = `${BASE}/c/rw/map/deleted-${Date.now()}.png`;
+    t('single rewrite of a deleted image is null', await gw.rewriteUrl(gone, u.id) === null);
+    t('a malformed URL under the prefix is null too',
+      await gw.rewriteUrl(`${BASE}/c/rw/map/one.png?v=2`, u.id) === null);
+    const payload = {
+      scene: { id: 's', img_url: gone, name: 'Tavern' },
+      actors: [{ id: 'a1', img_url: gone }, { id: 'a2', img_url: `${BASE}/c/rw/portrait/two.png` }],
+      tokens: [{ id: 't1', img_url: 'https://imgur.com/external.png' }],
+      member: { avatar_url: `${BASE}/u/rw/avatar/deleted.png` },
+    };
+    await gw.rewritePayload(payload, u.id);
+    t('scene background of a deleted image is null', payload.scene.img_url === null);
+    t('actor portrait of a deleted image is null', payload.actors[0].img_url === null);
+    t('a live image in the same payload is still rewritten',
+      payload.actors[1].img_url.includes(`/media/${id2}?t=`));
+    t('an external link in the same payload is untouched',
+      payload.tokens[0].img_url === 'https://imgur.com/external.png');
+    t('a deleted avatar is null', payload.member.avatar_url === null);
+    t('other fields are untouched', payload.scene.name === 'Tavern');
+    t('no stored reference remains anywhere in the payload',
+      !JSON.stringify(payload).includes(BASE));
+
+    const objs = [{ url: gone }, { url: `${BASE}/c/rw/portrait/two.png` }];
+    await gw.rewriteObjects(objs, ['url'], u.id);
+    t('rewriteObjects: a deleted asset url is null', objs[0].url === null);
+    t('rewriteObjects: a live asset url is rewritten', objs[1].url.includes(`/media/${id2}?t=`));
+  }
 
   console.log('\n--- disabled gateway leaves URLs unchanged ---');
   {
