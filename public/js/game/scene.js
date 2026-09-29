@@ -344,6 +344,7 @@ function closeScene(reason) {
   document.getElementById('scene-title').textContent = reason ? `— ${reason}` : '';
   updateCanvasEmpty();
   log(reason || 'scene closed');
+  announceScene();
 }
 
 // The empty-canvas prompt ("No scenes yet — create one") shows only for a GM
@@ -403,6 +404,16 @@ async function openScene(sceneId) {
   if (!joinedRoom) joinRoom();
   updateCanvasEmpty();
   centerView();   // frame the map in the middle of the canvas on load
+  announceScene();
+}
+
+// [ADDED 2026-09-29] Tell the other game modules which scene is on screen.
+// combat.js used to choose its scene once, at page load, so a GM who activated
+// or opened another map and then pressed Encounter started the fight on the
+// PREVIOUS scene — invisible to players, who only see the active one. The canvas
+// is the single source of "the scene the GM is looking at"; combat follows it.
+function announceScene() {
+  window.dispatchEvent(new CustomEvent('vtt:scene-opened', { detail: { sceneId: scene ? scene.id : null } }));
 }
 
 // --- rendering ---
@@ -2706,7 +2717,7 @@ function pingAt(e) {
 
 // The game shell drives this file through boot(id) and pingAt(e); every other
 // render path, socket handler and shortcut is unchanged and still runs at load.
-window.VTTScene = { boot, pingAt, highlightToken, pickTokens };
+window.VTTScene = { boot, pingAt, highlightToken, pickTokens, currentSceneId: () => (scene ? scene.id : null) };
 
 // M6: let the token image field be filled from the campaign's image library
 // rather than by pasting a URL. Guarded, because the field must keep working on

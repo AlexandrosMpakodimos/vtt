@@ -17,7 +17,8 @@ window.__uid = 'GM';
 window.__actorReads = 0;
 window.fetch = async (path) => {
   if (String(path).slice(-7) === '/actors') window.__actorReads += 1;
-  return { status: 200, json: async () => ({ user: { id: window.__uid }, tokens: [], actors: window.__actors.slice() }) };
+  const scene = { id: String(path).split('/').pop(), name: 'Board', width: 1000, height: 800, img_url: null, grid: {} };
+  return { status: 200, json: async () => ({ user: { id: window.__uid }, scene, tokens: [], fog: [], actors: window.__actors.slice() }) };
 };
 // Capture the handlers scene.js registers, so the test can deliver events.
 window.__handlers = {};
@@ -108,6 +109,19 @@ window.eval(fs.readFileSync(rootPath('public/js/shared/common.js'), 'utf8') + '\
   n = await reads(() => h['actor:updated']({ id: 'PA4', name: 'Dara', user_id: 'P3', is_npc: false }));
   __check('player: a character reassigned away causes one re-read', n === 1, 'reads=' + n);
   __check('...and leaves their picker', !labels().includes('Dara'), labels().join(' | '));
+
+  // --- the canvas announces the scene on screen (combat.js follows it) ----------
+  {
+    const seen = [];
+    window.addEventListener('vtt:scene-opened', (e) => seen.push(e.detail.sceneId));
+    await openScene('S2');
+    __check('opening a scene announces it', seen[seen.length - 1] === 'S2', JSON.stringify(seen));
+    __check('VTTScene.currentSceneId reports the scene on screen', window.VTTScene.currentSceneId() === 'S2');
+    closeScene('closed');
+    __check('closing the scene announces null', seen[seen.length - 1] === null, JSON.stringify(seen));
+    __check('...and currentSceneId is null', window.VTTScene.currentSceneId() === null);
+    await openScene('S');
+  }
 
   // --- no scene open ----------------------------------------------------------
   asUser('GM');
