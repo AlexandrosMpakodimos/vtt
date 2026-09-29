@@ -99,6 +99,10 @@ let campaign = null;
 let isGm = false;
 let scenes = [];
 let sceneId = null;
+// The scene the canvas (scene.js) has on screen, as last announced through the
+// vtt:scene-opened event; undefined until the canvas has reported. The
+// encounter follows it — see followScene.
+let viewedSceneId;
 let tokens = [];          // tokens of the loaded scene, as THIS role receives them
 let actorsById = new Map();
 let combat = null;
@@ -651,8 +655,11 @@ async function loadCampaign(idArg, reconnect = false) {
     o.textContent = sc.name + (campaign.active_scene_id === sc.id ? '  (active)' : '');
     sel.appendChild(o);
   }
-  // Default to the active scene — for a player it is the ONLY one they will see.
-  sceneId = campaign.active_scene_id || (scenes[0] && scenes[0].id) || null;
+  // The scene on screen, once the canvas has reported one; before that, the
+  // active scene — for a player it is the ONLY one they will see.
+  const onScreen = viewedSceneId !== undefined ? viewedSceneId
+    : (window.VTTScene && window.VTTScene.currentSceneId ? window.VTTScene.currentSceneId() : null);
+  sceneId = onScreen || campaign.active_scene_id || (scenes[0] && scenes[0].id) || null;
   if (sceneId) sel.value = sceneId;
 
   await loadMembers();
@@ -1108,7 +1115,8 @@ async function startCombat() {
 // (or reactivate an ended one), and the strip appears. No name prompt.
 async function toggleEncounter() {
   if (!isGm) return;
-  if (!sceneId) { show('no active scene for an encounter'); return; }
+  // log, not show: show() expects a response object and threw here.
+  if (!sceneId) { log('no scene on screen for an encounter'); return; }
   await loadCombat();               // settle current state on this scene
   if (combat && combat.active) {    // running -> end it
     const r = await api('PATCH', combatPath(), { active: false });
@@ -1342,6 +1350,21 @@ document.getElementById('diceFormula').addEventListener('keydown', (e) => {
 document.getElementById('speakAs').addEventListener('change', (e) => {
   if (campaign) localSet(`vtt.speakAs.${campaign.id}`, e.target.value);
 });
+
+// [ADDED 2026-09-29] Follow the scene on screen. The Encounter button acts on
+// `sceneId`, which used to be fixed at page load: activating or opening another
+// map and then starting an encounter created it on the previous scene, where
+// players (who only see the active scene) never saw it. Now the canvas announces
+// every scene it opens or closes and the encounter state follows.
+function followScene(id) {
+  viewedSceneId = id || null;
+  if (!campaign || viewedSceneId === sceneId) return;
+  sceneId = viewedSceneId;
+  const sel = document.getElementById('sceneSel');
+  if (sel && sceneId) sel.value = sceneId;
+  loadScene().then(loadCombat);
+}
+window.addEventListener('vtt:scene-opened', (e) => followScene(e.detail && e.detail.sceneId));
 
 document.getElementById('sceneSel').addEventListener('change', async (e) => {
   sceneId = e.target.value;
