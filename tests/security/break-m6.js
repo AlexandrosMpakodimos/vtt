@@ -308,7 +308,8 @@ const settle = (ms = 700) => new Promise((r) => setTimeout(r, ms));
   ok('a player MAY set framing on their own new character (same tier as img_url)',
     framed.status === 201, `${framed.status}`);
   const npcFrame = await pl.req('PATCH', `${C}/actors/${lich.id}`, { img_scale: 3 });
-  ok('...but not on the GM\'s NPC', npcFrame.status === 403, `${npcFrame.status}`);
+  // 404 (audit C5): an unseen NPC answers a write the way it answers a read.
+  ok('...but not on the GM\'s NPC', npcFrame.status === 404, `${npcFrame.status}`);
 
   // ---- avatar framing (users table) ----
   console.log('\n--- avatar framing rides on /me, bounded like every other frame ---');

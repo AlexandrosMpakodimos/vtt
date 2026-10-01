@@ -16,7 +16,7 @@ const UNIT = [
   'test-shortcuts.js', 'test-bulk-place.js', 'test-actor-picker-refresh.js', 'test-marquee.js',
   'test-fog-ui.js', 'test-fog-validators.js', 'test-sheet-ui.js',
   'test-dice.js', 'test-dice3d.js',
-  'test-combat-ui.js', 'test-encounter-scene.js', 'test-member-refresh.js', 'test-authgate.js', 'test-align-ui.js', 'test-landing-ui.js', 'test-dashboard-ui.js', 'test-actors-ui.js', 'test-game-ui.js',
+  'test-combat-ui.js', 'test-encounter-scene.js', 'test-member-refresh.js', 'test-authgate.js', 'test-audit-fixes.js', 'test-align-ui.js', 'test-landing-ui.js', 'test-dashboard-ui.js', 'test-actors-ui.js', 'test-game-ui.js',
   'test-storage.js', 'test-asset-delete.js', 'test-campaign-create-retry.js', 'test-imagepicker.js', 'test-events.js', 'test-closednotice.js', 'test-frametool.js',
 ];
 

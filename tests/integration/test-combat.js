@@ -246,6 +246,43 @@ async function mk(name) {
   t('...and turn_index 0', restarted.data.combat.turn_index === 0, `${restarted.data.combat.turn_index}`);
   await gm.req('PATCH', `${C}/${rtFight.id}`, { active: false });   // leave it ended
 
+  console.log('\n--- the turn pointer does not leak concealed combatants (audit C1) ---');
+  // [2026-10-01] turn_index indexes the FULL roster; a player's roster drops
+  // hidden-token combatants. Sending players the raw index would disclose how
+  // many concealed combatants exist and where. Players get turn_combatant_id,
+  // resolved per recipient, and never the index.
+  const tlScene = (await gm.req('POST', `/api/campaigns/${camp.id}/scenes`, { name: 'TurnLeak' })).data.scene;
+  await gm.req('PUT', `/api/campaigns/${camp.id}/scenes/active`, { scene_id: tlScene.id });
+  const TS = `/api/campaigns/${camp.id}/scenes/${tlScene.id}`;
+  const v1 = (await gm.req('POST', `${TS}/tokens`, { name: 'Seen 1', x: 1, y: 1 })).data.token;
+  const hid = (await gm.req('POST', `${TS}/tokens`, { name: 'Ambusher', x: 2, y: 1, hidden: true })).data.token;
+  const v2 = (await gm.req('POST', `${TS}/tokens`, { name: 'Seen 2', x: 3, y: 1 })).data.token;
+  t('setup: the ambusher token is hidden', hid && hid.hidden === true, JSON.stringify(hid));
+  const tl = (await gm.req('POST', C, { scene_id: tlScene.id, name: 'Turns' })).data;
+  const byTok = (id) => tl.combatants.find((c) => c.token_id === id);
+  const order = [byTok(v1.id), byTok(hid.id), byTok(v2.id)];
+  t('setup: all three are enrolled for the GM', order.every(Boolean), JSON.stringify(tl.combatants.map((c) => c.token_id)));
+  await gm.req('POST', `${C}/${tl.combat.id}/reorder`, { combatant_ids: order.map((c) => c.id) });
+
+  await gm.req('PATCH', `${C}/${tl.combat.id}`, { turn_index: 1 });      // the ambusher's turn
+  let gmView = (await gm.req('GET', `${C}/${tl.combat.id}`)).data;
+  let plView = (await player.req('GET', `${C}/${tl.combat.id}`)).data;
+  t('GM still gets turn_index and the current combatant id',
+    gmView.combat.turn_index === 1 && gmView.combat.turn_combatant_id === order[1].id, JSON.stringify(gmView.combat));
+  t('the player roster omits the concealed combatant', plView.combatants.length === 2, String(plView.combatants.length));
+  t('the player payload carries NO turn_index', !('turn_index' in plView.combat), JSON.stringify(plView.combat));
+  t('on a concealed combatant\'s turn the player is told nobody (null)', plView.combat.turn_combatant_id === null, JSON.stringify(plView.combat));
+
+  await gm.req('PATCH', `${C}/${tl.combat.id}`, { turn_index: 2 });      // a visible creature's turn
+  plView = (await player.req('GET', `${C}/${tl.combat.id}`)).data;
+  t('on a visible combatant\'s turn the player gets that combatant id',
+    plView.combat.turn_combatant_id === order[2].id && plView.combatants.some((c) => c.id === order[2].id), JSON.stringify(plView.combat));
+  const plList = (await player.req('GET', C)).data.combats;
+  t('the player combat list carries no turn_index either',
+    plList.length > 0 && plList.every((c) => !('turn_index' in c)), JSON.stringify(plList));
+  await gm.req('PATCH', `${C}/${tl.combat.id}`, { active: false });
+  await gm.req('PUT', `/api/campaigns/${camp.id}/scenes/active`, { scene_id: scene.id });
+
   console.log('\n--- chat ---');
   const line = await player.req('POST', M, { content: 'I swing at the goblin' });
   t('a player can post', line.status === 201, `${line.status}`);

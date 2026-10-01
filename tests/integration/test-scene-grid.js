@@ -212,8 +212,9 @@ async function mk(name) {
     JSON.stringify(framed.data.actor.img_offset_x));
 
   const npc = (await gm.req('POST', A, { name: 'Goblin', is_npc: true, hp_max: 7 })).data.actor;
+  // 404 since audit C5: an NPC the player cannot know about answers writes like reads.
   t('a player cannot frame the GM\'s NPC',
-    (await pl.req('PATCH', `${A}/${npc.id}`, { img_scale: 2 })).status === 403);
+    (await pl.req('PATCH', `${A}/${npc.id}`, { img_scale: 2 })).status === 404);
   t('the GM may frame any character',
     (await gm.req('PATCH', `${A}/${npc.id}`, { img_scale: 2 })).status === 200);
 

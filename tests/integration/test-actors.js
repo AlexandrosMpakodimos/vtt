@@ -189,6 +189,17 @@ const STAT_FIELDS = [
   check('and reading it directly answers 404, not 403 (no enumeration oracle)',
     oneNpc.status === 404, `got ${oneNpc.status}`);
 
+  // [2026-10-01, audit C5] Writes follow the read rule: an NPC the player may
+  // not know about answers 404 to PATCH and DELETE too, exactly like a made-up id.
+  const fakeId = '00000000-0000-4000-8000-000000000000';
+  const patchNpc = await player.req('PATCH', `${A}/${gob.id}`, { notes: 'x' });
+  const patchFake = await player.req('PATCH', `${A}/${fakeId}`, { notes: 'x' });
+  check('PATCH on an unseen NPC answers 404, the same as a made-up id',
+    patchNpc.status === 404 && patchFake.status === 404, `${patchNpc.status}/${patchFake.status}`);
+  const delNpc = await player.req('DELETE', `${A}/${gob.id}`);
+  check('DELETE on an unseen NPC answers 404 (and deletes nothing)',
+    delNpc.status === 404 && !!(await knex('actors').where({ id: gob.id }).first()), `${delNpc.status}`);
+
   const plBrom = plList.data.actors.find((a) => a.id === brom.id);
   check('a player character is readable in full by another player', plBrom && plBrom.hp_max === 20, JSON.stringify(plBrom));
 
