@@ -36,6 +36,11 @@
   // ── Boot (spec §3) ─────────────────────────────────────────────────────────
   // URL campaign → /me → campaign (gate or proceed) → scene.boot → combat.boot →
   // defer actors.boot to first Chars/Library open → align on demand.
+  // [ADDED 2026-10-01] Back/forward cache: a page restored from it was rendered
+  // for whoever was signed in at the time, and no script re-checks the session.
+  // After a log-out, Back must not show it. Reload so the session check runs.
+  window.addEventListener('pageshow', function (e) { if (e.persisted) window.location.reload(); });
+
   function boot() {
     campaignId = readCampaignParam();
     if (!campaignId) { C.navigate('/dashboard.html'); return; }
@@ -43,6 +48,7 @@
     api('GET', '/api/auth/me').then(function (r) {
       if (r.status !== 200 || !r.data || !r.data.user) { C.navigate('/'); return; }
       me = r.data.user;
+      document.documentElement.classList.remove('auth-pending');
       return api('GET', '/api/campaigns/' + campaignId).then(function (cr) {
         if (cr.status === 404 || cr.status === 403) { openGate(cr); return; }
         if (cr.status !== 200 || !cr.data || !cr.data.campaign) { openGate(cr); return; }

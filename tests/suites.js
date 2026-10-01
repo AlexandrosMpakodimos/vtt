@@ -16,7 +16,7 @@ const UNIT = [
   'test-shortcuts.js', 'test-bulk-place.js', 'test-actor-picker-refresh.js', 'test-marquee.js',
   'test-fog-ui.js', 'test-fog-validators.js', 'test-sheet-ui.js',
   'test-dice.js', 'test-dice3d.js',
-  'test-combat-ui.js', 'test-encounter-scene.js', 'test-align-ui.js', 'test-landing-ui.js', 'test-dashboard-ui.js', 'test-actors-ui.js', 'test-game-ui.js',
+  'test-combat-ui.js', 'test-encounter-scene.js', 'test-member-refresh.js', 'test-align-ui.js', 'test-landing-ui.js', 'test-dashboard-ui.js', 'test-actors-ui.js', 'test-game-ui.js',
   'test-storage.js', 'test-asset-delete.js', 'test-campaign-create-retry.js', 'test-imagepicker.js', 'test-events.js', 'test-closednotice.js', 'test-frametool.js',
 ];
 
@@ -34,7 +34,7 @@ const DB = [
   'test-active-scene.js', 'test-scene-delete.js', 'test-actors.js',
   'test-items-inventory.js', 'test-combat.js', 'test-speaker-color.js',
   'test-scene-grid.js', 'test-spells.js', 'test-assets.js', 'test-landing-server.js',
-  'test-campaign-open.js', 'test-lobby.js',
+  'test-campaign-open.js', 'test-lobby.js', 'test-live-membership.js',
   // Storage budget ledger + durable cleanup. DB-backed (real Postgres) but NOT
   // server-backed: they exercise the serialisable accounting directly, which is
   // where the money-safety property lives. Use the isolated wrapper for these

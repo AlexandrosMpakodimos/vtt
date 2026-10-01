@@ -10,6 +10,8 @@ const CID = '10000000-0000-4000-8000-000000000001';
 const OWNER = '20000000-0000-4000-8000-000000000001';
 const PLAYER = '20000000-0000-4000-8000-000000000002';
 let passed = 0;
+const CARD = ['broadcastLobby', CID, 'campaign:updated', { campaign_id: CID }];
+const membership = (userId) => [['broadcastRoom', CID, 'member:updated', { campaign_id: CID, user_id: userId }], CARD];
 function check(label, condition) { assert(condition, label); passed++; }
 function latch() { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; }
 async function bounded(promise) {
@@ -90,7 +92,7 @@ function fixture(action, { pause = false, failCommit = false, campaign = {}, bod
     set(k, v) { this.headers[k] = v; return this; },
     json(value) { this.body = value; effects.push(['response']); return this; },
   };
-  const sockets = Object.fromEntries(['evictUser', 'evictCampaign', 'evictGamePlayers', 'broadcastLobby']
+  const sockets = Object.fromEntries(['evictUser', 'evictCampaign', 'evictGamePlayers', 'broadcastLobby', 'broadcastRoom']
     .map(name => [name, (...args) => { effects.push([name, ...args]); }]));
   const req = { params: { id: CID, userId: PLAYER }, campaign: { id: CID, owner_id: OWNER },
     user: { id: ['join', 'leave'].includes(action) ? PLAYER : OWNER },
@@ -126,11 +128,15 @@ async function commitContract(action, failCommit) {
   } else {
     check(action + ': succeeds after commit', !f.error() && f.res.statusCode === (action === 'create' ? 201 : 200));
     const expected = {
-      create: [['response']], join: [['response']], restore: [['response']], unban: [['response']],
-      leave: [['evictUser', CID, PLAYER, 'left'], ['response']],
-      kick: [['evictUser', CID, PLAYER], ['response']], ban: [['evictUser', CID, PLAYER], ['response']],
+      // Membership notifications are sent after the response (fire-and-forget):
+      // the game page re-reads members, the dashboard re-reads its cards.
+      create: [['response']], join: [['response'], ...membership(PLAYER)], restore: [['response']],
+      unban: [['response'], CARD],
+      leave: [['evictUser', CID, PLAYER, 'left'], ['response'], ...membership(PLAYER)],
+      kick: [['evictUser', CID, PLAYER], ['response'], ...membership(PLAYER)],
+      ban: [['evictUser', CID, PLAYER], ['response'], ...membership(PLAYER)],
       patch: [['evictGamePlayers', CID, OWNER], ['broadcastLobby', CID, 'campaign:state', { campaign_id: CID, is_open: false }], ['response']],
-      transfer: [['evictGamePlayers', CID, PLAYER], ['response']],
+      transfer: [['evictGamePlayers', CID, PLAYER], ['response'], ...membership(OWNER)],
     };
     check(action + ': exact effect order and arguments', JSON.stringify(f.effects) === JSON.stringify(expected[action]));
     const locks = f.trace.filter(item => item.endsWith(':lock'));
@@ -170,7 +176,13 @@ async function commitContract(action, failCommit) {
   check('PATCH rejects non-boolean forms without close effects', f.res.statusCode === 400 && f.effects.length === 1 && f.state().campaigns[0].is_open === true);
   f = fixture('patch', { body: { name: 'Renamed' } });
   await f.run();
-  check('rename sends no lobby state', f.res.statusCode === 200 && f.effects.length === 1);
+  check('rename sends no open/closed state, only a card refresh', f.res.statusCode === 200
+    && JSON.stringify(f.effects) === JSON.stringify([['response'], CARD]));
+  f = fixture('join');
+  f.req.app = { get() { return { broadcastRoom() { throw new Error('bus down'); }, broadcastLobby: async () => { throw new Error('bus down'); } }; } };
+  await f.run();
+  await new Promise((r) => setImmediate(r));
+  check('a failed notification never turns a committed join into an error', !f.error() && f.res.statusCode === 200 && f.state().campaign_members[1].status === 'active');
   f = fixture('patch', { body: { is_open: true } });
   await f.run();
   check('reopen notifies lobby without restoring subscriptions', JSON.stringify(f.effects) === JSON.stringify([

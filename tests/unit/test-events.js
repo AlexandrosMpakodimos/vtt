@@ -47,6 +47,7 @@ const serverFiles = [
   ...fs.readdirSync(rootPath('src/routes')).filter((f) => f.endsWith('.js')).map((f) => path.join('src/routes', f)),
   'src/socket.js',
   'src/socket/roomLifecycle.js',
+  'src/socket/notify.js',
 ];
 const emitted = new Set();
 for (const f of serverFiles) {

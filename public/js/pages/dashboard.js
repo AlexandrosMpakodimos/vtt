@@ -92,6 +92,11 @@
   var onlineByCampaign = {};     // campaign_id -> online count (from the lobby)
 
   // ── Boot ─────────────────────────────────────────────────────────────────
+  // [ADDED 2026-10-01] Back/forward cache: a page restored from it was rendered
+  // for whoever was signed in at the time, and no script re-checks the session.
+  // After a log-out, Back must not show it. Reload so the session check runs.
+  window.addEventListener('pageshow', function (e) { if (e.persisted) window.location.reload(); });
+
   var booted = false;
   function boot() {
     // Idempotent: depending on how the page is loaded, both the readyState
@@ -102,6 +107,7 @@
     api('GET', '/api/auth/me').then(function (r) {
       if (r.status !== 200 || !r.data || !r.data.user) { C.navigate('/'); return; }
       me = r.data.user;
+      document.documentElement.classList.remove('auth-pending');
       renderHeader();
       readUrlParams();
       C.initTheme();
@@ -1899,6 +1905,19 @@
 
     // Kicked/banned/campaign gone: the card should disappear. Refetch the list.
     socket.on('campaign:evicted', function () { loadList(); });
+
+    // [ADDED 2026-10-01] A card changed elsewhere: renamed, new cover, someone
+    // joined, left or changed their name. Refetch, coalescing bursts; while a
+    // card is open, wait until it closes, as a save does.
+    var updatedTimer = null;
+    socket.on('campaign:updated', function (p) {
+      if (!p || p.campaign_id == null) return;
+      if (updatedTimer) window.clearTimeout(updatedTimer);
+      updatedTimer = window.setTimeout(function () {
+        updatedTimer = null;
+        if (openController) scheduleListReload(); else loadList();
+      }, 300);
+    });
   }
 
   function lobbySubscribe() {

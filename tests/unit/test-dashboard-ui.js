@@ -180,6 +180,10 @@ function evalApp(window, beforeBoot) {
     (htmlSrc.match(/js\/shared\/theme\.js/g) || []).length === 1);
   t('the socket.io client is loaded before dashboard.js',
     htmlSrc.indexOf('/socket.io/socket.io.js') < htmlSrc.indexOf('/js/pages/dashboard.js'));
+  t('a page restored from the back/forward cache reloads (re-checks the session)',
+    /addEventListener\('pageshow'.{0,80}persisted.{0,40}location\.reload\(\)/.test(dashSrc.replace(/\s+/g, ' ')));
+  t('the hidden-until-signed-in rule exists and reveals itself if no script runs',
+    /html\.auth-pending body \{ visibility: hidden; animation: vtt-auth-reveal/.test(fs.readFileSync(rootPath('public/css/tokens.css'), 'utf8')));
   t('dashboard.js never emits campaign:join (a viewer is not at the table)',
     !/emit\(\s*'campaign:join'/.test(dashSrc));
 
@@ -256,8 +260,13 @@ function evalApp(window, beforeBoot) {
     const { window, window: { document } } = dom;
     installFakeIo(window);
     const calls = stubApi(window, { campaigns: [OWNED, CLOSED_AS_PLAYER] });
+    // [2026-10-01] The page starts hidden (no layout flash for a signed-out
+    // visitor) and is shown only once the session is confirmed.
+    t('the page starts hidden until the session is checked',
+      document.documentElement.classList.contains('auth-pending'));
     evalApp(window);
     await wait(30);
+    t('a confirmed session shows the page', !document.documentElement.classList.contains('auth-pending'));
     t('boot fetched /api/auth/me', calls.some((c) => /\/api\/auth\/me$/.test(c.path)));
     t('header shows the username', document.getElementById('profileName').textContent === 'selene');
     t('boot fetched /mine', calls.some((c) => /\/api\/campaigns\/mine/.test(c.path)));
@@ -469,6 +478,20 @@ function evalApp(window, beforeBoot) {
     io.sock.fire('campaign:evicted', { campaign_id: 'c-owned' });
     await wait(10);
     t('campaign:evicted refetches the list', mineHits >= 1, String(mineHits));
+
+    // [2026-10-01] campaign:updated (renamed, member joined/left/renamed):
+    // a burst of three refetches the list ONCE, after a short pause.
+    mineHits = 0;
+    io.sock.fire('campaign:updated', { campaign_id: 'c-owned' });
+    io.sock.fire('campaign:updated', { campaign_id: 'c-owned' });
+    io.sock.fire('campaign:updated', { campaign_id: 'c-owned' });
+    await wait(50);
+    t('campaign:updated waits briefly before refetching', mineHits === 0, String(mineHits));
+    await wait(400);
+    t('a burst of campaign:updated refetches the list exactly once', mineHits === 1, String(mineHits));
+    io.sock.fire('campaign:updated', null);
+    await wait(400);
+    t('a malformed campaign:updated is ignored', mineHits === 1, String(mineHits));
   }
 
   // ── profile logout posts /logout then navigates to / ───────────────────────

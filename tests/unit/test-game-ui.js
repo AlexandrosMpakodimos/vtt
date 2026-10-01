@@ -246,6 +246,8 @@ const SHELL = [
     t('GM: gate is not shown', !gm.document.getElementById('gameGate').classList.contains('show'));
     t('GM: campName populated', gm.document.getElementById('campName').textContent === 'Test Table');
     t('GM: whoami populated', /selene/.test(gm.document.getElementById('whoami').textContent));
+    t('GM: a confirmed session shows the page (auth-pending removed)',
+      !gm.document.documentElement.classList.contains('auth-pending'));
 
     // Boot order: scene boots before combat, both exactly once at load.
     t('GM: scene.boot called once at boot', gm.bootSpies.scene === 1, 'scene=' + gm.bootSpies.scene);
@@ -496,6 +498,9 @@ const SHELL = [
       .replace(/\/\*[\s\S]*?\*\//g, '')   // block comments
       .replace(/(^|[^:])\/\/.*$/gm, '$1'); // line comments (keep the char before //, avoids eating '://' in urls)
 
+    t('game.html starts hidden until the session is checked', /<html lang="en" class="auth-pending">/.test(gameHtml));
+    t('a game page restored from the back/forward cache reloads',
+      /addEventListener\('pageshow'.{0,80}persisted.{0,40}location\.reload\(\)/.test(gameJs.replace(/\s+/g, ' ')));
     t('game.js contains no innerHTML', !/\.innerHTML/.test(gameJs));
     t('game.js contains no insertAdjacentHTML', !/insertAdjacentHTML/.test(gameJs));
     t('game.js contains no document.write', !/document\.write/.test(gameJs));

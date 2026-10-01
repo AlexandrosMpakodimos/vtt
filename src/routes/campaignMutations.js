@@ -1,5 +1,6 @@
 const { publicCampaign } = require('../services/campaigns/presentation');
 const { SOFT_DELETE_DAYS } = require('../services/campaigns/constants');
+const { campaignUpdated, membershipChanged } = require('../socket/notify');
 
 // These are the handlers mounted by campaigns.js, not a separate test adapter.
 // Operations finish their writes/commits before any response or socket effect.
@@ -24,6 +25,7 @@ function createCampaignMutationHandlers({ operations, gateway }) {
     try {
       const result = await operations.join({ campaignId: req.params.id, userId: req.user.id, body: req.body });
       if (result.status) return sendFailure(res, result);
+      membershipChanged(req, result.row ? result.row.id : req.params.id, req.user.id);
       return gateway.sendJson(req, res, { campaign: publicCampaign(result.row, req.user.id), status: 'active' });
     } catch (err) { return next(err); }
   }
@@ -33,6 +35,7 @@ function createCampaignMutationHandlers({ operations, gateway }) {
       const result = await operations.leave({ campaignId: req.campaign.id, userId: req.user.id });
       if (result.status) return sendFailure(res, result);
       req.app.get('campaignSockets')?.evictUser(req.campaign.id, req.user.id, 'left');
+      membershipChanged(req, req.campaign.id, req.user.id);
       return res.json({ ok: true, status: 'left' });
     } catch (err) { return next(err); }
   }
@@ -52,6 +55,10 @@ function createCampaignMutationHandlers({ operations, gateway }) {
           req.campaign.id, 'campaign:state',
           { campaign_id: req.campaign.id, is_open: updates.is_open },
         );
+      }
+      // Name, description, cover or visibility: other dashboards redraw the card.
+      if (Object.keys(updates).some((k) => !['is_open', 'updated_at'].includes(k))) {
+        campaignUpdated(req, req.campaign.id);
       }
       return gateway.sendJson(req, res, { campaign: publicCampaign(row, req.user.id) });
     } catch (err) { return next(err); }
@@ -81,6 +88,8 @@ function createCampaignMutationHandlers({ operations, gateway }) {
         req.app.get('campaignSockets')?.evictGamePlayers(result.row.id, result.row.owner_id);
       }
       if (result.error) return sendFailure(res, result);
+      // The GM changed: every member's "(GM)" label and every card's role.
+      membershipChanged(req, req.campaign.id, req.user.id);
       return gateway.sendJson(req, res, { campaign: publicCampaign(result.row, req.user.id) });
     } catch (err) { return next(err); }
   }
@@ -92,6 +101,7 @@ function createCampaignMutationHandlers({ operations, gateway }) {
         const result = await operations.moderate({ campaignId: req.campaign.id, userId: req.user.id, targetId, nextStatus });
         if (result.status) return sendFailure(res, result);
         req.app.get('campaignSockets')?.evictUser(req.campaign.id, targetId);
+        membershipChanged(req, req.campaign.id, targetId);
         return res.json({ ok: true, user_id: targetId, status: nextStatus });
       } catch (err) { return next(err); }
     };
@@ -102,6 +112,7 @@ function createCampaignMutationHandlers({ operations, gateway }) {
       const targetId = req.params.userId;
       const result = await operations.unban({ campaignId: req.campaign.id, userId: req.user.id, targetId });
       if (result.status) return sendFailure(res, result);
+      campaignUpdated(req, req.campaign.id);
       return res.json({ ok: true, user_id: targetId, status: 'left' });
     } catch (err) { return next(err); }
   }

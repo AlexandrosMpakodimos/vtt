@@ -89,3 +89,10 @@ html[data-theme="light"] {
 }
 ::-webkit-scrollbar-thumb:hover { background: var(--accent-strong); }
 ::-webkit-scrollbar-corner { background: transparent; }
+
+/* [ADDED 2026-10-01] Hidden until the session is confirmed, so a signed-out
+   visitor is sent to log in without first seeing the empty page layout flash.
+   The page script removes .auth-pending once /api/auth/me answers. If the script
+   never runs, the page reveals itself after 4 s instead of staying blank. */
+html.auth-pending body { visibility: hidden; animation: vtt-auth-reveal 0s linear 4s forwards; }
+@keyframes vtt-auth-reveal { to { visibility: visible; } }
