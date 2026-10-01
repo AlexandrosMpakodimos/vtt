@@ -14,11 +14,18 @@ const sessions=new Set([owner,player,outside]);
 const row={id:campaign,owner_id:owner,is_open:true,active_scene_id:scene};
 const network=broker(),nodes=[],clients=[];
 let paused,releaseRead,passed=0,failed=0;
+let transactions=0;
 function chain(table){
-  const filters={};const q={
+  const filters={};let ins=null;const q={
     where(key,value){if(typeof key==='object')Object.assign(filters,key);else filters[key]=value;return q;},
+    whereIn(key,values){ins={key,values};return q;},orderBy(){return q;},skipLocked(){return q;},
     whereNull(){return q;},andWhere(){return q;},join(){return q;},forShare(){return q;},
-    select:async()=>[{id:campaign}],
+    select:async()=>{
+      if(table==='campaigns'&&paused){const p=paused;paused=null;await p;}
+      if(table==='session'&&ins)return ins.values.filter(sid=>sessions.has(sid)).map(sid=>({sid,sess:{passport:{user:sid}},expire:new Date(Date.now()+60000)}));
+      if(table==='campaign_members'&&ins)return ins.values.map(id=>({user_id:id,status:members.get(id)}));
+      return [{id:campaign}];
+    },
     first:async()=>{
       if(table==='campaigns'){
         if(paused){const p=paused;paused=null;await p;}
@@ -30,7 +37,7 @@ function chain(table){
   };return q;
 }
 const db=table=>chain(table);db.fn={now:()=>new Date()};
-db.raw=async()=>({rows:[{now:new Date()}]});db.transaction=fn=>fn(db);
+db.raw=async()=>({rows:[{now:new Date()}]});db.transaction=fn=>{transactions++;return fn(db);};
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 async function until(fn){const end=Date.now()+4000;while(!fn()){if(Date.now()>end)throw Error('routing condition timeout');await sleep(5);}}
 async function test(name,fn){await fn();passed++;console.log('ok '+name);}
@@ -120,6 +127,11 @@ const seen=(s,tag)=>s.events.some(e=>e.payload?.tag===tag);
     }
   });
   await test('idle session revoked remotely is disconnected',async()=>{sessions.delete(outside);await a.c.disconnectSessions([outside]);await until(()=>!out.connected);});
+  await test('one broadcast costs one authorization transaction per server, not one per socket',async()=>{
+    // gm and tab sit on node a, pl on node b: two servers, three recipients.
+    const before=transactions;const tag=await send('room');await until(()=>seen(gm,tag)&&seen(pl,tag)&&seen(tab,tag));
+    assert.equal(transactions-before,2,`transactions=${transactions-before}`);
+  });
   await test('outbound authorization rejects ban even without control delivery',async()=>{members.set(player,'banned');const tag=await send('room');await until(()=>pl.events.some(e=>e.event==='campaign:evicted'));assert(!seen(pl,tag));assert(!seen(tab,tag));});
   await test('pending join invalidated by remote control',async()=>{
     members.set(player,'active');paused=new Promise(resolve=>{releaseRead=resolve;});

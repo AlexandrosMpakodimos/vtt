@@ -7,7 +7,7 @@ const { validate, diagnostic } = require('../../src/config/startup');
 let passed = 0;
 async function test(name, fn) { await fn(); passed++; console.log(`ok ${name}`); }
 const turn = () => new Promise(resolve => setImmediate(resolve));
-const { broker, database, socket, user, campaignId } = require('./fixtures/coordination-boundaries');
+const { broker, database, socket, socketFor, user, campaignId } = require('./fixtures/coordination-boundaries');
 (async()=>{
   await test('local mode and exact Redis URL validation',()=>{
     assert.equal(configuration({}),null);
@@ -35,6 +35,47 @@ const { broker, database, socket, user, campaignId } = require('./fixtures/coord
   await test('invalid id refuses before SQL',async()=>{
     let touched=false;const a=createAuthorization({transaction(){touched=true;}});
     assert.equal(await a.access(socket(),'invalid',false,()=>{}),false);assert.equal(touched,false);
+  });
+  // [2026-10-01] Batch authorization: one transaction per message, whatever the
+  // number of recipients (production capacity test: per-recipient checks cost
+  // ~55 ms each in series). Same checks, same row locks during the enqueue.
+  const u=n=>`3333333${n}-3333-4333-8333-333333333333`;
+  await test('batch: N recipients cost ONE transaction, delivered under the locks',async()=>{
+    const d=database({owner:false});const sockets=[1,2,3,4,5].map(n=>socketFor(u(n)));let delivered=null;
+    const r=await createAuthorization(d.db).accessMany(sockets,campaignId,false,(c,list)=>{assert(d.locked);delivered=list;});
+    assert.equal(d.transactions,1);assert.equal(r.allowed.length,5);assert.equal(delivered.length,5);
+    assert.deepEqual(d.queries,['campaigns','session','campaign_members']);assert.equal(d.locked,false);
+  });
+  await test('batch: each recipient is judged on its own (revoked, banned, wrong user, owner on a closed game)',async()=>{
+    const ownerSocket={connected:true,data:{userId:user,authSessionId:'sid-'+user}};
+    const d=database({owner:true,open:false,users:{[u(1)]:{session:false},[u(2)]:{member:'banned'},[u(3)]:{sessionUser:u(9)}}});
+    const sockets=[socketFor(u(1)),socketFor(u(2)),socketFor(u(3)),socketFor(u(4)),ownerSocket];
+    const r=await createAuthorization(d.db).accessMany(sockets,campaignId,false,()=>{});
+    // u(2) banned, u(3) session of another user, u(4) a player on a closed game: refused here.
+    // u(1)'s session row is gone (revoked); a missing row is indistinguishable from a
+    // skipped one, so it goes back for the single check, which then refuses it.
+    assert.deepEqual(r.allowed,[ownerSocket]);assert.deepEqual(r.denied,[sockets[1],sockets[2],sockets[3]]);assert.deepEqual(r.fallback,[sockets[0]]);
+    assert.equal(await createAuthorization(d.db).access(sockets[0],campaignId,false,()=>{}),false);
+  });
+  await test('batch: a closed game still reaches lobby (dashboard) recipients',async()=>{
+    const d=database({open:false});const r=await createAuthorization(d.db).accessMany([socketFor(u(1)),socketFor(u(2))],campaignId,true,()=>{});
+    assert.equal(r.allowed.length,2);
+  });
+  await test('batch: a deleted campaign refuses everyone and delivers nothing',async()=>{
+    const d=database({deleted:true});let called=false;
+    const r=await createAuthorization(d.db).accessMany([socketFor(u(1))],campaignId,false,()=>{called=true;});
+    assert.equal(called,false);assert.equal(r.allowed.length,0);assert.equal(r.denied.length,1);
+  });
+  await test('batch: a session row held by another transaction is skipped, not waited on, and handed back for access()',async()=>{
+    const d=database({users:{[u(2)]:{session:'locked'}}});const sockets=[socketFor(u(1)),socketFor(u(2))];
+    const r=await createAuthorization(d.db).accessMany(sockets,campaignId,false,()=>{});
+    assert.deepEqual(r.allowed,[sockets[0]]);assert.deepEqual(r.fallback,[sockets[1]]);assert.equal(r.denied.length,0);
+  });
+  await test('batch: invalid ids and disconnected sockets refuse before SQL',async()=>{
+    let touched=false;const a=createAuthorization({transaction(){touched=true;}});
+    let r=await a.accessMany([socketFor(u(1))],'invalid',false,()=>{});assert.equal(r.denied.length,1);
+    r=await a.accessMany([{connected:false,data:{userId:u(1),authSessionId:'x'}},{connected:true,data:{userId:'bad',authSessionId:'x'}}],campaignId,false,()=>{});
+    assert.equal(r.denied.length,2);assert.equal(touched,false);
   });
   await test('two buses receive exactly once through subscriptions',async()=>{
     const network=broker(),events=[[],[]],failures=[];

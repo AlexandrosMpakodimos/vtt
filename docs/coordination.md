@@ -40,7 +40,12 @@ The dedicated Pub/Sub channel transports room, scene, owner, player and explicit
 recipient events. It is not a durable event log and does not implement an official
 Socket.IO adapter. Delivery selects local sockets on every receiving server.
 Each recipient's current session, campaign and membership are checked against
-PostgreSQL. Shared row locks cover the final synchronous socket enqueue; the
+PostgreSQL, in one transaction per message for all of that server's recipients
+(`accessMany`; before 2026-10-01 it was one transaction per recipient, which the
+production capacity test measured at ~55 ms per socket in series). Session rows
+are read with `SKIP LOCKED` in sid order, so the batch never waits on a session
+row; a busy or missing row sends that one socket to the single-recipient check,
+which waits as before. Shared row locks cover the final synchronous socket enqueue; the
 existing campaign mutations lock the campaign row exclusively and session
 revocation deletes the session row. Thus an ordinary concurrent revocation and
 authorization check are ordered at the database, rather than trusting arrival

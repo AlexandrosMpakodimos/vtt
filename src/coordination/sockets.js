@@ -78,26 +78,37 @@ function createCoordinatedSockets({ io, knex, bus, workLifecycle, rewritePayload
     if (!['lobby', 'room', 'owner', 'players', 'users', 'scene', 'scenePlayers'].includes(message.mode)) throw new Error('COORDINATION_PROTOCOL');
     if (message.type === 'event-batch' && (!Array.isArray(message.payloads) || message.payloads.length > 500)) throw new Error('COORDINATION_PROTOCOL');
     const room = message.mode === 'lobby' ? lobby(message.campaignId) : game(message.campaignId);
-    for (const socket of onlySocket ? [onlySocket] : [...io.sockets.sockets.values()]) {
+    const recipients = (onlySocket ? [onlySocket] : [...io.sockets.sockets.values()])
+      .filter(socket => valid() && socket.connected && socket.rooms.has(room));
+    if (!recipients.length) return;
+    const versions = new Map(recipients.map(socket => [socket, generation(socket)]));
+    // Runs synchronously inside the authorization transaction, per allowed socket.
+    function send(campaign, socket) {
+      if (!valid() || !socket.connected || generation(socket) !== versions.get(socket) || !socket.rooms.has(room)) return;
+      const owner = campaign.owner_id === socket.data.userId;
+      if (message.mode === 'owner' && !owner) return;
+      if (message.mode === 'players' && owner) return;
+      if (message.mode === 'users' && !message.userIds.includes(socket.data.userId)) return;
+      if (message.mode === 'scene' && !owner && campaign.active_scene_id !== message.sceneId) return;
+      if (message.mode === 'scenePlayers' && (owner || campaign.active_scene_id !== message.sceneId)) return;
+      // Keep authorization locks through the synchronous batch enqueue.
+      if (message.type === 'event-batch') {
+        for (const payload of message.payloads) socket.emit(message.event, payload);
+      } else socket.emit(message.event, message.payload);
+    }
+    function refuse(socket) {
+      invalidate(socket); socket.leave(room);
+      socket.emit('campaign:evicted', { campaign_id: message.campaignId, reason: 'access changed' });
+    }
+    // One transaction for every recipient (see authorization.accessMany);
+    // sockets whose session row was busy are checked one at a time, as before.
+    const { denied, fallback } = await authorize.accessMany(recipients, message.campaignId, message.mode === 'lobby',
+      (campaign, sockets) => { for (const socket of sockets) send(campaign, socket); });
+    for (const socket of denied) refuse(socket);
+    for (const socket of fallback) {
       if (!valid() || !socket.connected || !socket.rooms.has(room)) continue;
-      const version = generation(socket);
-      const allowed = await authorize.access(socket, message.campaignId, message.mode === 'lobby', campaign => {
-        if (!valid() || !socket.connected || generation(socket) !== version || !socket.rooms.has(room)) return;
-        const owner = campaign.owner_id === socket.data.userId;
-        if (message.mode === 'owner' && !owner) return;
-        if (message.mode === 'players' && owner) return;
-        if (message.mode === 'users' && !message.userIds.includes(socket.data.userId)) return;
-        if (message.mode === 'scene' && !owner && campaign.active_scene_id !== message.sceneId) return;
-        if (message.mode === 'scenePlayers' && (owner || campaign.active_scene_id !== message.sceneId)) return;
-        // Keep authorization locks through the synchronous batch enqueue.
-        if (message.type === 'event-batch') {
-          for (const payload of message.payloads) socket.emit(message.event, payload);
-        } else socket.emit(message.event, message.payload);
-      });
-      if (!allowed) {
-        invalidate(socket); socket.leave(room);
-        socket.emit('campaign:evicted', { campaign_id: message.campaignId, reason: 'access changed' });
-      }
+      const allowed = await authorize.access(socket, message.campaignId, message.mode === 'lobby', campaign => send(campaign, socket));
+      if (!allowed) refuse(socket);
     }
   }
   async function presence(forceCampaignId) {
