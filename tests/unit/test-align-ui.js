@@ -2,7 +2,7 @@ const { rootPath } = require('../helpers/paths');
 // Alignment tool smoke suite. jsdom only — no server, no database:
 //   node tests/unit/test-align-ui.js
 //
-// Same narrow scope and same reason as test-combat-ui.js: public/js/game/align.js is
+// Same narrow scope and same reason as test-combat-ui.js: client/js/game/align.js is
 // a client file with no runtime coverage from any other suite, and the defect
 // that motivated that file — a function deleted by an edit, called twice,
 // killing the whole page on load — is invisible to `node --check` and to every
@@ -66,7 +66,7 @@ window.prompt = () => '5';
 
 let loadError = null;
 try {
-  window.eval(fs.readFileSync(rootPath('public/js/game/align.js'), 'utf8'));
+  window.eval(fs.readFileSync(rootPath('client/js/game/align.js'), 'utf8'));
 } catch (err) {
   loadError = err;
 }

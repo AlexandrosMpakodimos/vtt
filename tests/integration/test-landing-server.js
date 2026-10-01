@@ -1,5 +1,6 @@
 // Functional suite for the landing page's server change: the GET
-// /api/auth/reset-password redirect swap (commit 3). Run against a real
+// /api/auth/reset-password redirect swap (commit 3), plus the page caching and
+// security headers on browser files (2026-10-01). Run against a real
 // PostgreSQL with the server up.
 //   Usage: SKIP_HIBP=1 node tests/integration/test-landing-server.js   (server must be running)
 //
@@ -142,6 +143,19 @@ async function userIdByEmail(email) {
   }
   const css = await fetch(BASE + '/css/tokens.css');
   check('stylesheets keep the default caching', css.headers.get('cache-control') !== 'no-cache', css.headers.get('cache-control') || '(none)');
+
+  // [2026-10-01] Every browser file is served through the app, so it carries the
+  // security headers. In production, LiteSpeed/Passenger served files from
+  // <app root>/public itself, and those responses had none of them; the browser
+  // files therefore live in client/, and no public/ may exist at the app root.
+  for (const file of ['/dashboard.html', '/game.html', '/index.html', '/js/shared/authgate.js', '/css/tokens.css']) {
+    const res = await fetch(BASE + file);
+    const csp = res.headers.get('content-security-policy') || '';
+    check(`${file}: 200 with a CSP that limits scripts to 'self'`, res.status === 200 && csp.includes("script-src 'self'"), `${res.status} ${csp || '(no CSP)'}`);
+    check(`${file}: frame protection and nosniff`, res.headers.get('x-frame-options') === 'SAMEORIGIN' && res.headers.get('x-content-type-options') === 'nosniff');
+  }
+  check('no public/ directory at the app root (the host would serve it around the app)',
+    !require('fs').existsSync(require('path').join(__dirname, '..', '..', 'public')));
 
   // Cleanup: remove this user's reset tokens and the user row.
   await knex('password_reset_tokens').where({ user_id: userId }).del();

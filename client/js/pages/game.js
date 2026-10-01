@@ -1,4 +1,4 @@
-// public/js/pages/game.js — the game table shell (page 3 of 3).
+// client/js/pages/game.js — the game table shell (page 3 of 3).
 //
 // The four gameplay modules (scene.js / combat.js / actors.js / align.js) are
 // SEAMED, not rewritten: each exposes boot() (+ scene's pingAt) and its render

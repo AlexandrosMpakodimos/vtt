@@ -229,15 +229,22 @@ app.use(lifecycle.middleware(passport.session()));
 
 // Media routes must be mounted on the real app. Put them after session/passport
 // (the token endpoint requires auth) but before static files so /media/:id can
-// never be shadowed by a public/media path. The media-byte endpoint itself
+// never be shadowed by a client/media path. The media-byte endpoint itself
 // enforces MEDIA_HOST and does not rely on the session.
 app.use(mediaRoutes);
 
+// The browser files live in client/, deliberately NOT public/: on the
+// LiteSpeed/CloudLinux host, the Passenger integration serves any file found in
+// <app root>/public itself, without passing the request to this app, so those
+// responses carried none of the helmet headers above (no CSP, no frame
+// protection, no nosniff, no HSTS). Production QA, 2026-10-01: /game.html came
+// back with no security headers while / and /healthz had them all.
+//
 // HTML pages must be revalidated on every visit (ETag, so usually a 304): a
 // browser may otherwise reuse a cached copy of an older page after a release —
 // heuristic caching applies when no Cache-Control is sent. Other static files
 // keep express's default.
-app.use(express.static(path.join(__dirname, '..', 'public'), {
+app.use(express.static(path.join(__dirname, '..', 'client'), {
   setHeaders(res, filePath) {
     if (filePath.endsWith('.html')) res.setHeader('Cache-Control', 'no-cache');
   },

@@ -1,5 +1,5 @@
 const { rootPath } = require('../helpers/paths');
-// The early session check on the signed-in pages (public/js/shared/authgate.js).
+// The early session check on the signed-in pages (client/js/shared/authgate.js).
 //
 // Found in the production QA pass: a signed-out visitor opening a dashboard or
 // game URL saw the empty page layout for a moment before being sent to the
@@ -18,7 +18,7 @@ function check(name, cond, detail = '') {
   if (cond) { pass += 1; console.log('  PASS  ' + name); } else { fail += 1; console.log('  FAIL  ' + name + '  ' + detail); }
 }
 
-const SRC = fs.readFileSync(rootPath('public/js/shared/authgate.js'), 'utf8');
+const SRC = fs.readFileSync(rootPath('client/js/shared/authgate.js'), 'utf8');
 const tick = () => new Promise((r) => setTimeout(r, 20));
 
 // Runs authgate.js on a hidden page whose fetch answers with `answer`
@@ -71,7 +71,7 @@ async function run(answer) {
 
   // --- both signed-in pages load it early ---------------------------------------
   for (const page of ['dashboard.html', 'game.html']) {
-    const html = fs.readFileSync(rootPath('public/' + page), 'utf8');
+    const html = fs.readFileSync(rootPath('client/' + page), 'utf8');
     const head = html.slice(0, html.indexOf('</head>'));
     const tag = head.match(/<script[^>]*src="\/js\/shared\/authgate\.js"[^>]*><\/script>/);
     check(`${page}: starts hidden (html.auth-pending)`, /<html[^>]*class="[^"]*auth-pending/.test(html));

@@ -78,7 +78,7 @@ function javascriptFiles(directory) {
         : entry.isFile() && entry.name.endsWith('.js') ? [filename] : [];
     });
 }
-const clientFiles = javascriptFiles('public/js');
+const clientFiles = javascriptFiles('client/js');
 const handled = new Set();
 for (const f of clientFiles) {
   const code = strip(read(f));
@@ -140,7 +140,7 @@ t('actor:updated is handled — token pictures are inherited, not copied',
   handled.has('actor:updated'));
 
 console.log('\n--- the canvas handles what changes the board ---');
-const sceneJs = strip(read('public/js/game/scene.js'));
+const sceneJs = strip(read('client/js/game/scene.js'));
 for (const ev of ['token:created', 'token:updated', 'token:moved', 'token:deleted',
   'fog:created', 'fog:updated', 'fog:deleted',
   'scene:activated', 'scene:updated', 'actor:updated']) {

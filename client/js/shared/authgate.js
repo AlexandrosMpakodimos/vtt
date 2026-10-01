@@ -1,4 +1,4 @@
-// public/js/shared/authgate.js — the early session check for signed-in pages.
+// client/js/shared/authgate.js — the early session check for signed-in pages.
 //
 // Loaded from <head> with a plain <script src>, NO defer, on the dashboard and
 // game pages, which start hidden (html.auth-pending, see tokens.css). It asks

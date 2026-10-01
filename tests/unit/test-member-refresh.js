@@ -72,9 +72,9 @@ window.VTTDice = {
   stableColorFor: () => '#aabbcc', contrastFor: () => '#000000', shade: () => '#112233', colorsetFor: () => ({}),
 };
 
-window.eval(fs.readFileSync(rootPath('public/js/ui/imageframe.js'), 'utf8'));
-window.eval(fs.readFileSync(rootPath('public/js/shared/common.js'), 'utf8') + '\n'
-  + fs.readFileSync(rootPath('public/js/game/combat.js'), 'utf8'));
+window.eval(fs.readFileSync(rootPath('client/js/ui/imageframe.js'), 'utf8'));
+window.eval(fs.readFileSync(rootPath('client/js/shared/common.js'), 'utf8') + '\n'
+  + fs.readFileSync(rootPath('client/js/game/combat.js'), 'utf8'));
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const memberReads = () => calls.filter((c) => c.method === 'GET' && c.path === '/api/campaigns/C1').length;

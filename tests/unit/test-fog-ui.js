@@ -2,7 +2,7 @@ const { rootPath } = require('../helpers/paths');
 // Fog-of-war UI suite. jsdom only — no server and no database:
 //   node tests/unit/test-fog-ui.js
 //
-// Loads the REAL tests/fixtures/pages/scene.html + public/js/game/scene.js, like test-marquee.js
+// Loads the REAL tests/fixtures/pages/scene.html + client/js/game/scene.js, like test-marquee.js
 // and test-shortcuts.js do, and drives them with synthetic events.
 //
 // The two things most worth gating here:
@@ -34,8 +34,8 @@ window.Element.prototype.setPointerCapture=function(){}; window.Element.prototyp
 let pass=0, fail=0;
 window.__check=(name,cond,d='')=>{ if(cond){pass++;console.log('  PASS  '+name);} else {fail++;console.log('  FAIL  '+name+'  '+d);} };
 
-window.eval(fs.readFileSync(rootPath('public/js/shared/common.js'), 'utf8'));
-window.eval(fs.readFileSync(rootPath('public/js/game/scene.js'),'utf8') + `
+window.eval(fs.readFileSync(rootPath('client/js/shared/common.js'), 'utf8'));
+window.eval(fs.readFileSync(rootPath('client/js/game/scene.js'),'utf8') + `
 ;(function(){
   scene={id:'S',width:1000,height:800,img_url:null}; currentCampaignOwnerId='GM'; me={id:'GM'};
   campaignId='C';
