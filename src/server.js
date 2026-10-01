@@ -233,7 +233,15 @@ app.use(lifecycle.middleware(passport.session()));
 // enforces MEDIA_HOST and does not rely on the session.
 app.use(mediaRoutes);
 
-app.use(express.static(path.join(__dirname, '..', 'public')));
+// HTML pages must be revalidated on every visit (ETag, so usually a 304): a
+// browser may otherwise reuse a cached copy of an older page after a release —
+// heuristic caching applies when no Cache-Control is sent. Other static files
+// keep express's default.
+app.use(express.static(path.join(__dirname, '..', 'public'), {
+  setHeaders(res, filePath) {
+    if (filePath.endsWith('.html')) res.setHeader('Cache-Control', 'no-cache');
+  },
+}));
 
 app.use('/api/auth/login', loginLimiter);
 app.use('/api/auth/register', registerLimiter);
