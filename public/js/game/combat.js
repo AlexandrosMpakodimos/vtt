@@ -1265,6 +1265,9 @@ function connectSocket() {
     if (!d || d.campaign_id !== campaign.id || !d.user_id) return;
     onlineUsers.add(d.user_id);
     renderPresence();
+    // [ADDED 2026-10-01] Someone who joined the campaign after this page loaded
+    // is not in `members` yet: no name, colour or whisper entry until a reload.
+    if (!members.some((m) => m.id === d.user_id)) loadMembers();
   });
   socket.on('campaign:user-left', (d) => {
     if (!d || d.campaign_id !== campaign.id || !d.user_id) return;
@@ -1287,6 +1290,8 @@ function connectSocket() {
     if (d.user_id && d.user_id !== (me && me.id) && !members.some((m) => m.id === d.user_id)) {
       members.push({ id: d.user_id, name: d.speaker_name });
       renderWhisperTargets();
+      // ...then fetch the real entry (colour, GM flag) rather than keep a stub.
+      loadMembers();
     }
   });
 

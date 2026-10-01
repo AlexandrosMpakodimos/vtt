@@ -8,6 +8,7 @@ const { validateEmail, validateUsername, validatePassword, normalizeEmail, valid
 const { isPasswordBreached } = require('../services/breachedPassword');
 const { sendVerificationEmail, sendPasswordResetEmail, sendEmailChangeEmail } = require('../services/mailer');
 const { requireAuth } = require('../middleware/auth');
+const { membershipChanged } = require('../socket/notify');
 
 const router = express.Router();
 
@@ -370,6 +371,18 @@ router.patch('/me', requireAuth, async (req, res, next) => {
     }
 
     const [user] = await knex('users').where({ id: req.user.id }).update(updates).returning(SAFE_COLUMNS);
+    // [ADDED 2026-10-01] The name and picture are shown at every table this user
+    // sits at: tell those rooms and dashboards, so nobody has to reload. Ids
+    // only; each page re-reads through its own permission-checked endpoint.
+    // Past chat lines keep the name they were sent under (speaker_name is a
+    // snapshot by design).
+    const campaignIds = await knex('campaigns')
+      .whereNull('deleted_at')
+      .andWhere((q) => q.where('owner_id', req.user.id)
+        .orWhereIn('id', knex('campaign_members').select('campaign_id')
+          .where({ user_id: req.user.id, status: 'active' })))
+      .pluck('id');
+    for (const campaignId of campaignIds) membershipChanged(req, campaignId, req.user.id);
     return gateway.sendJson(req, res, { user: publicUser(user) });
   } catch (err) {
     if (err.code === '23505') return res.status(409).json({ error: 'username already taken' });
