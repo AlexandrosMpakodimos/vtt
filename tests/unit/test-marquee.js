@@ -13,8 +13,8 @@ window.Element.prototype.setPointerCapture=function(id){ window.__captures.push(
 window.Element.prototype.releasePointerCapture=function(id){ window.__captures.push({op:'release', id:id, el:this.id}); };
 let pass=0, fail=0;
 window.__check=(name,cond,d='')=>{ if(cond){pass++;console.log('  PASS  '+name);} else {fail++;console.log('  FAIL  '+name+'  '+d);} };
-window.eval(fs.readFileSync(rootPath('public/js/shared/common.js'), 'utf8'));
-window.eval(fs.readFileSync(rootPath('public/js/game/scene.js'),'utf8') + `
+window.eval(fs.readFileSync(rootPath('client/js/shared/common.js'), 'utf8'));
+window.eval(fs.readFileSync(rootPath('client/js/game/scene.js'),'utf8') + `
 ;(function(){
   scene={id:'S',width:1000,height:800,img_url:null}; currentCampaignOwnerId='GM'; me={id:'GM'};
   upsertToken({id:'T1',scene_id:'S',created_by:'GM',name:'A',x:1,y:1,width:1,height:1,rotation:0,hidden:false,locked:false,conditions:[]});

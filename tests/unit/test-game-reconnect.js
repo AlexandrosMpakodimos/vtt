@@ -11,7 +11,7 @@ function setup() {
     clearTimeout(id) { timers.delete(id); },
     dispatchEvent() {}, CustomEvent: class {},
   };
-  vm.runInNewContext(fs.readFileSync(rootPath('public/js/shared/common.js'), 'utf8'), { window });
+  vm.runInNewContext(fs.readFileSync(rootPath('client/js/shared/common.js'), 'utf8'), { window });
   const listeners = new Map(); const acks = [];
   const socket = {
     connected: false,

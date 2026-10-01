@@ -1,7 +1,7 @@
 // 3D dice overlay (M6 work, landed alongside the M5 harness).
 //
 // An ES MODULE, loaded with <script type="module">, because the vendored
-// library ships as an ES module. Everything else in public/js/ is a classic
+// library ships as an ES module. Everything else in client/js/ is a classic
 // script; this is the one exception and it is why the file exists separately
 // rather than living inside combat.js.
 //
@@ -135,7 +135,7 @@ function config() {
   return {
     assetPath: '/vendor/dice/assets/',
     // Sounds are off because the sound assets were not vendored. Turning this
-    // on without copying public/sounds/ produces 404s, not audio.
+    // on without copying client/sounds/ produces 404s, not audio.
     sounds: false,
     theme_surface: 'green-felt',
     theme_colorset: localStorage_get('vtt.dice.colorset') || 'white',

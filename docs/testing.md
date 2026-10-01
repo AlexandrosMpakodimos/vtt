@@ -267,8 +267,8 @@ plus explicit player re-entry restores game updates. Use isolated fixtures.
 ## Frontend organization
 
 JSDOM fixture pages live under `tests/fixtures/pages/` and are not served by
-Express. The production page DOM and linked assets remain under `public/`.
-The event scanner recursively covers JavaScript under `public/js/`, including
+Express. The production page DOM and linked assets remain under `client/`.
+The event scanner recursively covers JavaScript under `client/js/`, including
 all page, game, sheet, UI and shared directories. It does not scan vendored code.
 CSS source assertions read the linked stylesheet rather than requiring embedded
 styles in the HTML. Browser checks still matter: JSDOM does not prove rendering.

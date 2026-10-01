@@ -37,14 +37,20 @@ The public application has three pages: `index.html` (landing/authentication),
 
 | Path | Contents |
 | --- | --- |
-| `public/css/` | Theme tokens, page styles and shared character/inventory/spell styles |
-| `public/js/pages/` | Landing, dashboard and game-shell entry points |
-| `public/js/game/` | Scene, actors, combat/chat/dice, alignment and the dice renderer adapter |
-| `public/js/sheets/` | Character editing/creation, item and spell forms |
-| `public/js/ui/` | Image picking/framing and closed-campaign notices |
-| `public/js/shared/` | Common helpers and the early theme script |
-| `public/assets/` | Referenced artwork |
-| `public/vendor/dice/` | Vendored dice renderer, textures and upstream license |
+| `client/css/` | Theme tokens, page styles and shared character/inventory/spell styles |
+| `client/js/pages/` | Landing, dashboard and game-shell entry points |
+| `client/js/game/` | Scene, actors, combat/chat/dice, alignment and the dice renderer adapter |
+| `client/js/sheets/` | Character editing/creation, item and spell forms |
+| `client/js/ui/` | Image picking/framing and closed-campaign notices |
+| `client/js/shared/` | Common helpers and the early theme script |
+| `client/assets/` | Referenced artwork |
+| `client/vendor/dice/` | Vendored dice renderer, textures and upstream license |
+
+The browser files are in `client/`, not `public/`, on purpose. On the production
+host (LiteSpeed with CloudLinux's Passenger integration), any file under
+`<app root>/public` is served by the web server itself and never reaches Express,
+so it would carry none of the security headers (CSP, frame protection, nosniff,
+HSTS). Serving everything through Express keeps one source for those headers.
 
 Most browser files are classic scripts, exposing `window.VTT*` interfaces.
 The dice adapter is an ES module with an absolute vendor import and asset path.

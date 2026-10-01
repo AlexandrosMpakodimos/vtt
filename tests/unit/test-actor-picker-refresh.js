@@ -31,7 +31,7 @@ let pass = 0; let fail = 0;
 window.__check = (n, c, d = '') => { if (c) { pass++; console.log('  PASS  ' + n); } else { fail++; console.log('  FAIL  ' + n + '  ' + d); } };
 window.__done = () => { console.log('\n' + pass + ' passed, ' + fail + ' failed'); process.exit(fail === 0 ? 0 : 1); };
 
-window.eval(fs.readFileSync(rootPath('public/js/shared/common.js'), 'utf8') + '\n' + fs.readFileSync(rootPath('public/js/game/scene.js'), 'utf8') + `
+window.eval(fs.readFileSync(rootPath('client/js/shared/common.js'), 'utf8') + '\n' + fs.readFileSync(rootPath('client/js/game/scene.js'), 'utf8') + `
 ;(async function(){
   const h = window.__handlers;
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));

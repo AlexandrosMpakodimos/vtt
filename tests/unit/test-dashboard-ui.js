@@ -2,12 +2,12 @@ const { rootPath } = require('../helpers/paths');
 // Dashboard page UI smoke suite. jsdom only — no server, no database:
 //   node tests/unit/test-dashboard-ui.js
 //
-// Same scope and reason as test-landing-ui.js: public/js/pages/dashboard.js is a
+// Same scope and reason as test-landing-ui.js: client/js/pages/dashboard.js is a
 // client file with no runtime coverage from any server suite, and the class of
 // defect these suites exist to catch — a function deleted by an edit and still
 // called, a contract quietly broken, a CSP rule regressed — is invisible to
 // `node --check` and to every functional suite. This loads the REAL
-// public/dashboard.html + theme.js + common.js + imagepicker.js + dashboard.js
+// client/dashboard.html + theme.js + common.js + imagepicker.js + dashboard.js
 // and asserts: the id manifest, the pure seams (cardState / tabsRole /
 // inviteUrl), the boot→header→list render, the tablist keyboard model, the
 // closed-game player rule (no Enter), the ?join= flow, the 401→navigate
@@ -55,7 +55,7 @@ function panelEl(document, selector) {
 
 // A jsdom window with all the browser bits dashboard.js touches, stubbed.
 function makeDom(url) {
-  const dom = new JSDOM(fs.readFileSync(rootPath('public/dashboard.html'), 'utf8'), {
+  const dom = new JSDOM(fs.readFileSync(rootPath('client/dashboard.html'), 'utf8'), {
     runScripts: 'outside-only',
     url: url || 'http://localhost:3000/dashboard.html',
   });
@@ -147,12 +147,12 @@ function installFakeIo(window) {
 function evalApp(window, beforeBoot) {
   let err = null;
   try {
-    window.eval(fs.readFileSync(rootPath('public/js/ui/imageframe.js'), 'utf8'));
-    window.eval(fs.readFileSync(rootPath('public/js/shared/theme.js'), 'utf8'));
-    window.eval(fs.readFileSync(rootPath('public/js/shared/common.js'), 'utf8'));
-    window.eval(fs.readFileSync(rootPath('public/js/ui/imagepicker.js'), 'utf8'));
-    window.eval(fs.readFileSync(rootPath('public/js/ui/frametool.js'), 'utf8'));
-    window.eval(fs.readFileSync(rootPath('public/js/pages/dashboard.js'), 'utf8'));
+    window.eval(fs.readFileSync(rootPath('client/js/ui/imageframe.js'), 'utf8'));
+    window.eval(fs.readFileSync(rootPath('client/js/shared/theme.js'), 'utf8'));
+    window.eval(fs.readFileSync(rootPath('client/js/shared/common.js'), 'utf8'));
+    window.eval(fs.readFileSync(rootPath('client/js/ui/imagepicker.js'), 'utf8'));
+    window.eval(fs.readFileSync(rootPath('client/js/ui/frametool.js'), 'utf8'));
+    window.eval(fs.readFileSync(rootPath('client/js/pages/dashboard.js'), 'utf8'));
     // Stub seams (e.g. VTTCommon.navigate) after the modules define them but
     // before boot runs on DOMContentLoaded.
     if (typeof beforeBoot === 'function') beforeBoot(window);
@@ -163,9 +163,9 @@ function evalApp(window, beforeBoot) {
 
 (async () => {
   // ── source-level probes (no DOM needed) ────────────────────────────────────
-  const dashSrc = fs.readFileSync(rootPath('public/js/pages/dashboard.js'), 'utf8');
-  const htmlSrc = fs.readFileSync(rootPath('public/dashboard.html'), 'utf8');
-  const commonSrc = fs.readFileSync(rootPath('public/js/shared/common.js'), 'utf8');
+  const dashSrc = fs.readFileSync(rootPath('client/js/pages/dashboard.js'), 'utf8');
+  const htmlSrc = fs.readFileSync(rootPath('client/dashboard.html'), 'utf8');
+  const commonSrc = fs.readFileSync(rootPath('client/js/shared/common.js'), 'utf8');
   const stripComments = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
 
   t('dashboard.js has no innerHTML/insertAdjacentHTML/document.write (code)',
@@ -185,7 +185,7 @@ function evalApp(window, beforeBoot) {
   t('a page restored from the back/forward cache reloads (re-checks the session)',
     /addEventListener\('pageshow'.{0,80}persisted.{0,40}location\.reload\(\)/.test(dashSrc.replace(/\s+/g, ' ')));
   t('the hidden-until-signed-in rule exists and reveals itself if no script runs',
-    /html\.auth-pending body \{ visibility: hidden; animation: vtt-auth-reveal/.test(fs.readFileSync(rootPath('public/css/tokens.css'), 'utf8')));
+    /html\.auth-pending body \{ visibility: hidden; animation: vtt-auth-reveal/.test(fs.readFileSync(rootPath('client/css/tokens.css'), 'utf8')));
   t('dashboard.js never emits campaign:join (a viewer is not at the table)',
     !/emit\(\s*'campaign:join'/.test(dashSrc));
 
@@ -660,7 +660,7 @@ function evalApp(window, beforeBoot) {
       const shown = this.id === 'box' && !w.document.getElementById('hid').hidden;
       return { height: shown ? 200 : 100, width: 100, top: 0, left: 0, right: 100, bottom: 0 };
     };
-    w.eval(fs.readFileSync(rootPath('public/js/shared/common.js'), 'utf8'));
+    w.eval(fs.readFileSync(rootPath('client/js/shared/common.js'), 'utf8'));
     const C = w.VTTCommon;
     const box = w.document.getElementById('box'), hid = w.document.getElementById('hid');
     C.animateResize(box, function () { hid.hidden = false; });
@@ -683,7 +683,7 @@ function evalApp(window, beforeBoot) {
     const w = d.window;
     w.matchMedia = () => ({ matches: true, addEventListener() {}, removeEventListener() {} });
     w.Element.prototype.getBoundingClientRect = function () { return { height: 100, width: 100, top: 0, left: 0, right: 100, bottom: 0 }; };
-    w.eval(fs.readFileSync(rootPath('public/js/shared/common.js'), 'utf8'));
+    w.eval(fs.readFileSync(rootPath('client/js/shared/common.js'), 'utf8'));
     const box = w.document.getElementById('box'), hid = w.document.getElementById('hid');
     w.VTTCommon.animateResize(box, function () { hid.hidden = false; });
     t('reduced-motion applies the change with no animation',

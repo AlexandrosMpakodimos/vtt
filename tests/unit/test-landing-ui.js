@@ -2,11 +2,11 @@ const { rootPath } = require('../helpers/paths');
 // Landing page UI smoke suite. jsdom only — no server, no database:
 //   node tests/unit/test-landing-ui.js
 //
-// Same scope and reason as test-align-ui.js: public/js/pages/landing.js is a client
+// Same scope and reason as test-align-ui.js: client/js/pages/landing.js is a client
 // file with no runtime coverage from any server suite, and the class of defect
 // that motivates these suites — a function deleted by an edit and still called,
 // or a contract quietly broken — is invisible to `node --check` and to every
-// functional suite. This one loads the REAL public/index.html + theme.js +
+// functional suite. This one loads the REAL client/index.html + theme.js +
 // landing.js and asserts the seam contracts, the element-id manifest, the
 // reduced-motion parallax gate, the auth-card open/close + focus return, the
 // ?reset= landing flow, the login/403/register messaging, and source-level
@@ -19,7 +19,7 @@ const fs = require('fs');
 // gates trip and no listener is attached (the assertion below depends on this).
 // Constructed before eval so theme.js/landing.js see it at load.
 function makeDom(url) {
-  const dom = new JSDOM(fs.readFileSync(rootPath('public/index.html'), 'utf8'), {
+  const dom = new JSDOM(fs.readFileSync(rootPath('client/index.html'), 'utf8'), {
     runScripts: 'outside-only',
     url: url || 'http://localhost:3000/',
   });
@@ -82,9 +82,9 @@ function watchPointerListener(window) {
 function evalScripts(window) {
   let err = null;
   try {
-    window.eval(fs.readFileSync(rootPath('public/js/shared/theme.js'), 'utf8'));
-    window.eval(fs.readFileSync(rootPath('public/js/shared/common.js'), 'utf8'));
-    window.eval(fs.readFileSync(rootPath('public/js/pages/landing.js'), 'utf8'));
+    window.eval(fs.readFileSync(rootPath('client/js/shared/theme.js'), 'utf8'));
+    window.eval(fs.readFileSync(rootPath('client/js/shared/common.js'), 'utf8'));
+    window.eval(fs.readFileSync(rootPath('client/js/pages/landing.js'), 'utf8'));
     // jsdom with runScripts:'outside-only' reports readyState 'loading' at eval
     // time, so landing.js registers a DOMContentLoaded listener and waits (in a
     // real browser its `defer` script runs after parse, DOM already ready). Fire
@@ -150,7 +150,7 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   //    pointer events — NOT #heroLayers, which is pointer-events:none. (The
   //    original bug: listener on the layers meant the parallax never fired.) ────
   {
-    const d = new JSDOM(fs.readFileSync(rootPath('public/index.html'), 'utf8'),
+    const d = new JSDOM(fs.readFileSync(rootPath('client/index.html'), 'utf8'),
       { runScripts: 'outside-only', url: 'http://localhost:3000/' });
     const w = d.window;
     // permissive matchMedia: motion allowed, real hover pointer
@@ -167,9 +167,9 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     const dlg = w.document.getElementById('authCard');
     if (dlg) { dlg.showModal = function () { this.open = true; }; dlg.close = function () { this.open = false; }; }
     w.fetch = async () => ({ status: 401, json: async () => ({}) });
-    w.eval(fs.readFileSync(rootPath('public/js/shared/theme.js'), 'utf8'));
-    w.eval(fs.readFileSync(rootPath('public/js/shared/common.js'), 'utf8'));
-    w.eval(fs.readFileSync(rootPath('public/js/pages/landing.js'), 'utf8'));
+    w.eval(fs.readFileSync(rootPath('client/js/shared/theme.js'), 'utf8'));
+    w.eval(fs.readFileSync(rootPath('client/js/shared/common.js'), 'utf8'));
+    w.eval(fs.readFileSync(rootPath('client/js/pages/landing.js'), 'utf8'));
     w.document.dispatchEvent(new w.Event('DOMContentLoaded', { bubbles: true }));
     t('motion allowed -> parallaxActive true', w.VTTLanding.parallaxActive === true);
     t('parallax listener attaches (pointermove seen)', pmTarget !== null);
@@ -334,10 +334,10 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   }
 
   // ── source-level probes ─────────────────────────────────────────────────────
-  const themeSrc = fs.readFileSync(rootPath('public/js/shared/theme.js'), 'utf8');
-  const landingSrc = fs.readFileSync(rootPath('public/js/pages/landing.js'), 'utf8');
-  const htmlSrc = fs.readFileSync(rootPath('public/index.html'), 'utf8');
-  const cssSrc = fs.readFileSync(rootPath('public/css/landing.css'), 'utf8');
+  const themeSrc = fs.readFileSync(rootPath('client/js/shared/theme.js'), 'utf8');
+  const landingSrc = fs.readFileSync(rootPath('client/js/pages/landing.js'), 'utf8');
+  const htmlSrc = fs.readFileSync(rootPath('client/index.html'), 'utf8');
+  const cssSrc = fs.readFileSync(rootPath('client/css/landing.css'), 'utf8');
   t('landing stylesheet is linked', /<link[^>]+href="\/css\/landing\.css"/.test(htmlSrc));
   const stripComments = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
   t('theme.js contains no innerHTML/insertAdjacentHTML/document.write (code)',

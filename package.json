@@ -20,7 +20,7 @@
     "ignore": [
       "tests/**",
       "workers/**",
-      "public/**",
+      "client/**",
       "*.md"
     ]
   },
