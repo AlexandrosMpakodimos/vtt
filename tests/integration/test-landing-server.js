@@ -133,6 +133,16 @@ async function userIdByEmail(email) {
   check('expired token -> 302', g.status === 302, `status ${g.status}`);
   check('expired token -> Location /?reset_error=1', g.location === '/?reset_error=1', g.location || '(none)');
 
+  // [2026-10-01] Pages are revalidated on every visit, so a release is picked
+  // up at once instead of a browser reusing an older cached page.
+  for (const page of ['/', '/dashboard.html', '/game.html']) {
+    const res = await fetch(BASE + page);
+    check(`${page} is served with Cache-Control: no-cache`, res.headers.get('cache-control') === 'no-cache', res.headers.get('cache-control') || '(none)');
+    check(`${page} carries a validator (ETag) so revisits are cheap`, !!res.headers.get('etag'));
+  }
+  const css = await fetch(BASE + '/css/tokens.css');
+  check('stylesheets keep the default caching', css.headers.get('cache-control') !== 'no-cache', css.headers.get('cache-control') || '(none)');
+
   // Cleanup: remove this user's reset tokens and the user row.
   await knex('password_reset_tokens').where({ user_id: userId }).del();
   await knex('users').where({ id: userId }).del();

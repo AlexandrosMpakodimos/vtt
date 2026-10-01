@@ -174,6 +174,8 @@ function evalApp(window, beforeBoot) {
     !/innerHTML|insertAdjacentHTML|document\.write/.test(stripComments(commonSrc)));
   t('dashboard.html has no inline <script> (every <script> has src)',
     !/<script(?![^>]*\ssrc=)[^>]*>/.test(htmlSrc));
+  t('dashboard.html has no native <select> (every list is the themed dropdown)',
+    !/<select[\s>]/i.test(htmlSrc));
   t('dashboard.html has no on*= handlers',
     !/\son[a-z]+\s*=\s*["']/i.test(htmlSrc));
   t('theme.js is loaded exactly once in the head',
@@ -192,7 +194,7 @@ function evalApp(window, beforeBoot) {
     'games', 'btnCreate', 'btnFind', 'listTabs', 'tabAll', 'tabRunning', 'tabPlaying',
     'campaignPanel', 'showArchived', 'listStatus', 'cardsGrid', 'emptyState', 'cardTemplate',
     'deletedWrap', 'deletedToggle', 'deletedList',
-    'createDialog', 'formCreate', 'crName', 'crDesc', 'crVis', 'crPasswordField', 'crPassword',
+    'createDialog', 'formCreate', 'crName', 'crDesc', 'crVis', 'crVisDD', 'crVisBtn', 'crVisList', 'crPasswordField', 'crPassword',
     'crStatus', 'crSubmit',
     'findDialog', 'formFind', 'fdQuery', 'fdVis', 'fdSubmit', 'fdStatus', 'fdResults', 'fdMore',
     'formJoin', 'jnId', 'jnPasswordField', 'jnPassword', 'jnSubmit', 'jnStatus',
@@ -799,11 +801,16 @@ function evalApp(window, beforeBoot) {
     t('Create opens its dialog', document.getElementById('createDialog').open === true);
     t('password field hidden while Public is selected',
       document.getElementById('crPasswordField').hasAttribute('hidden'));
-    const crVis = document.getElementById('crVis');
-    crVis.value = 'private';
-    crVis.dispatchEvent(new window.Event('change', { bubbles: true }));
+    // [2026-10-01] Joining is the themed dropdown, chosen through its list.
+    t('the Joining control is the themed dropdown, not a native select',
+      !!document.querySelector('#crVisDD.vtt-dd') && !document.querySelector('#createDialog select'));
+    document.getElementById('crVisBtn').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    const privOpt = [...document.querySelectorAll('#crVisList .vtt-dd-opt')].find((li) => li.textContent === 'Password required');
+    t('its list offers "Password required"', !!privOpt);
+    if (privOpt) privOpt.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
     t('choosing Private reveals the password field',
       !document.getElementById('crPasswordField').hasAttribute('hidden'));
+    t('...and the button shows the choice', document.getElementById('crVisBtn').textContent === 'Password required');
     document.getElementById('crName').value = 'My New Game';
     document.getElementById('crPassword').value = 'secret';
     document.getElementById('formCreate').dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
@@ -820,6 +827,13 @@ function evalApp(window, beforeBoot) {
     const newCard = document.querySelector('[data-id="c-new"]');
     t('on 201 the new card is rendered', !!newCard);
     t('...and it is auto-expanded', newCard && newCard.getAttribute('data-expanded') === 'true');
+    // Reopening starts clean: form.reset() does not reset a hidden input, so the
+    // dropdown must be reset explicitly.
+    document.getElementById('btnCreate').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    t('reopening Create starts at "Anyone can join" again',
+      document.getElementById('crVis').value === 'public'
+      && document.getElementById('crVisBtn').textContent === 'Anyone can join'
+      && document.getElementById('crPasswordField').hasAttribute('hidden'));
   }
 
   // ── Create with Public: no password key in the body ────────────────────────

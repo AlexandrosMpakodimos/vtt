@@ -1302,12 +1302,17 @@ wrap.addEventListener('pointermove', (e) => {
   // One screen pixel of drag is one screen pixel of movement at any zoom: the
   // translate is applied OUTSIDE the scale in the transform string, so it is
   // already in screen units and must not be divided by the zoom.
+  if (Math.abs(e.clientX - pan.x) + Math.abs(e.clientY - pan.y) > 4) pan.moved = true;
   view.x = pan.vx + (e.clientX - pan.x);
   view.y = pan.vy + (e.clientY - pan.y);
   applyView();
 });
 function endPan(e) {
   if (!pan) return;
+  // [ADDED 2026-10-01] A left CLICK on empty space (a press that did not turn
+  // into a pan) clears the token selection, as in every map and drawing tool.
+  // A drag keeps it, so panning to look around doesn't lose what you selected.
+  if (e.type === 'pointerup' && !pan.moved && selection.size) setSelection([]);
   pan = null;
   wrap.classList.remove('panning');
   try { wrap.releasePointerCapture(e.pointerId); } catch { /* already released */ }
@@ -2658,6 +2663,16 @@ socket.on('actor:deleted', (d) => {
 // comparing the events the server emits against the ones each client handles,
 // which is a check worth repeating whenever an event is added.
 socket.on('scene:updated', (d) => {
+  // [ADDED 2026-10-01] Keep the scene list's thumbnails and names current too:
+  // a new map image appeared on the board but the list kept the old preview
+  // until it was reloaded. Any scene in the list, open or not.
+  if (d && d.id && Array.isArray(lastSceneList)) {
+    const i = lastSceneList.findIndex((x) => x.id === d.id);
+    if (i >= 0) {
+      lastSceneList[i] = Object.assign({}, lastSceneList[i], { name: d.name, img_url: d.img_url || null });
+      renderSceneList(lastSceneList);
+    }
+  }
   if (!scene || !d || d.id !== scene.id) return;
   scene = d;
   stage.style.width = scene.width + 'px';

@@ -1347,18 +1347,27 @@ function renderItems() {
     body.appendChild(meta);
     card.appendChild(body);
 
-    // Players click the card to view; the GM gets an explicit action row.
+    // Everyone clicks the card to view it. [CHANGED 2026-10-01] The GM used to
+    // get a separate Preview button whose eye icon sat next to Identify's eye;
+    // the card itself is now the preview for the GM too, and the action row keeps
+    // only Edit, Identify/Hide and Delete. Clicks and keys that start on those
+    // buttons belong to the buttons, not to the card.
     function openView() {
       if (IS.openPreview) IS.openPreview(previewProjection(i));
     }
-    if (!isGm) {
-      card.classList.add('clickable');
-      card.tabIndex = 0; card.setAttribute('role', 'button');
-      card.addEventListener('click', openView);
-      card.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openView(); } });
-    } else {
+    card.classList.add('clickable');
+    card.tabIndex = 0; card.setAttribute('role', 'button');
+    card.setAttribute('aria-label', `View ${label}`);
+    card.addEventListener('click', (e) => {
+      if (e.target.closest && e.target.closest('.item-card-actions')) return;
+      openView();
+    });
+    card.addEventListener('keydown', (e) => {
+      if (e.target !== card) return;
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openView(); }
+    });
+    if (isGm) {
       const actions = el('div', { cls: 'item-card-actions' });
-      actions.appendChild(iconBtn('Preview', 'preview', () => { if (IS.openPreview) IS.openPreview(previewProjection(i)); }));
       actions.appendChild(iconBtn('Edit', 'edit', () => editItem(i)));
       actions.appendChild(iconBtn(known ? 'Hide (un-identify)' : 'Identify', known ? 'hide' : 'reveal', () => toggleIdentified(i)));
       actions.appendChild(iconBtn('Delete', 'delete', () => deleteItem(i)));

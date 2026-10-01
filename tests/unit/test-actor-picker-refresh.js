@@ -123,6 +123,23 @@ window.eval(fs.readFileSync(rootPath('public/js/shared/common.js'), 'utf8') + '\
     await openScene('S');
   }
 
+  // --- the scene list follows scene:updated (new map image, rename) -----------
+  {
+    asUser('GM');
+    lastSceneList = [{ id: 'S2', name: 'Cave', img_url: null }, { id: 'S3', name: 'Keep', img_url: null }];
+    renderSceneList(lastSceneList);
+    const art = () => document.querySelectorAll('#scene-list .scene-art')[1];
+    __check('before: the Keep tile has no map', art() && art().classList.contains('no-map'));
+    h['scene:updated']({ id: 'S3', name: 'Keep (night)', img_url: 'https://media.test/media/m1?t=x', width: 1000, height: 800, grid: {} });
+    __check('a new map image shows in the scene list without a reload',
+      art() && art().style.backgroundImage.includes('media/m1'), art() && art().style.backgroundImage);
+    __check('...and a rename shows too',
+      document.getElementById('scene-list').textContent.includes('Keep (night)'));
+    h['scene:updated']({ id: 'S2', name: 'Cave', img_url: null, width: 1000, height: 800, grid: {} });
+    __check('a map removed from a scene shows "No map yet"',
+      document.querySelectorAll('#scene-list .scene-art')[0].classList.contains('no-map'));
+  }
+
   // --- no scene open ----------------------------------------------------------
   asUser('GM');
   scene = null;
