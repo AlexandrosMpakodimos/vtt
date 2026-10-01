@@ -292,7 +292,7 @@
 
     // Small Enter on the collapsed head (one-click to play). Hidden when the
     // player can't enter a closed table; the GM always can.
-    var headEnter = node.querySelector('.card-head .card-enter');
+    var headEnter = node.querySelector('.card-head-actions .card-enter');
     if (st.showEnter) headEnter.setAttribute('href', '/game.html?campaign=' + c.id);
     else if (headEnter && headEnter.parentNode) headEnter.parentNode.removeChild(headEnter);
     // Enter must not toggle the card.
@@ -898,7 +898,7 @@
       c.is_open = isOpenNow;
       pill.textContent = isOpenNow ? 'Open' : 'Closed';
       pill.classList.remove('open', 'closed'); pill.classList.add(isOpenNow ? 'open' : 'closed');
-      var he = node.querySelector('.card-head .card-enter');
+      var he = node.querySelector('.card-head-actions .card-enter');
       if (he) { if (isGm || isOpenNow) he.setAttribute('href', '/game.html?campaign=' + c.id); }
       if (built) { refreshHead(); syncFields(); }
     }
@@ -1434,6 +1434,7 @@
         if (!c.is_public) {
           pwInput = document.createElement('input');
           pwInput.type = 'password';
+          pwInput.name = 'join-password';
           pwInput.placeholder = 'Password';
           pwInput.setAttribute('aria-label', 'Campaign password');
           pwInput.setAttribute('hidden', '');

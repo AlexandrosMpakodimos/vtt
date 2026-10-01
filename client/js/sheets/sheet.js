@@ -339,6 +339,9 @@ window.VTTSheet = (function () {
         node.value = valueOf(a, f);
       }
       if (!node.id) node.id = id;
+      // The folio shows its labels as text beside the control, so give every
+      // visible control its field name as an accessible name too.
+      if (node.type !== 'hidden' && !node.hasAttribute('aria-label')) node.setAttribute('aria-label', f.label);
       if (f.type !== 'select') node.disabled = !writable;
       const errNode = el('div', { cls: 'ie-field-err field-error' });
       inputs.set(f.key, { field: f, node, errNode });

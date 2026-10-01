@@ -1,4 +1,5 @@
 const { rootPath } = require('../helpers/paths');
+const { formFieldProblems } = require('../helpers/formfields');
 // Dashboard page UI smoke suite. jsdom only — no server, no database:
 //   node tests/unit/test-dashboard-ui.js
 //
@@ -282,16 +283,18 @@ function evalApp(window, beforeBoot) {
     t('owned card shows Open', owned.querySelector('.pill-state').textContent === 'Open');
     // Join-gate label: public campaigns read "Anyone", private read "Password".
     t('a public game badge reads "Anyone"', owned.querySelector('.badge-vis').textContent === 'Anyone');
-    t('owned card keeps a small Enter link', !!owned.querySelector('.card-head .card-enter')
-      && /game\.html\?campaign=c-owned/.test(owned.querySelector('.card-head .card-enter').getAttribute('href')));
+    t('owned card keeps a small Enter link', !!owned.querySelector('.card-head-actions .card-enter')
+      && /game\.html\?campaign=c-owned/.test(owned.querySelector('.card-head-actions .card-enter').getAttribute('href')));
     t('collapsed card has NO description (moved to expanded)', owned.querySelector('.card-desc') === null);
     t('collapsed card has NO Manage/Details button (removed)', owned.querySelector('.card-manage') === null);
     t('collapsed card has NO archive button (moved to expanded danger zone)', owned.querySelector('.card-archive') === null);
+    t('the Enter link is not inside the disclosure button (no link in a <button>)',
+      !owned.querySelector('.card-head a, .card-head button'));
     t('card head is a disclosure trigger', owned.querySelector('.card-head').getAttribute('aria-expanded') === 'false');
 
     // The closed-as-player card: no Enter on the head; shows the GM's name.
     const closed = document.querySelector('[data-id="c-closed"]');
-    t('closed card (player) has NO Enter link on the head', closed.querySelector('.card-head .card-enter') === null);
+    t('closed card (player) has NO Enter link on the head', closed.querySelector('.card-head-actions .card-enter') === null);
     t('played card owner line shows the GM name', closed.querySelector('.card-owner').textContent === 'by dungeon_dan');
   }
 
@@ -1253,6 +1256,7 @@ function evalApp(window, beforeBoot) {
     card.querySelector('.card-head').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
     await wait(30);
     const btn = panelEl(document, '.cd-archive');
+    { const ff = formFieldProblems(document); t('dashboard with an expanded card: every form field has an id or name, an accessible name, and no broken label', ff.length === 0, ff.join(' | ')); }
     t('a played (non-GM) game still offers Archive in the expanded card', !!btn && btn.textContent === 'Archive');
     t('...and a player does NOT see the delete danger zone', panelEl(document, '.cd-danger').hasAttribute('hidden'));
     btn.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));

@@ -1,4 +1,5 @@
 const { rootPath } = require('../helpers/paths');
+const { formFieldProblems } = require('../helpers/formfields');
 // VTTFrameTool component suite — jsdom only:  node tests/unit/test-frametool.js
 //
 // The framing MECHANICS (drag-by-fraction, wheel/input clamping, the exact
@@ -50,6 +51,7 @@ function els() {
     onSave: (vals) => { saved = vals; return { ok: true }; },
   });
   let e = els();
+  { const ff = formFieldProblems(document); t('frame tool: every form field has an id or name, an accessible name, and no broken label', ff.length === 0, ff.join(' | ')); }
   // Give the stage a measurable size for the drag maths.
   e.stage.getBoundingClientRect = () => ({ width: STAGE, height: STAGE, left: 0, top: 0, right: STAGE, bottom: STAGE });
 

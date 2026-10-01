@@ -50,10 +50,12 @@
         </div>
       </div>
 
-      <div class="tabs" id="listTabs" role="tablist" aria-label="Your games">
+      <div class="tabs">
+        <div class="tabs-list" id="listTabs" role="tablist" aria-label="Your games">
         <button id="tabAll" class="tab" type="button" role="tab" aria-selected="true" aria-controls="campaignPanel" tabindex="0">All</button>
         <button id="tabRunning" class="tab" type="button" role="tab" aria-selected="false" aria-controls="campaignPanel" tabindex="-1">Hosting</button>
         <button id="tabPlaying" class="tab" type="button" role="tab" aria-selected="false" aria-controls="campaignPanel" tabindex="-1">Joined</button>
+        </div>
         <label class="tabs-extra"><input type="checkbox" id="showArchived"> Show archived</label>
       </div>
 
@@ -97,10 +99,11 @@
             <span class="card-online"></span>
           </span>
         </span>
-        <span class="card-head-actions">
-          <a class="btn primary small card-enter" href="#">Enter</a>
-        </span>
       </button>
+      <!-- Outside the button: a link may not sit inside a <button>. -->
+      <div class="card-head-actions">
+        <a class="btn primary small card-enter" href="#">Enter</a>
+      </div>
 
       <div class="card-expand" hidden>
         <div class="card-panel">
@@ -120,7 +123,7 @@
                        the pencil) to edit in place; a player just sees the title. -->
                   <div class="cd-title-line">
                     <h2 class="cd-title cd-name-text"></h2>
-                    <input class="cd-title-input cd-f-name" type="text" maxlength="100" autocomplete="off" aria-label="Game name" hidden>
+                    <input class="cd-title-input cd-f-name" name="game-name" type="text" maxlength="100" autocomplete="off" aria-label="Game name" hidden>
                     <button class="cd-title-edit cd-name-btn" type="button" aria-label="Rename game" hidden>
                       <span class="cd-title-edit-icon" aria-hidden="true"></span>
                     </button>
@@ -146,7 +149,7 @@
               <!-- The cover is edited via the big banner above (GM only); the
                    hidden input carries its value. The name is edited via the big
                    title in the header. Description on top; game details below. -->
-              <input class="cd-f-img" type="hidden">
+              <input class="cd-f-img" name="game-cover" type="hidden">
 
               <!-- Description: full width, edits in place (text ↔ textarea). -->
               <div class="idcard-row ovcard-desc">
@@ -157,7 +160,7 @@
                   </button>
                 </div>
                 <p class="cd-desc-text"></p>
-                <textarea class="cd-f-desc" maxlength="2000" aria-label="Description" hidden></textarea>
+                <textarea class="cd-f-desc" name="game-description" maxlength="2000" aria-label="Description" hidden></textarea>
               </div>
 
               <!-- Details: Joining (editable) grouped with the read-only facts. -->
@@ -173,13 +176,13 @@
                   </div>
                   <div class="idcard-edit cd-vis-edit" hidden>
                     <div class="vtt-dd cd-vis-dd" data-value="public">
-                      <input type="hidden" class="cd-f-vis" value="public">
+                      <input type="hidden" class="cd-f-vis" name="game-joining" value="public">
                       <button type="button" class="vtt-dd-btn" aria-haspopup="listbox" aria-expanded="false">Anyone</button>
                       <ul class="vtt-dd-list" role="listbox" aria-label="Who can join" tabindex="-1" hidden></ul>
                     </div>
                     <div class="cd-pw-field" hidden>
                       <div class="pw-wrap">
-                        <input class="cd-f-pw" type="password" maxlength="128" autocomplete="new-password" placeholder="Password">
+                        <input class="cd-f-pw" name="game-password" type="password" maxlength="128" autocomplete="new-password" placeholder="Password" aria-label="Game password">
                         <button class="pw-toggle cd-pw-toggle" type="button" aria-pressed="false">Show</button>
                       </div>
                       <span class="help">Set a password (4–128 characters). Leave blank only if the game already has one you want to keep.</span>
@@ -209,7 +212,7 @@
 
               <h3>Invite link</h3>
               <div class="invite-row">
-                <input class="cd-invite" type="text" readonly aria-label="Invite link">
+                <input class="cd-invite" name="invite-link" type="text" readonly aria-label="Invite link">
                 <button class="btn secondary small cd-copy" type="button">Copy</button>
               </div>
 

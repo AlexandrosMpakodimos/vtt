@@ -1714,11 +1714,12 @@
       border-radius: 10px; overflow: hidden; position: relative; transition: transform 0.1s, border-color 0.12s, box-shadow 0.12s;
     }
     .item-card.clickable { cursor: pointer; }
-    .item-card.clickable:hover, .item-card.clickable:focus-visible {
+    .item-card.clickable:hover, .item-card.clickable:has(.item-card-body:focus-visible) {
       transform: translateY(-2px); outline: none;
       border-color: color-mix(in srgb, var(--card-rarity) 75%, var(--border));
       box-shadow: 0 6px 18px -8px color-mix(in srgb, var(--card-rarity) 60%, black);
     }
+    .item-card-body:focus-visible { outline: none; }
     /* Square-ish art panel, rarity-tinted. Framing honored; blur on unidentified. */
     .item-card-art {
       position: relative; width: 100%; aspect-ratio: 1; overflow: hidden; background: var(--surface-raised);

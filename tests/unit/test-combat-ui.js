@@ -1,4 +1,5 @@
 const { rootPath } = require('../helpers/paths');
+const { formFieldProblems } = require('../helpers/formfields');
 // Combat harness smoke suite. jsdom only — no server and no database:
 //   node tests/unit/test-combat-ui.js
 //
@@ -253,6 +254,7 @@ console.log('\n--- the entry points run without throwing ---');
   window.renderMessage({ speaker_name: 'Maria', speaker_role: 'player', content: 'Hello' });
   t('default Player identity', document.querySelector('#chat .msg:last-child .who').textContent === 'Maria (Player): ');
   const check = document.querySelector('.whisper-option input');
+  { const ff = formFieldProblems(document); t('chat, whispers and combat: every form field has an id or name, an accessible name, and no broken label', ff.length === 0, ff.join(' | ')); }
   check.checked = true;
   check.dispatchEvent(new window.Event('change', { bubbles: true }));
   t('themed recipient checkbox drives whisper payload', window.whisperTargets()[0] === sel.options[0].value);

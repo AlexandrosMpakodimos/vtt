@@ -30,6 +30,7 @@ window.VTTFrameTool = (function () {
   var state = null;     // { ox, oy, scale, onSave, saving }
   var pan = null;
 
+  var fieldSeq = 0;   // label ↔ input ids stay unique across openings
   function el(tag, cls, text) {
     var n = document.createElement(tag);
     if (cls) n.className = cls;
@@ -88,7 +89,10 @@ window.VTTFrameTool = (function () {
       var f = el('div', 'vttframe-field');
       var l = el('label', null, labelText);
       var i = document.createElement('input'); i.type = 'number';
-      l.setAttribute('for', ''); f.appendChild(l); f.appendChild(i);
+      // A unique id per opening, so the label is tied to its own input.
+      fieldSeq += 1;
+      i.id = 'vttframe-' + labelText.toLowerCase().replace(/\W+/g, '-') + '-' + fieldSeq;
+      l.htmlFor = i.id; f.appendChild(l); f.appendChild(i);
       row.appendChild(f); return i;
     }
     var scaleI = field('Zoom'); scaleI.step = '0.05'; scaleI.min = String(SCALE_MIN); scaleI.max = String(SCALE_MAX);

@@ -46,6 +46,7 @@
     return { status: res.status, data };
   }
 
+  let fieldSeq = 0;   // label ↔ input ids stay unique across openings
   function el(tag, opts = {}) {
     const n = document.createElement(tag);
     if (opts.text !== undefined) n.textContent = opts.text;
@@ -175,9 +176,12 @@
 
     // Upload row: label (spanning), file input, Upload button — a 2-col grid.
     const upRow = el('div', { cls: 'field-row' });
-    upRow.appendChild(el('label', { text: 'Upload a file' }));
+    fieldSeq += 1;
+    const upLabel = el('label', { text: 'Upload a file' });
+    upRow.appendChild(upLabel);
     const file = document.createElement('input');
     file.type = 'file';
+    file.id = 'vttpick-file-' + fieldSeq; upLabel.htmlFor = file.id;
     // Deliberately the same four types the server allows, and deliberately not
     // SVG. This is a hint rather than a control — the bytes are checked
     // regardless — but a picker that offers a file the server will reject is a
@@ -192,8 +196,10 @@
     // URL row: same grid template, so the input matches the file input's width
     // and the button lines up under Upload.
     const linkRow = el('div', { cls: 'field-row' });
-    linkRow.appendChild(el('label', { text: 'Paste a URL' }));
+    const linkLabel = el('label', { text: 'Paste a URL' });
+    linkRow.appendChild(linkLabel);
     const link = document.createElement('input');
+    link.id = 'vttpick-link-' + fieldSeq; linkLabel.htmlFor = link.id;
     link.placeholder = 'https://example.com/image.png';
     link.className = 'vttpick-link';
     linkRow.appendChild(link);

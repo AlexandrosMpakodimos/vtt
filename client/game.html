@@ -83,7 +83,7 @@
           <div class="strip-toolrow gm-only">
             <button id="stripAdd" class="btn small secondary" type="button" title="Add tokens to this encounter">Add</button>
             <label class="switch" title="Show HP numbers to players">
-              <input type="checkbox" id="hpVisibleAll" />
+              <input type="checkbox" id="hpVisibleAll" aria-label="Show HP numbers to players" />
               <span class="switch-track"><span class="switch-thumb"></span></span>
               <span class="switch-text">HP</span>
             </label>
@@ -95,7 +95,7 @@
         <button class="btn icon small nav" id="scrollLeft" type="button" title="Earlier combatants" aria-label="Scroll to earlier combatants">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="width:16px;height:16px"><path d="M15 6l-6 6 6 6"/></svg>
         </button>
-        <div class="strip" id="strip" tabindex="0" aria-label="Initiative order"></div>
+        <div class="strip" id="strip" role="region" tabindex="0" aria-label="Initiative order"></div>
         <button class="btn icon small nav" id="scrollRight" type="button" title="Later combatants" aria-label="Scroll to later combatants">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="width:16px;height:16px"><path d="M9 6l6 6-6 6"/></svg>
         </button>
@@ -329,7 +329,7 @@
           <div class="settings-item">
             <span class="settings-item-label">Show 3D dice</span>
             <label class="switch" title="Roll dice in 3D on the table">
-              <input type="checkbox" id="dice3d" checked />
+              <input type="checkbox" id="dice3d" checked aria-label="Show 3D dice" />
               <span class="switch-track"><span class="switch-thumb"></span></span>
             </label>
           </div>

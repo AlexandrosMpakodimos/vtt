@@ -327,7 +327,7 @@ function renderActors() {
       // Inline quick-HP panel. Toggling or using it must NOT open the sheet, so
       // it lives outside .char-card-main and stops propagation.
       const hpPanel = el('div', { cls: 'char-hp-panel' }); hpPanel.hidden = !hpState.open;
-      const amt = el('input'); amt.type = 'number'; amt.value = hpState.amount; amt.min = '0'; amt.setAttribute('aria-label', 'HP amount');
+      const amt = el('input'); amt.name = 'hp-amount'; amt.type = 'number'; amt.value = hpState.amount; amt.min = '0'; amt.setAttribute('aria-label', 'HP amount');
       amt.addEventListener('input', () => { hpState.amount = amt.value; });
       const dmgBtn = el('button', { cls: 'btn small secondary', text: 'Damage' }); dmgBtn.type = 'button';
       const healBtn = el('button', { cls: 'btn small secondary', text: 'Heal' }); healBtn.type = 'button';
@@ -404,7 +404,7 @@ function wireAssetTools(box) {
     const path = document.createElementNS(svg.namespaceURI, 'path'); path.setAttribute('d', paths); svg.appendChild(path); return svg;
   }
   searchWrap.appendChild(toolbarIcon('M19 11a8 8 0 1 1-16 0a8 8 0 1 1 16 0M17 17l4 4'));
-  const search = el('input'); search.type = 'search'; search.placeholder = 'Search images…';
+  const search = el('input'); search.name = 'image-search'; search.type = 'search'; search.placeholder = 'Search images…';
   search.setAttribute('aria-label', 'Search images by filename or category');
   search.addEventListener('input', () => { assetFilter.q = search.value; renderAssets(); });
   const filters = el('div', { cls: 'image-filters item-filters' }); filters.hidden = true;
@@ -429,7 +429,7 @@ function wireAssetTools(box) {
   const common = window.VTTCommon;
   if (kind && common && common.initDropdown) {
     const dd = el('div', { cls: 'vtt-dd' }); dd.dataset.portal = 'body';
-    const value = el('input'); value.type = 'hidden'; value.value = kind.value;
+    const value = el('input'); value.name = 'image-category'; value.type = 'hidden'; value.value = kind.value;
     const trigger = el('button', { cls: 'vtt-dd-btn' }); trigger.type = 'button';
     trigger.setAttribute('aria-label', 'Category for new image'); trigger.setAttribute('aria-haspopup', 'listbox'); trigger.setAttribute('aria-expanded', 'false');
     const list = el('ul', { cls: 'vtt-dd-list' }); list.hidden = true; list.tabIndex = -1; list.setAttribute('role', 'listbox'); list.setAttribute('aria-label', 'Image category');
@@ -997,7 +997,7 @@ function syncBookDropdown(select, disabled) {
   if (!common || typeof common.initDropdown !== 'function') return;
   if (!select._bookDropdown) {
     const dd = el('div', { cls: 'vtt-dd spellbook-dd' });
-    const value = el('input'); value.type = 'hidden'; value.value = select.value;
+    const value = el('input'); value.name = select.id + '-value'; value.type = 'hidden'; value.value = select.value;
     const trigger = el('button', { cls: 'vtt-dd-btn' }); trigger.type = 'button';
     trigger.id = select.id + '-button';
     trigger.setAttribute('aria-haspopup', 'listbox'); trigger.setAttribute('aria-expanded', 'false');
@@ -1355,15 +1355,20 @@ function renderItems() {
     function openView() {
       if (IS.openPreview) IS.openPreview(previewProjection(i));
     }
+    // [CHANGED 2026-10-01, accessibility] The keyboard/screen-reader control is
+    // the card's body (name + type), not the whole card: a role="button" that
+    // contained the GM's action buttons would hide them from assistive tech
+    // (axe: nested-interactive). A mouse click anywhere outside the actions
+    // still opens the preview.
     card.classList.add('clickable');
-    card.tabIndex = 0; card.setAttribute('role', 'button');
-    card.setAttribute('aria-label', `View ${label}`);
+    body.tabIndex = 0; body.setAttribute('role', 'button');
+    body.setAttribute('aria-label', `View ${label}`);
     card.addEventListener('click', (e) => {
       if (e.target.closest && e.target.closest('.item-card-actions')) return;
       openView();
     });
-    card.addEventListener('keydown', (e) => {
-      if (e.target !== card) return;
+    body.addEventListener('keydown', (e) => {
+      if (e.target !== body) return;
       if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openView(); }
     });
     if (isGm) {
@@ -1465,7 +1470,7 @@ function renderInventory(rows) {
     if (mayWrite) {
       const quantity = el('div', { cls: 'inv-quantity' });
       const qtyLabel = el('label', { cls: 'inv-qty-label', text: 'Qty' });
-      const qty = el('input', { cls: 'inv-qty' });
+      const qty = el('input', { cls: 'inv-qty' }); qty.name = 'quantity';
       qty.type = 'number'; qty.min = '1'; qty.max = '9999'; qty.step = '1'; qty.required = true;
       qty.value = String(r.quantity);
       qty.setAttribute('aria-label', `Quantity of ${label}`);
