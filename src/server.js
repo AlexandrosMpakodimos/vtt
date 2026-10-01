@@ -333,16 +333,18 @@ async function cleanupExpiredTokens() {
 
 // Hard-delete campaigns whose 30-day soft-delete window has fully elapsed.
 // Nothing reads these rows past the window (every listing filters deleted_at
-// IS NULL, and /restore returns 410 after it), so this only reclaims storage.
-// The FK cascade takes their campaign_members with them. Same hourly cadence
-// and fail-soft shape as the token sweep above.
+// IS NULL, and /restore returns 410 after it). Their stored images go to the
+// durable cleanup queue in the same transaction (src/services/campaignPurge.js),
+// so the bucket does not keep objects the app no longer knows about. Same
+// hourly cadence and fail-soft shape as the token sweep above.
+const { purgeExpiredCampaigns } = require('./services/campaignPurge');
 async function cleanupDeletedCampaigns() {
   try {
-    const n = await knex('campaigns')
-      .whereNotNull('deleted_at')
-      .whereRaw(`deleted_at < now() - interval '${SOFT_DELETE_DAYS} days'`)
-      .del();
-    if (n) console.log(`Hard-deleted ${n} campaign(s) past the ${SOFT_DELETE_DAYS}-day recovery window`);
+    const r = await purgeExpiredCampaigns();
+    if (r.campaigns) {
+      console.log(`Hard-deleted ${r.campaigns} campaign(s) past the ${SOFT_DELETE_DAYS}-day recovery window; `
+        + `queued ${r.queued} stored image(s) for deletion`);
+    }
   } catch (err) {
     console.error('CAMPAIGN_CLEANUP_FAILED');
   }
