@@ -207,21 +207,28 @@ async function releaseReservedBytes(bytes) {
 // Committed bytes are leaving storage, but the object could not be deleted yet:
 // move them from committed to cleanup_debt. They stay charged (the object still
 // exists and still costs) until the durable cleanup queue confirms deletion.
+// Transaction-scoped core, so a caller that is already inside a serialisable
+// transaction (the campaign purge) moves the bytes in the same commit as the
+// rest of its work. Same relationship as commitReservedBytesIn above.
+async function moveToCleanupDebtIn(trx, bytes) {
+  if (!Number.isInteger(bytes) || bytes <= 0) {
+    throw new Error('moveToCleanupDebt requires a positive integer');
+  }
+  const row = await readRow(trx);
+  const committed = Number(row.committed_bytes);
+  const give = Math.min(committed, bytes);
+  await trx('storage_budget').where({ id: true }).update({
+    committed_bytes: committed - give,
+    cleanup_debt_bytes: Number(row.cleanup_debt_bytes) + give,
+    updated_at: trx.fn.now(),
+  });
+  return { movedToDebt: give };
+}
 async function moveToCleanupDebt(bytes) {
   if (!Number.isInteger(bytes) || bytes <= 0) {
     throw new Error('moveToCleanupDebt requires a positive integer');
   }
-  return inSerializable(async (trx) => {
-    const row = await readRow(trx);
-    const committed = Number(row.committed_bytes);
-    const give = Math.min(committed, bytes);
-    await trx('storage_budget').where({ id: true }).update({
-      committed_bytes: committed - give,
-      cleanup_debt_bytes: Number(row.cleanup_debt_bytes) + give,
-      updated_at: trx.fn.now(),
-    });
-    return { movedToDebt: give };
-  });
+  return inSerializable((trx) => moveToCleanupDebtIn(trx, bytes));
 }
 
 // A queued object's deletion is finally confirmed: release its cleanup debt.
@@ -310,6 +317,7 @@ module.exports = {
   commitReservedBytes,
   releaseReservedBytes,
   moveToCleanupDebt,
+  moveToCleanupDebtIn,
   releaseCleanupDebt,
   charge,
   snapshot,

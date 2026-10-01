@@ -21,6 +21,7 @@ the fresh checks and atomic boundaries below in the operation that writes.
 | PATCH | Campaign lock and fresh owner check; resolve visibility/password against that row | Closing evicts non-owner game sockets, then sends lobby state |
 | DELETE | One update conditional on campaign ID, current owner, and live state | Zero changed rows returns refusal and emits no eviction |
 | Unban | Campaign lock and fresh owner check before membership lookup/update | Banned becomes left, not active; target must rejoin normally |
+| Purge (hourly, past the 30-day window) | One serializable transaction: select expired campaigns, delete their asset rows, queue each stored object in `storage_cleanup` (reason `campaign_purged`), move verified bytes committed → cleanup debt and release pending reservations, then delete the campaigns | No asset row disappears without its object being queued; a failure rolls back the whole run; personal avatars are untouched (`src/services/campaignPurge.js`, `test-campaign-purge.js`) |
 
 Join's campaign/password precheck is outside its membership retry transaction.
 Do not describe that transaction as refreshing every campaign policy field.
