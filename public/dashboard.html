@@ -259,11 +259,12 @@
           <span class="help">Optional. Up to 2000 characters.</span>
         </div>
         <div class="field">
-          <label for="crVis">Joining</label>
-          <select id="crVis">
-            <option value="public">Anyone can join</option>
-            <option value="private">Password required</option>
-          </select>
+          <label for="crVisBtn">Joining</label>
+          <div class="vtt-dd" id="crVisDD" data-value="public">
+            <input type="hidden" id="crVis" value="public">
+            <button type="button" class="vtt-dd-btn" id="crVisBtn" aria-haspopup="listbox" aria-expanded="false">Anyone can join</button>
+            <ul class="vtt-dd-list" id="crVisList" role="listbox" aria-label="Joining" tabindex="-1" hidden></ul>
+          </div>
         </div>
         <div class="field" id="crPasswordField" hidden>
           <label for="crPassword">Password</label>

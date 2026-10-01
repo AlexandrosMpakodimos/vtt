@@ -1055,7 +1055,16 @@
   }
 
   // ── Create dialog ──────────────────────────────────────────────────────────
+  // Joining uses the themed dropdown like every other list on the site (it was
+  // the last native <select>, drawn in the operating system's style). It writes
+  // to the hidden #crVis input and dispatches change, so the password-field
+  // toggle and the submit handler read it exactly as before.
+  var crVisDD = null;
   function initCreate() {
+    crVisDD = initDropdown('crVisDD', [
+      { value: 'public', label: 'Anyone can join' },
+      { value: 'private', label: 'Password required' }
+    ]);
     bindVisibilityToggle('crVis', 'crPasswordField');
     var form = $('formCreate');
     if (!form) return;
@@ -1087,6 +1096,8 @@
   }
   function resetCreate() {
     var f = $('formCreate'); if (f) f.reset();
+    // form.reset() does not restore a hidden input's value; reset the dropdown.
+    if (crVisDD) crVisDD.set('public');
     hide('crPasswordField'); setText('crStatus', '');
   }
   function openCreate(invoker) {

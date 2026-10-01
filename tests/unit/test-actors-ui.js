@@ -605,10 +605,31 @@ for (const id of [
     [...document.getElementById('itemFilterRarity').querySelectorAll('.item-chip')].find((c) => /^rare$/i.test(c.textContent))
       .dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
 
-    // GM cards carry the action row incl. a preview button.
+    // [2026-10-01] GM cards: the card itself opens the preview; the action row
+    // keeps Edit, Identify/Hide and Delete (the separate Preview button and its
+    // second eye icon are gone).
     const firstCard = cards()[0];
-    t('GM cards have an action row with a preview button',
-      !!firstCard.querySelector('.item-icon-preview') && !!firstCard.querySelector('.item-icon-edit'));
+    const kinds = [...firstCard.querySelectorAll('.item-card-actions .item-icon-btn')]
+      .map((b) => (b.className.match(/item-icon-(\w+)$/) || [])[1]);
+    t('GM cards have exactly Edit, Identify/Hide and Delete',
+      kinds.length === 3 && kinds[0] === 'edit' && ['hide', 'reveal'].includes(kinds[1]) && kinds[2] === 'delete', kinds.join(','));
+    t('...and no separate preview button', !firstCard.querySelector('.item-icon-preview'));
+    const IS = window.VTTItemSheet;
+    const realPreview = IS && IS.openPreview;
+    let opened = null;
+    if (IS) IS.openPreview = (p) => { opened = p; };
+    firstCard.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    t('clicking a GM card opens its preview', !!opened);
+    opened = null;
+    firstCard.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    t('Enter on the focused card opens its preview', !!opened);
+    opened = null;
+    const prevConfirm0 = window.confirm; window.confirm = () => false;
+    firstCard.querySelector('.item-icon-delete').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    firstCard.querySelector('.item-icon-delete').dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    window.confirm = prevConfirm0;
+    t('clicks and keys on an action button do not also open the preview', opened === null);
+    if (IS) IS.openPreview = realPreview;
   }
 
   console.log('\n--- deleting an item is guarded by a confirmation ---');

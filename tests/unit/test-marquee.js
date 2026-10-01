@@ -128,6 +128,19 @@ window.eval(fs.readFileSync(rootPath('public/js/game/scene.js'),'utf8') + `
     stage.style.transform.indexOf('translate(-60px, -40px)') === 0, stage.style.transform);
   __check('...and selects nothing', selection.size === 0, [...selection].join(','));
 
+  // [2026-10-01] Clicking away deselects; panning does not.
+  setSelection(['T1','T2']);
+  fireW('pointerdown',300,200); fireW('pointermove',250,180); fireW('pointerup',250,180);
+  __check('panning keeps the token selection', selection.size === 2, [...selection].join(','));
+  fireW('pointerdown',300,200); fireW('pointerup',301,200);
+  __check('a click on empty space clears the token selection', selection.size === 0, [...selection].join(','));
+  __check('...and the tokens lose their selected look',
+    !document.querySelector('.token.selected'), document.querySelectorAll('.token.selected').length);
+  setSelection(['T1']);
+  fireW('pointerdown',300,200); fireW('pointercancel',300,200);
+  __check('a cancelled press does not clear the selection', selection.size === 1);
+  setSelection([]);
+
   // Zoom is multiplicative and clamped. The HUD is the only observable, which
   // is enough: it is rendered from the same value the transform uses.
   wrap.dispatchEvent(new WheelEvent('wheel',{bubbles:true,cancelable:true,deltaY:-100,clientX:100,clientY:100}));
