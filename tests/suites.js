@@ -41,6 +41,7 @@ const DB = [
   // suites too; the DB group also contains tests that require the test server.
   'test-upload-controlled.js', 'test-storage-budget.js', 'test-budget-lifecycle.js', 'test-storage-cleanup.js',
   'test-campaign-purge.js',
+  'test-delivery-batch-auth.js',
   'test-storage-reconcile.js', 'test-media-gateway.js', 'test-media-rewrite.js',
   // Route-level media gate in host and proxy modes. Real Postgres; it starts its
   // own loopback listener and does not use the isolated test server.
