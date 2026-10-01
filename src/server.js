@@ -268,6 +268,9 @@ app.use('/api/campaigns', verifyOrigin);
 // Assets are mounted OUTSIDE /api/campaigns because an avatar has no campaign.
 // The consequence is that membership is checked inside the router rather than
 // inherited from the path — see that file's header.
+// [ADDED 2026-10-01, thesis audit C2] The origin check covers asset writes
+// too (upload, confirm, external link, delete); before, only SameSite=Lax did.
+app.use('/api/assets', verifyOrigin);
 app.use('/api/assets', assetRoutes);
 app.use('/api/campaigns', campaignRoutes);
 

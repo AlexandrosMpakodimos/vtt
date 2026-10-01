@@ -109,19 +109,41 @@ const MAX_ACTIVE_COMBATS_PER_SCENE = 1;
 // Response shapes — explicit allow-lists, mirroring SAFE_COLUMNS discipline
 // ---------------------------------------------------------------------------
 
-function publicCombat(c) {
+// The GM's shape carries the raw turn pointer. A player's does NOT: turn_index
+// indexes the FULL roster, and a player's roster has hidden-token combatants
+// dropped (rule 1), so the raw index would tell them how many concealed
+// combatants exist and roughly where they stand -- the cardinality leak
+// analysed when turn sequencing was first designed. [FIXED 2026-10-01, thesis
+// audit C1] Players instead get turn_combatant_id (see combatFor), resolved per
+// recipient: the id of the combatant whose turn it is if they can see it, null
+// otherwise. "Nobody's turn" while something unseen acts is the unavoidable
+// residue of advancing turns at all, and is the documented trade-off.
+function publicCombat(c, { isOwner = true } = {}) {
   if (!c) return null;
-  return {
+  const out = {
     id: c.id,
     campaign_id: c.campaign_id,
     scene_id: c.scene_id,
     name: c.name,
     active: c.active,
     round: c.round,
-    turn_index: c.turn_index,
     created_at: c.created_at,
     updated_at: c.updated_at,
   };
+  if (isOwner) out.turn_index = c.turn_index;
+  return out;
+}
+
+// The combat shaped for one recipient, with the turn resolved to a combatant id.
+// fullRows: the GM's (unfiltered) roster in turn order. visibleRows: the rows
+// this recipient receives. The id is disclosed only if that row is among them.
+function combatFor(isOwner, combat, fullRows, visibleRows) {
+  const out = publicCombat(combat, { isOwner });
+  if (!out) return out;
+  const current = fullRows[combat.turn_index] || null;
+  const visible = current && visibleRows.some((r) => r.id === current.id);
+  out.turn_combatant_id = visible ? current.id : null;
+  return out;
 }
 
 // A combatant, shaped for one recipient.
@@ -259,7 +281,7 @@ async function broadcastRoster(req, combat) {
 
   const gmRows = await loadRoster({ combat, isOwner: true });
   await sockets.broadcastToOwner(req.campaign.id, 'combat:updated', {
-    combat: publicCombat(combat),
+    combat: combatFor(true, combat, gmRows, gmRows),
     combatants: gmRows.map((r) => shapeCombatantFor(true, r)),
   });
 
@@ -267,7 +289,7 @@ async function broadcastRoster(req, combat) {
   await sockets.broadcastScenePlayers(
     req.campaign.id, combat.scene_id, 'combat:updated',
     {
-      combat: publicCombat(combat),
+      combat: combatFor(false, combat, gmRows, playerRows),
       combatants: playerRows.map((r) => shapeCombatantFor(false, r)),
     },
   );
@@ -382,7 +404,7 @@ router.get('/', requireMember, async (req, res, next) => {
       q.andWhere({ scene_id: req.campaign.active_scene_id });
     }
     const rows = await q.orderBy('created_at', 'desc');
-    return res.json({ combats: rows.map(publicCombat) });
+    return res.json({ combats: rows.map((c) => publicCombat(c, { isOwner: req.isOwner === true })) });
   } catch (err) {
     return next(err);
   }
@@ -470,12 +492,13 @@ router.get('/:combatId', requireMember, async (req, res, next) => {
 
     const isOwner = req.isOwner === true;
     const rows = await loadRoster({ combat: found.combat, isOwner });
+    const fullRows = isOwner ? rows : await loadRoster({ combat: found.combat, isOwner: true });
     const actors = await loadRosterActors({
       rows, campaignId: req.campaign.id, isOwner,
     });
 
     return res.json({
-      combat: publicCombat(found.combat),
+      combat: combatFor(isOwner, found.combat, fullRows, rows),
       combatants: rows.map((r) => shapeCombatantFor(isOwner, r)),
       actors,
     });
@@ -858,6 +881,7 @@ async function syncPropFlag(req, token) {
 module.exports = {
   router,
   publicCombat,
+  combatFor,
   shapeCombatantFor,
   loadRoster,
   activeCombatForScene,

@@ -179,12 +179,17 @@ function renderStrip() {
   // (sort_order). Clamp defensively for display.
   const roundEl = document.getElementById('roundNum');
   if (roundEl) roundEl.textContent = String(combat.round || 1);
-  const activeIdx = combatants.length
-    ? Math.max(0, Math.min(combat.turn_index || 0, combatants.length - 1))
-    : 0;
+  // The server resolves whose turn it is per recipient (turn_combatant_id); a
+  // player is never sent the raw index into the full roster, and gets null when
+  // the current combatant is one they cannot see -- then nobody is highlighted.
+  let activeIdx = -1;
+  if (combat.turn_combatant_id) activeIdx = combatants.findIndex((c) => c.id === combat.turn_combatant_id);
+  else if (typeof combat.turn_index === 'number' && combatants.length) {
+    activeIdx = Math.max(0, Math.min(combat.turn_index, combatants.length - 1));
+  }
   // Also highlight the active combatant's TOKEN on the canvas (scene.js owns the
   // token elements; we hand it the id).
-  const activeTokenId = combatants.length ? combatants[activeIdx].token_id : null;
+  const activeTokenId = activeIdx >= 0 ? combatants[activeIdx].token_id : null;
   if (window.VTTScene && window.VTTScene.highlightToken) window.VTTScene.highlightToken(activeTokenId);
 
   let orphans = 0;

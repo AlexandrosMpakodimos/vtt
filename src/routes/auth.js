@@ -179,12 +179,20 @@ router.post('/resend-verification', async (req, res, next) => {
     const email = normalizeEmail(req.body && req.body.email);
     if (!email) return res.status(400).json({ error: 'email is required' });
     const generic = { ok: true, message: 'If that account exists and is unverified, a new verification email has been sent.' };
+
+    // Respond FIRST, identically, then do any work -- as forgot-password does.
+    // [FIXED 2026-10-01, thesis audit C3] This route used to await the token and
+    // mail work before answering, and only for a registered unverified address,
+    // so the response time told an observer whether such an account existed.
+    res.json(generic);
+
     const user = await knex('users').where({ email }).first();
     if (user && !user.email_verified_at) {
-      await issueVerificationEmail(user);
+      await issueVerificationEmail(user).catch((err) =>
+        console.error('Failed to issue verification email:', err.message));
     }
-    return res.json(generic);
   } catch (err) {
+    if (res.headersSent) return console.error('resend-verification failed:', err.message);
     return next(err);
   }
 });

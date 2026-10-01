@@ -182,8 +182,10 @@ function itemLeaks(item) {
     ['edit an item', () => player.req('PATCH', `${I}/${relic.id}`, { name: 'Mine now' }), 403],
     ['identify an item', () => player.req('PATCH', `${I}/${relic.id}`, { identified: true }), 403],
     ['delete an item', () => player.req('DELETE', `${I}/${relic.id}`), 403],
-    ['edit the GM\'s NPC', () => player.req('PATCH', `${A}/${boss.id}`, { hp_current: 1 }), 403],
-    ['delete the GM\'s NPC', () => player.req('DELETE', `${A}/${boss.id}`), 403],
+    // 404, not 403 (audit C5, 2026-10-01): writes follow the read rule, so an
+    // NPC the player may not know about is indistinguishable from no NPC.
+    ['edit the GM\'s NPC', () => player.req('PATCH', `${A}/${boss.id}`, { hp_current: 1 }), 404],
+    ['delete the GM\'s NPC', () => player.req('DELETE', `${A}/${boss.id}`), 404],
     // 404, not 403 — V2 hides the NPC's existence rather than confirming it.
     ['fill the NPC\'s bag', () => player.req('POST', `${A}/${boss.id}/inventory`, { item_id: relic.id }), 404],
   ]) {

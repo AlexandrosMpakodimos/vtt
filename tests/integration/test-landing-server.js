@@ -154,6 +154,12 @@ async function userIdByEmail(email) {
     check(`${file}: 200 with a CSP that limits scripts to 'self'`, res.status === 200 && csp.includes("script-src 'self'"), `${res.status} ${csp || '(no CSP)'}`);
     check(`${file}: frame protection and nosniff`, res.headers.get('x-frame-options') === 'SAMEORIGIN' && res.headers.get('x-content-type-options') === 'nosniff');
   }
+  // [2026-10-01, audit C2] Asset writes are behind the same origin check as
+  // the auth and campaign routes.
+  for (const [method, path] of [['POST', '/api/assets/external'], ['POST', '/api/assets/upload'], ['DELETE', '/api/assets/00000000-0000-4000-8000-000000000000']]) {
+    const res = await fetch(BASE + path, { method, headers: { Origin: 'https://evil.example', 'Content-Type': 'application/json' }, body: method === 'DELETE' ? undefined : '{}' });
+    check(`cross-origin ${method} ${path} is refused (403)`, res.status === 403, `got ${res.status}`);
+  }
   check('no public/ directory at the app root (the host would serve it around the app)',
     !require('fs').existsSync(require('path').join(__dirname, '..', '..', 'public')));
 

@@ -589,9 +589,13 @@ router.patch('/:actorId', requireMember, async (req, res, next) => {
 
     const isOwner = req.isOwner === true;
     if (!mayWriteActor({ isOwner, actor, userId: req.user.id })) {
-      // A member already knows the campaign exists and, for a PC, already sees
-      // the sheet, so an honest 403 leaks nothing here — matching requireOwner's
-      // treatment of a member who is not the owner.
+      // A character the player may READ (a party member's PC) gets an honest
+      // 403. One they may not know about gets the same 404 the read path gives.
+      // [FIXED 2026-10-01, thesis audit C5] Answering 403 here for an unseen NPC
+      // confirmed that the id existed, which the read path deliberately hides.
+      if (!(await playersMayKnowActor(req.campaign, actor))) {
+        return res.status(404).json({ error: 'actor not found' });
+      }
       return res.status(403).json({ error: 'you do not control that character' });
     }
 
@@ -652,6 +656,10 @@ router.delete('/:actorId', requireMember, async (req, res, next) => {
 
     const isOwner = req.isOwner === true;
     if (!mayWriteActor({ isOwner, actor, userId: req.user.id })) {
+      // Same rule as PATCH: an unknowable character is indistinguishable from none.
+      if (!(await playersMayKnowActor(req.campaign, actor))) {
+        return res.status(404).json({ error: 'actor not found' });
+      }
       return res.status(403).json({ error: 'you do not control that character' });
     }
 
