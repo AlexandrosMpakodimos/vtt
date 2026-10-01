@@ -1,4 +1,5 @@
 const { rootPath } = require('../helpers/paths');
+const { formFieldProblems } = require('../helpers/formfields');
 // Game page UI smoke suite. jsdom only — no server, no database:
 //   node tests/unit/test-game-ui.js
 //
@@ -248,6 +249,7 @@ const SHELL = [
     t('GM: whoami populated', /selene/.test(gm.document.getElementById('whoami').textContent));
     t('GM: a confirmed session shows the page (auth-pending removed)',
       !gm.document.documentElement.classList.contains('auth-pending'));
+    { const ff = formFieldProblems(gm.document); t('GM game page: every form field has an id or name, an accessible name, and no broken label', ff.length === 0, ff.join(' | ')); }
 
     // Boot order: scene boots before combat, both exactly once at load.
     t('GM: scene.boot called once at boot', gm.bootSpies.scene === 1, 'scene=' + gm.bootSpies.scene);

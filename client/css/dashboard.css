@@ -148,6 +148,7 @@
     }
     .tab[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--rule); }
     .tab:hover { color: var(--text); }
+    .tabs-list { display: flex; align-items: center; gap: 0.25rem; }
     .tabs-extra { margin-left: auto; display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.82rem; color: var(--text-muted); }
     .tabs-extra input { accent-color: var(--accent); }
 
@@ -171,7 +172,8 @@
     /* When a card is open, its collapsed head stays in the grid as a backdrop
        placeholder (slightly dimmed); the panel itself floats in the overlay. */
     .card[data-expanded="true"] { border-color: var(--accent); }
-    .card[data-expanded="true"] .card-head { opacity: 0.5; }
+    .card[data-expanded="true"] .card-head,
+    .card[data-expanded="true"] .card-head-actions { opacity: 0.5; }
 
     /* Collapsed head is the expand trigger (a real button). */
     .card-head {

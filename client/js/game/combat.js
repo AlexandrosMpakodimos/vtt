@@ -231,6 +231,7 @@ function renderStrip() {
       const hpRow = el('div', { cls: `hp-edit ${hp.cls}` });
       const input = document.createElement('input');
       input.type = 'number';
+      input.name = 'combatant-hp';
       input.className = 'hp-cur';
       input.value = (c.hp_override === null || c.hp_override === undefined) ? '' : String(c.hp_override);
       input.placeholder = '—';
@@ -774,7 +775,7 @@ function renderWhisperTargets() {
   for (const o of sel.options) {
     const label = el('label', { cls: 'whisper-option' });
     const check = document.createElement('input');
-    check.type = 'checkbox'; check.checked = o.selected;
+    check.type = 'checkbox'; check.name = 'whisper-to'; check.value = o.value; check.checked = o.selected;
     check.addEventListener('change', () => { o.selected = check.checked; refreshLabel(); });
     label.append(check, document.createTextNode(o.textContent));
     choices.appendChild(label);

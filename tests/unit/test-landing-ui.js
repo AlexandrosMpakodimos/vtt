@@ -1,4 +1,5 @@
 const { rootPath } = require('../helpers/paths');
+const { formFieldProblems } = require('../helpers/formfields');
 // Landing page UI smoke suite. jsdom only — no server, no database:
 //   node tests/unit/test-landing-ui.js
 //
@@ -107,6 +108,7 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   t('theme.js + landing.js evaluate without throwing', loadErr === null,
     loadErr && `${loadErr.name}: ${loadErr.message}`);
   if (loadErr) { console.log(`\n${pass} passed, ${fail} failed`); process.exit(1); }
+  { const ff = formFieldProblems(document); t('landing: every form field has an id or name, an accessible name, and no broken label', ff.length === 0, ff.join(' | ')); }
 
   // ── element-id manifest ─────────────────────────────────────────────────────
   const MANIFEST = ('themeToggle headerLogin headerDash heroLayers ctaRow ctaSignup '

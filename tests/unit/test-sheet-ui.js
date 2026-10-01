@@ -1,4 +1,5 @@
 const { rootPath } = require('../helpers/paths');
+const { formFieldProblems } = require('../helpers/formfields');
 // Character sheet + item editor UI suite. jsdom only — no server, no database:
 //   node tests/unit/test-sheet-ui.js
 //
@@ -190,6 +191,7 @@ async function clickSave(container) {
 
   c = mount();
   Sheet.render(c, { actor: baseActor(), isGm: true, me: GM, onSave: async () => ({ status: 200 }) });
+  { const ff = formFieldProblems(document); check('character sheet (GM): every form field has an id or name, an accessible name, and no broken label', ff.length === 0, ff.join(' | ')); }
   check('the GM may edit every field', ['strength', 'hp_max', 'level', 'notes', 'hp_current']
     .every((k) => field(c, k).disabled === false));
 

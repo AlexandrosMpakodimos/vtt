@@ -1,4 +1,5 @@
 const { rootPath } = require('../helpers/paths');
+const { formFieldProblems } = require('../helpers/formfields');
 // Character page smoke suite. jsdom only — no server, no database:
 //   node tests/unit/test-actors-ui.js
 //
@@ -609,6 +610,7 @@ for (const id of [
     // keeps Edit, Identify/Hide and Delete (the separate Preview button and its
     // second eye icon are gone).
     const firstCard = cards()[0];
+    { const ff = formFieldProblems(document); t('library items (GM): every form field has an id or name, an accessible name, and no broken label', ff.length === 0, ff.join(' | ')); }
     const kinds = [...firstCard.querySelectorAll('.item-card-actions .item-icon-btn')]
       .map((b) => (b.className.match(/item-icon-(\w+)$/) || [])[1]);
     t('GM cards have exactly Edit, Identify/Hide and Delete',
@@ -621,8 +623,15 @@ for (const id of [
     firstCard.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
     t('clicking a GM card opens its preview', !!opened);
     opened = null;
-    firstCard.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-    t('Enter on the focused card opens its preview', !!opened);
+    const cardBody = firstCard.querySelector('.item-card-body');
+    cardBody.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    t('Enter on the focused card body opens its preview', !!opened);
+    // [2026-10-01, accessibility] The button role sits on the body, never on a
+    // card that contains the GM's action buttons (no nested interactive controls).
+    t('the card body, not the card, is the keyboard control',
+      cardBody.getAttribute('role') === 'button' && cardBody.tabIndex === 0 && !firstCard.hasAttribute('role'));
+    t('no action button sits inside an element with role=button',
+      ![...firstCard.querySelectorAll('.item-card-actions button')].some((b) => b.parentElement.closest('[role="button"]')));
     opened = null;
     const prevConfirm0 = window.confirm; window.confirm = () => false;
     firstCard.querySelector('.item-icon-delete').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));

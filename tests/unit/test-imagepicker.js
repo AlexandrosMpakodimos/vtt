@@ -1,4 +1,5 @@
 const { rootPath } = require('../helpers/paths');
+const { formFieldProblems } = require('../helpers/formfields');
 // Image picker — jsdom suite. No server, no database, no bucket:
 //     node tests/unit/test-imagepicker.js
 //
@@ -182,6 +183,7 @@ t('...offering exactly the four allowed types',
   console.log('\n--- an avatar is personal and carries no campaign ---');
   P.open({ campaignId: 'C1', kind: 'avatar', onChoose: () => {} });
   await new Promise((r) => setTimeout(r, 10));
+  { const ff = formFieldProblems(document, back); t('image picker: every form field has an id or name, an accessible name, and no broken label', ff.length === 0, ff.join(' | ')); }
   calls.length = 0;
   const linkInput = back.querySelector('.vttpick-link');
   linkInput.value = 'https://elsewhere.example/pasted.png';
