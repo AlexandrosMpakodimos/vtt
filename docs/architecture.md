@@ -14,7 +14,7 @@
 | `src/socket.js` | Session-enforced connection wiring, broadcasts, movement and pings |
 | `src/socket/roomLifecycle.js` | Admission generations, eviction, tracking and presence |
 | `scripts/` | Test launchers and storage/development utilities |
-| `workers/media-proxy/` | Separate Cloudflare Worker package (own manifest, lockfile and tests): a pass-through proxy in front of `/media/:id`. Authorization, metering and caching stay in the app. Not deployed |
+| `workers/media-proxy/` | Separate Cloudflare Worker package (own manifest, lockfile and tests): a pass-through proxy in front of `/media/:id`. Authorization, metering and caching stay in the app. Deployed |
 
 Campaign routes mount authentication before nested resources. Middleware checks
 are not a substitute for fresh authority checks inside protected transactions;

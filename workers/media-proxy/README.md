@@ -1,6 +1,6 @@
 # Media proxy Worker
 
-A Cloudflare Worker that sits in front of the VTT app's `/media/:id` route so that media is served from its own hostname. **It has never been deployed.** It is a separate package: its manifest, lockfile, dependency (Miniflare, which brings workerd) and test commands are independent of the application's.
+A Cloudflare Worker that sits in front of the VTT app's `/media/:id` route so that media is served from its own hostname. It is deployed in production as `vtt-media` (see [deployment](../../docs/deployment.md)). It is a separate package: its manifest, lockfile, dependency (Miniflare, which brings workerd) and test commands are independent of the application's.
 
 The Worker authorizes nothing. The app still verifies the signed media token, checks the asset row, meters storage reads and caches. The Worker only accepts one request shape, proves to the app that the request came through it (the `X-Media-Proxy-Auth` header, checked by the app's proxy gate), and translates the app's answer.
 
@@ -42,7 +42,7 @@ Details, recovery after an interrupted integration run, and the evidence tiers a
 
 `package.json` overrides two exact pins inside Miniflare, scoped to Miniflare: `sharp` 0.35.4 (Miniflare 4.20260730.0 pins 0.35.2) and `undici` 7.29.0 (it pins 7.28.0). `npm audit` reported advisories against `sharp` below 0.35.4 (libheif) and `undici` below 7.29.0 (five advisories). Miniflare 4.20260730.0 is the newest stable Miniflare 4 release and no stable release pins fixed versions; the only fixed line is a Miniflare 5 alpha, which is not adopted.
 
-Both packages are test tooling only. Miniflare is a devDependency, the Worker has no runtime dependencies, and nothing here is deployed. Checked against Miniflare's actual usage: `sharp` is loaded only by its Images binding, which this project never uses; `undici` is used through its public API (`fetch`, `Headers`, `Request`, `Response`, `FormData`, `Pool`, `MockAgent`, `Dispatcher`) and none of the cache, retry or cookie interfaces the advisories concern. Both packages declare Node requirements no higher than Miniflare's own (`>=22.0.0`), and the tests pass on Node 22.0.0, 22.22.2, 24.21.0 and 26.9.0.
+Both packages are test tooling only. Miniflare is a devDependency and the Worker has no runtime dependencies; neither is part of what is deployed. Checked against Miniflare's actual usage: `sharp` is loaded only by its Images binding, which this project never uses; `undici` is used through its public API (`fetch`, `Headers`, `Request`, `Response`, `FormData`, `Pool`, `MockAgent`, `Dispatcher`) and none of the cache, retry or cookie interfaces the advisories concern. Both packages declare Node requirements no higher than Miniflare's own (`>=22.0.0`), and the tests pass on Node 22.0.0, 22.22.2, 24.21.0 and 26.9.0.
 
 To remove the overrides: when a stable Miniflare release pins `sharp` 0.35.4 or later and `undici` 7.29.0 or later, bump Miniflare, delete the `overrides` block, regenerate the lockfile, and run `npm ci`, `npm audit`, `npm test` and `npm run test:integration`. The lockfile differs from the frozen package's lockfile only in `sharp`, `undici` and the `@img` platform packages.
 
