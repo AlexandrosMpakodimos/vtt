@@ -1,16 +1,19 @@
 # Configuration and deployment backlog
 
-This is an inventory and separate backlog, not a deployment procedure or a
-claim of production readiness. The repository contains a media proxy Worker in `workers/media-proxy/`, tested locally and never deployed. Public hosting and Gmail API
-integration are not implemented. Keep those design proposals separate from completed work.
+The application is deployed at <https://trucksart.com> (since September 2026):
+IP.GR shared hosting, Neon PostgreSQL, Render Key Value for coordination, and
+Cloudflare R2 for images behind the media proxy Worker in `workers/media-proxy/`,
+which is deployed. This document is the configuration inventory. [TODO] The
+release, rollback and Worker deployment procedure is still to be written here.
 
 ## Current configuration
 
 Names below are configuration keys, not requests for their values. Keep real
 credentials private. Many modules read configuration at import time; a later
 refactor must preserve initialization order and isolated-test overrides.
-`.env.example` currently lists only `PORT`, `DATABASE_URL`, `SESSION_SECRET`,
-and `NODE_ENV`; it is not a complete production template.
+`.env.example` is a local development template (`PORT`, `DATABASE_URL`,
+`SESSION_SECRET`, `NODE_ENV`, `MAIL_JSON` and commented optional keys); it is
+not a complete production template.
 
 | Keys | Current source behavior |
 | --- | --- |
@@ -25,7 +28,7 @@ and `NODE_ENV`; it is not a complete production template.
 | `UPLOAD_MODE` | Defaults to `proxy`; `strict` disables legacy presign issuance. Isolated tests force strict mode |
 | `MEDIA_HOST`, `MEDIA_ORIGIN` | Host gate and browser-facing media origin; unset host disables gateway. Default origin is HTTPS on the host; explicit origin is validated as HTTP(S), but its hostname is not checked against `MEDIA_HOST` |
 | `MEDIA_TOKEN_SECRET`, `MEDIA_CACHE_BYTES` | Token key falls back to session secret; cache defaults to 64 MiB. Token lifetime is fixed at 300 seconds in source |
-| `MEDIA_PROXY_SECRET` | Optional; blank or unset keeps host mode. When set, proxy mode: the media route answers only requests carrying it in exactly one `X-Media-Proxy-Auth` header (duplicates in any capitalisation are refused) and ignores Host, and reads the token from exactly one `X-Media-Token` header (never together with `?t=`; with no header it still reads `?t=`, so the app can be updated before the Worker); `MEDIA_HOST` must still be set and then names the public media origin. At least 32 characters; must differ from the media token secret and `SESSION_SECRET`. It proves a request came through the proxy and authorises no asset: tokens and asset checks still decide every read. No current deployment path sets it |
+| `MEDIA_PROXY_SECRET` | Optional; blank or unset keeps host mode. When set, proxy mode: the media route answers only requests carrying it in exactly one `X-Media-Proxy-Auth` header (duplicates in any capitalisation are refused) and ignores Host, and reads the token from exactly one `X-Media-Token` header (never together with `?t=`; with no header it still reads `?t=`, so the app can be updated before the Worker); `MEDIA_HOST` must still be set and then names the public media origin. At least 32 characters; must differ from the media token secret and `SESSION_SECRET`. It proves a request came through the proxy and authorises no asset: tokens and asset checks still decide every read. Set in production |
 | `MAX_CAMPAIGNS_PER_USER`, `MAX_PLAYERS_PER_CAMPAIGN` | Defaults 20 owned live campaigns and 8 active members including GM |
 | `R2_MAX_TOTAL_BYTES`, `R2_MAX_CLASS_A`, `R2_MAX_CLASS_B` | Application budget defaults: 8,000,000,000 bytes, 100,000 Class A operations, 2,000,000 Class B operations; not provider allowance guarantees |
 | `R2_MAINT_CLASS_A`, `R2_MAINT_CLASS_B` | Maintenance reserves within the operation ceilings; defaults 2,000 and 40,000 |
@@ -44,13 +47,13 @@ does not prove delivery; verify each flow with a real inbox. Asset upload accoun
 the current `budgetActive()` implementation refuses unavailable/uninitialized
 accounting with 503 despite older comments suggesting an inactive bypass.
 
-## Media proxy Worker (not deployed)
+## Media proxy Worker
 
 `workers/media-proxy/` is a separate Cloudflare Worker package. It sits in front of
 the app's `/media/:id` route so that media is served from its own hostname, and it
 only translates requests and answers. The app still verifies the signed token,
 checks the asset row, meters storage reads and caches. It never authorizes an
-asset itself. Nothing here is a deployment procedure.
+asset itself.
 
 | Setting | Where | Meaning |
 | --- | --- | --- |

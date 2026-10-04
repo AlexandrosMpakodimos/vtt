@@ -1,57 +1,144 @@
-# Virtual Tabletop
+# Διαδικτυακή Εφαρμογή για Επιτραπέζιο Παιχνίδι Ρόλων (Virtual Tabletop)
 
-A browser-based tabletop for a GM and players: campaigns, scenes, tokens, fog,
-characters, inventory, combat, chat and image assets. Built with Node.js/CommonJS,
-Express, PostgreSQL/Knex and Socket.IO, with plain HTML/CSS/JavaScript and no
-frontend build step.
+Πτυχιακή εργασία με τίτλο: «Ανάπτυξη Διαδικτυακής Εφαρμογής για Επιτραπέζιο Παιχνίδι» του Τμήματος Πληροφορικής του Ιονίου Πανεπιστημίου. Πρόκειται για μια απλοποιημένη πλατφόρμα για επιτραπέζια παιχνίδια ρόλων, εμπνευσμένη από το [Dungeons & Dragons](https://www.dungeonsanddragons.com). Ένας Game Master (ο αφηγητής που διευθύνει το παιχνίδι) και έως 7 παίκτες συνδέονται στο ίδιο εικονικό τραπέζι και βλέπουν κάθε αλλαγή σε πραγματικό χρόνο.
 
-## Local development
+Η εφαρμογή είναι διαθέσιμη στο <https://trucksart.com>.
 
-Use a private `.env` with the intended development database and signing secrets.
-Never share that file or put real credentials in source. For a new checkout,
-install the locked dependencies with `npm ci`, then apply migrations to the
-intended development database with `NODE_ENV=development npm run migrate`.
-The isolated test database has separate setup and credentials; see the test guide.
+**Χαρακτηριστικά:** Χάρτες και πιόνια που μπορούν να προσαρμοστούν, με δυνατότητα
+απόκρυψης και εμφάνισής τους, φύλλα για τους χαρακτήρες με στατιστικά, αντικείμενα και ξόρκια, μηχανισμός παρακολούθησης της σειράς των πιονιών κατά τη διάρκεια μάχης, τρισδιάστατα ζάρια και συνομιλία (chat).
 
-For the existing development environment:
+## Οδηγός εγκατάστασης
+
+> **Windows:** πληκτρολογήστε όλες τις εντολές στη **Γραμμή εντολών**
+> (Command Prompt, `cmd`) και όχι στο PowerShell, το οποίο μπλοκάρει το `npm`.
+
+### 1. Απαραίτητα εργαλεία
+
+Για την τοπική εγκατάσταση της εφαρμογής θα χρειαστείτε **Node.js 22** και **PostgreSQL 16 ή νεότερη**.
+
+**Με πρόγραμμα εγκατάστασης:**
+
+- Node.js: <https://nodejs.org> (έκδοση 22)
+- PostgreSQL:
+  - Windows: <https://www.postgresql.org/download/windows/>. Κατά την
+    εγκατάσταση θα σας ζητηθεί κωδικός για τον χρήστη `postgres`· κρατήστε τον, θα τον χρειαστείτε στο βήμα 4.
+  - macOS: [Postgres.app](https://postgresapp.com). Ανοίξτε την εφαρμογή και πατήστε **Initialize**.
+
+**Από τη γραμμή εντολών:**
+
+- macOS ([Homebrew](https://brew.sh)):
+
+  ```sh
+  brew install node@22 postgresql@17
+  brew link --force node@22 postgresql@17
+  brew services start postgresql@17
+  ```
+
+- Windows (cmd). Η εγκατάσταση της PostgreSQL θα σας ζητήσει
+  κωδικό για τον χρήστη `postgres`· κρατήστε τον.
+
+  ```sh
+  winget install OpenJS.NodeJS.22
+  winget install PostgreSQL.PostgreSQL.17 --interactive
+  ```
+
+  Στο τέλος ανοίξτε νέο παράθυρο της Γραμμής εντολών.
+
+- Linux (Ubuntu 24.04 ή νεότερο):
+
+  ```sh
+  curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+  sudo apt install -y nodejs postgresql
+  ```
+
+Ελέγξτε με `node -v` (πρέπει να εμφανίσει `v22…`).
+
+### 2. Λήψη του κώδικα
+
+[Κατεβάστε το ZIP](https://github.com/AlexandrosMpakodimos/vtt/archive/refs/heads/main.zip)
+και αποσυμπιέστε το, ή χρησιμοποιήστε το Git:
 
 ```sh
-NODE_ENV=development PORT=3000 BASE_URL=http://localhost:3000 MEDIA_HOST=media.test MEDIA_ORIGIN=http://media.test:3000 npm run dev
+git clone https://github.com/AlexandrosMpakodimos/vtt.git
 ```
 
-Open `http://localhost:3000`. Configure local resolution of `media.test` separately
-for image delivery; setting the variables does not create a DNS/hosts entry.
-Normal startup also starts maintenance jobs. `npm start` starts the same server
-without nodemon; it does not establish a production configuration.
+Το ZIP δημιουργεί τον φάκελο `vtt-main`, ενώ το Git τον φάκελο `vtt`.
+Ανοίξτε τερματικό **μέσα στον φάκελο που έχετε κατεβάσει**:
 
-## Commands
+- Windows: ανοίξτε τον φάκελο στην Εξερεύνηση αρχείων, πατήστε στη γραμμή
+  διευθύνσεων, γράψτε `cmd` και πατήστε Enter.
+- macOS / Linux: μεταβείτε με `cd`, π.χ. `cd ~/Downloads/vtt-main`. Αν η
+  διαδρομή περιέχει κενά, βάλτε τη σε εισαγωγικά.
 
-| Command | Purpose |
-| --- | --- |
-| `npm run dev` | Development server through nodemon |
-| `npm run dev:test` | Isolated server on `127.0.0.1:3001`, memory storage |
-| `npm test` | Unit suites, without an external server/database |
-| `npm run test:db` | Integration suites through the isolated wrapper |
-| `npm run test:sec` | Adversarial suites through the isolated wrapper |
-| `npm run test:all` | All registered suites, sequentially |
-| `npm run migrate` | Apply migrations for the selected environment |
-| `npm run migrate:make -- NAME` | Create a migration |
-| `npm run clean:bucket` | Storage maintenance; read the operational guide first |
-| `cd workers/media-proxy && npm ci && npm test` | Media proxy Worker tests; a separate package with its own dependencies. `npm run test:integration` there also needs the app's dependencies and the isolated test database |
+### 3. Εγκατάσταση των εξαρτήσεων
 
-## Maintainer guide
+```sh
+npm ci
+```
 
-- [Architecture and repository layout](docs/architecture.md)
-- [Permission, transaction and socket contracts](docs/invariants.md)
-- [Tests, fixtures and isolation](docs/testing.md)
-- [Configuration, operations and deployment backlog](docs/deployment.md)
-- [Media proxy Worker package](workers/media-proxy/README.md) (own manifest, lockfile and tests; not deployed)
+Ενδέχεται να εμφανιστούν προειδοποιήσεις για ευπάθειες ασφαλείας ή για νεότερη έκδοση του npm. Δεν επηρεάζουν την τοπική λειτουργία της εφαρμογής. **Μην εκτελέσετε `npm audit fix`**, γιατί αλλάζει τις δοκιμασμένες εκδόσεις.
 
-The application is locally tested; public deployment remains unfinished.
-Historical audit evidence is in [the audit archive](docs/history/authorization-audit.md).
-Current verification records belong in the test guide and the relevant PR.
+### 4. Δημιουργία της βάσης δεδομένων
 
-Share committed source with `git archive`, not a ZIP of the working directory.
-Installed dependencies, private configuration, local diagnostics and recovery
-backups do not belong in source packages. Git archives contain tracked files;
-ignore rules alone do not remove a file that was already tracked.
+Ανοίξτε την κονσόλα της PostgreSQL (`psql`):
+
+- **Windows:** αναζητήστε «SQL Shell (psql)» στο μενού Έναρξης (Start Menu) και ανοίξτε το.
+  Πατήστε Enter σε κάθε ερώτηση, εκτός από το `Password for user postgres`, όπου πληκτρολογήστε τον κωδικό του βήματος 1. Εναλλακτικά, στη Γραμμή εντολών (αλλάξτε το `17` αν εγκαταστήσατε άλλη έκδοση):
+  `"C:\Program Files\PostgreSQL\17\bin\psql.exe" -U postgres`
+- **macOS:** στο Postgres.app κάντε διπλό κλικ στη βάση `postgres`. Εναλλακτικά με
+  Homebrew: `psql postgres`
+- **Linux:** `sudo -u postgres psql`
+
+Στη συνέχεια εισάγετε τις παρακάτω δύο γραμμές:
+
+```sql
+CREATE ROLE vtt LOGIN PASSWORD 'vtt-local';
+CREATE DATABASE vtt OWNER vtt;
+```
+
+Έτσι δημιουργείται ένας ξεχωριστός χρήστης μόνο για την εφαρμογή. `vtt` είναι το όνομα χρήστη και `vtt-local` ο κωδικός του. Δεν είναι ο κωδικός του διαχειριστή `postgres` από το βήμα 1. Αν αλλάξετε κάποιο από τα δύο, αλλάξτε το και στο `DATABASE_URL` του αρχείου `.env` (βήμα 5).
+
+Τέλος πληκτρολογήστε `\q` για έξοδο από την κονσόλα της PostgreSQL.
+
+### 5. Δημιουργία του αρχείου ρυθμίσεων
+
+Windows:
+
+```sh
+copy .env.example .env
+```
+
+macOS / Linux:
+
+```sh
+cp .env.example .env
+```
+
+Προαιρετικά, ανοίξτε το αρχείο `.env` σε έναν επεξεργαστή κειμένου (π.χ.
+`notepad .env` στα Windows) και αλλάξτε την τιμή του `SESSION_SECRET` σε
+τουλάχιστον 32 χαρακτήρες: λατινικά γράμματα, αριθμούς, `-` ή `_`.
+
+### 6. Δημιουργία των πινάκων της βάσης και εκκίνηση
+
+```sh
+npm run migrate
+npm start
+```
+
+Μόλις εμφανιστεί `STARTUP_READY` στο τερματικό, ανοίξτε το
+<http://localhost:3000> στον browser σας.
+
+### 7. Εγγραφή
+
+Δημιουργήστε λογαριασμό. Επειδή η εφαρμογή τρέχει τοπικά, δεν αποστέλλεται email. Το τερματικό εμφανίζει μια γραμμή που ξεκινά με `Verification link`.
+Αντιγράψτε τη διεύθυνση που ακολουθεί, ανοίξτε τη στον browser και, στη
+συνέχεια, συνδεθείτε.
+
+Για να δοκιμάσετε την ενημέρωση σε πραγματικό χρόνο, δημιουργήστε δεύτερο λογαριασμό σε παράθυρο ιδιωτικής περιήγησης του browser (εναλλακτικά σε διαφορετικό browser) και συνδεθείτε στο ίδιο παιχνίδι.
+
+> Η μεταφόρτωση αρχείων εικόνας απαιτεί περαιτέρω σύνδεση με υπηρεσία αποθήκευσης αρχείων σε cloud (π.χ. Cloudflare R2)
+> και δεν είναι διαθέσιμη τοπικά. Μπορείτε όμως να προσθέσετε εικόνες μέσω συνδέσμου
+> (URL).
+
+Για να σταματήσετε την εφαρμογή, πατήστε `Ctrl + C` στο τερματικό που τρέχει (στο
+macOS `control + C`).
