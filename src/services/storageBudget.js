@@ -35,6 +35,7 @@
 // against the account?" is no.
 
 const knex = require('../db');
+const { retryAfterSerializationFailure } = require('./atomicCap');
 
 // Application defaults. These are OURS, deliberately well under Cloudflare's
 // real free allowance so we stop before the provider does — never Cloudflare's
@@ -94,8 +95,9 @@ function classOf(op) {
 }
 
 // The serialisable wrapper, identical in spirit to atomicCap's: one SERIALIZABLE
-// transaction, bounded retry on 40001, no mutex. Every mutation of the ledger
-// goes through it so two of them cannot interleave their read and write.
+// transaction, bounded jittered retry on 40001 (the shared policy in
+// atomicCap.js), no mutex. Every mutation of the ledger goes through it so two
+// of them cannot interleave their read and write.
 async function inSerializable(fn) {
   let attempt = 0;
   // eslint-disable-next-line no-constant-condition
@@ -107,7 +109,7 @@ async function inSerializable(fn) {
       });
     } catch (err) {
       if (err.budgetExceeded || err.budgetUninitialised) throw err;
-      if (err.code === '40001' && attempt < 5) { attempt += 1; continue; }
+      if (await retryAfterSerializationFailure(err, attempt)) { attempt += 1; continue; }
       throw err;
     }
   }

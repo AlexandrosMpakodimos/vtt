@@ -2,7 +2,20 @@
 
 ## Verification records
 
-The owner-reported full macOS run immediately before frontend organization:
+Owner-reported full macOS run on 2026-10-05 (`npm run test:all`, before the
+serialization-retry fix): 88 suites (44 unit, 35 integration, 9 adversarial),
+4,517 assertions, **1 failed**. The failure was intermittent: `break-canvas.js`
+"scene token cap lands on EXACTLY 500 under 40 parallel pastes" found 460 rows,
+then passed on the next run. The cap held; two legitimate pastes were lost
+because SERIALIZABLE losers retried immediately, re-collided, exhausted the
+six attempts and surfaced as 500s. Fixed by the jittered backoff in
+`src/services/atomicCap.js` (regression suite `test-atomic-cap-retry.js`).
+After the fix (same day, same machine): `break-canvas.js` passed 10 consecutive
+runs (70 defended, 0 vulnerable each), and the full `npm run test:all` run
+passed 89 suites (45 unit, 35 integration, 9 adversarial) with 4,531
+assertions and 0 failures.
+
+The earlier owner-reported full macOS run, immediately before frontend organization:
 
 | Group | Suites | Assertions |
 | --- | --- | --- |
@@ -20,9 +33,8 @@ Earlier audit results remain [historical evidence](history/authorization-audit.m
 
 The authoritative registration and order are the `UNIT`, `DB`, and `SEC` arrays
 in `tests/suites.js`. They are explicit lists, not automatic discovery, and
-currently register 31 / 31 / 9 suites. The recorded run above predates
-`test-media-proxy-gate.js`, the one database/integration suite added since. All
-original suite entries retain their relative order.
+currently register 45 / 35 / 9 suites. The 70-suite record above predates the
+suites added since then. All original suite entries retain their relative order.
 
 Suites live in `tests/unit/`, `tests/integration/`, and `tests/security/`.
 The root `run-tests.js` remains the runner; npm commands are unchanged.

@@ -30,7 +30,7 @@ const { contentWriteLimiter } = require('../middleware/rateLimit');
 // Moved to services/ in M4: actors, items and inventory attunement now share
 // this primitive, and leaving it here would create a require cycle between the
 // scene and actor routers. Behaviour is unchanged for every call site below.
-const { withAtomicCap } = require('../services/atomicCap');
+const { withAtomicCap, retryAfterSerializationFailure } = require('../services/atomicCap');
 // M5. Scene access moved to a leaf module to break the routes/scenes <->
 // routes/combat require cycle; see that module's header.
 const { loadSceneInCampaign, mayUseScene } = require('../services/sceneAccess');
@@ -898,7 +898,7 @@ router.post('/:sceneId/tokens', requireMember, async (req, res, next) => {
               error: `players may place at most ${MAX_PLAYER_TOKENS_PER_SCENE} token(s) in a scene`,
             });
           }
-          if (err.code === '40001' && attempt < 5) { attempt += 1; continue; }
+          if (await retryAfterSerializationFailure(err, attempt)) { attempt += 1; continue; }
           throw err;
         }
       }
