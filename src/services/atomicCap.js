@@ -25,6 +25,43 @@
 
 const knex = require('../db');
 
+// Retry policy for SERIALIZABLE transactions that abort with 40001.
+//
+// Added 2026-10-05 after break-canvas.js failed intermittently: 40 parallel
+// pastes landed 460 tokens on a 500 cap. The cap held (safety), but two
+// legitimate pastes were lost (liveness). The old loop retried IMMEDIATELY, so
+// the same 40 transactions collided again at once; six losses in a row ran
+// out the budget and the 40001 surfaced as a 500.
+//
+// Each retry now waits an exponentially growing, jittered delay — the same
+// formula campaigns/operations.js has used for campaign create/join since its
+// retry audit — so competing requests spread out instead of re-colliding.
+// The attempt bound is unchanged (one try + five retries, about 0.3–0.6 s of
+// waiting in the worst case). If it is still exhausted, the error is tagged
+// 503: temporary contention, not a server fault and not "the cap is full".
+const MAX_SERIALIZATION_RETRIES = 5;
+
+function serializationBackoff(attempt, random = Math.random) {
+  const base = 10 * (2 ** attempt);
+  return base + Math.floor(random() * base);
+}
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Shared by every SERIALIZABLE retry loop (atomic caps, the player token cap in
+// routes/scenes.js, the storage budget ledger). Returns true when the caller
+// should retry; otherwise the caller rethrows `err`, which then carries
+// status 503 if it was an exhausted serialization failure.
+async function retryAfterSerializationFailure(err, attempt) {
+  if (!err || err.code !== '40001') return false;
+  if (attempt >= MAX_SERIALIZATION_RETRIES) {
+    err.status = 503;
+    return false;
+  }
+  await sleep(serializationBackoff(attempt));
+  return true;
+}
+
 // Run a count-then-write as one serialisable transaction with bounded retry, so
 // N concurrent requests cannot all read "count < MAX" before any of them commits.
 // `capError` is thrown (and surfaced as 409) when the cap is already reached.
@@ -113,10 +150,15 @@ async function withAtomicCap({ table, where, max, capMessage, insert, update, ex
       });
     } catch (err) {
       if (err.capExceeded || err.rowMissing) throw err;
-      if (err.code === '40001' && attempt < 5) { attempt += 1; continue; }
+      if (await retryAfterSerializationFailure(err, attempt)) { attempt += 1; continue; }
       throw err;
     }
   }
 }
 
-module.exports = { withAtomicCap };
+module.exports = {
+  withAtomicCap,
+  retryAfterSerializationFailure,
+  serializationBackoff,
+  MAX_SERIALIZATION_RETRIES,
+};
