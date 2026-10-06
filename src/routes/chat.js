@@ -3,17 +3,18 @@
 // everywhere else.
 //
 // Three things share this table because they are one thing — a line in the log:
-// ordinary chat, dice results, and private messages. `type` distinguishes them
-// for rendering; it does NOT control who receives them.
+// ordinary chat, dice results, and private messages. Nothing stores which of the
+// three a row is: a roll is a row with roll_data, a whisper a row with
+// whisper_to, and the renderer reads those. (A `type` column did until the
+// redundancy cleanup, Fix 3: nothing read it, and the API let a caller store a
+// value that contradicted the row.)
 //
 // ---------------------------------------------------------------------------
 // WHISPERS — the confidentiality rule, and the door that is easy to miss
 // ---------------------------------------------------------------------------
 // whisper_to is the ONLY confidentiality mechanism on this table. NULL means
 // everyone in the campaign; a non-empty array is the exact set of user ids who
-// may receive the row. `type` is a rendering hint and nothing more: a row typed
-// 'chat' with a populated whisper_to is private, and one typed 'whisper' with an
-// empty array is public. The array is the authority, and only the array.
+// may receive the row. The array is the authority, and only the array.
 //
 // THE DOOR. The obvious place to enforce this is the socket emit, and that is
 // where it will get enforced first and where it is easiest to test. GET /
@@ -47,7 +48,7 @@ const knex = require('../db');
 const { requireMember } = require('../middleware/campaignAuth');
 const { contentWriteLimiter } = require('../middleware/rateLimit');
 const {
-  validateMessageType, validateMessageContent, validateWhisperTo,
+  validateMessageContent, validateWhisperTo,
   validateInt,
 } = require('../services/validators');
 const { roll } = require('../services/dice');
@@ -84,7 +85,6 @@ function publicMessage(m) {
     speaker_role: m.speaker_role,
     speaker_as: m.speaker_as,
     content: m.content,
-    type: m.type,
     roll_data: m.roll_data,
     whisper_to: m.whisper_to,
     created_at: m.created_at,
@@ -161,9 +161,6 @@ router.get('/', requireMember, async (req, res, next) => {
 router.post('/', requireMember, async (req, res, next) => {
   try {
     const body = req.body || {};
-
-    const type = validateMessageType(body.type);
-    if (type.error) return res.status(400).json({ error: type.error });
 
     const whisper = validateWhisperTo(body.whisper_to);
     if (whisper.error) return res.status(400).json({ error: whisper.error });
@@ -245,13 +242,6 @@ router.post('/', requireMember, async (req, res, next) => {
       speakerAs = actor.name;
     }
 
-    // A roll is typed 'roll' unless the caller asked for something else; an
-    // explicit whisper_to makes it 'whisper' for rendering. Neither affects who
-    // receives it — recipientsOf reads whisper_to and nothing else.
-    let finalType = type.value;
-    if (rollData && finalType === 'chat') finalType = 'roll';
-    if (whisper.value && finalType === 'chat') finalType = 'whisper';
-
     const [row] = await knex('messages').insert({
       campaign_id: req.campaign.id,
       user_id: req.user.id,
@@ -259,7 +249,6 @@ router.post('/', requireMember, async (req, res, next) => {
       speaker_role: speakerRole,
       speaker_as: speakerAs,
       content,
-      type: finalType,
       roll_data: rollData ? JSON.stringify(rollData) : null,
       whisper_to: whisper.value,
     }).returning('*');

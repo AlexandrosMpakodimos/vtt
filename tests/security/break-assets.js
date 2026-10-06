@@ -167,7 +167,7 @@ async function makeCampaign(gm, name) {
     const pending = await knex('assets').insert(
       Array.from({ length: 20 }, (_, i) => ({
         user_id: quotaUser.id, campaign_id: null,
-        storage_key: null, source: 'external', kind: 'avatar',
+        storage_key: null, kind: 'avatar',
         status: 'pending', url: 'https://example.invalid/p' + i + '.png',
       }))
     ).returning('id');
@@ -208,7 +208,8 @@ async function makeCampaign(gm, name) {
     const row = await knex('assets').where({ id: forged.data.asset.id }).first();
     check('storage key cannot be forged', row.storage_key === null);
     check('uploader cannot be forged', row.user_id === player.id);
-    check('source cannot be forged', row.source === 'external');
+    check('source cannot be forged (computed from the absent storage key)',
+      forged.data.asset.source === 'external' && !('source' in row));
     check('MIME cannot be forged', row.mime === null);
     check('byte count cannot be forged', row.bytes === null);
     check('asset ID is server assigned',

@@ -79,7 +79,7 @@ async function makeVerifiedUser(tag, n) {
       const matches = await knex('campaigns').where({ name }).whereNull('deleted_at');
       if (matches.length > 1) {
         console.error(`More than one campaign named "${name}". Re-run with --id <uuid>. Candidates:`);
-        matches.forEach((c) => console.error(`  ${c.id}  (owner ${c.owner_id}, ${c.is_public ? 'public' : 'private'})`));
+        matches.forEach((c) => console.error(`  ${c.id}  (owner ${c.owner_id}, ${c.password_hash ? 'private' : 'public'})`));
         process.exit(1);
       }
       campaign = matches[0];
@@ -88,6 +88,8 @@ async function makeVerifiedUser(tag, n) {
       process.exit(1);
     }
     if (!campaign) { console.error(`No campaign found for ${id ? `id ${id}` : `name "${name}"`}.`); process.exit(1); }
+    // Public = no password (is_public is computed since Fix 3, not stored).
+    const isPublic = !campaign.password_hash;
 
     const tag = (campaign.name || 'game').replace(/[^a-zA-Z0-9]/g, '').slice(0, 12) || 'game';
     const MAX = Number(process.env.MAX_PLAYERS_PER_CAMPAIGN) || 8;
@@ -99,10 +101,10 @@ async function makeVerifiedUser(tag, n) {
     const need = MAX - already;
 
     console.log(`Campaign: ${campaign.name}  (${campaign.id})`);
-    console.log(`Visibility: ${campaign.is_public ? 'public' : 'private'}${campaign.is_public ? '' : (campaignPassword ? ' — password supplied' : ' — NO --password given!')}`);
+    console.log(`Visibility: ${isPublic ? 'public' : 'private'}${isPublic ? '' : (campaignPassword ? ' — password supplied' : ' — NO --password given!')}`);
     console.log(`Cap: ${MAX} (incl. GM).  Active now: ${already}.  Adding: ${need > 0 ? need : 0}.`);
 
-    if (!campaign.is_public && !campaignPassword) {
+    if (!isPublic && !campaignPassword) {
       console.error('\nThis campaign is PRIVATE. Re-run with --password "<the campaign password>".');
       process.exit(1);
     }
@@ -111,7 +113,7 @@ async function makeVerifiedUser(tag, n) {
     let added = 0;
     for (let i = 0; i < need; i += 1) {
       const u = await makeVerifiedUser(tag, already + i + 1);
-      const body = campaign.is_public ? {} : { password: campaignPassword };
+      const body = isPublic ? {} : { password: campaignPassword };
       const j = await u.agent.req('POST', `/api/campaigns/${campaign.id}/join`, body);
       if (j.status === 200 || j.status === 201) {
         added += 1;

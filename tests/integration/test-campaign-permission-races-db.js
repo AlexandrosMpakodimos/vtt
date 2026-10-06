@@ -41,7 +41,7 @@ async function makeUser() {
 }
 async function race(action, round, donor, recipient) {
   const id = randomUUID();
-  await knex('campaigns').insert({ id, owner_id: donor.id, name: 'Permission race', is_public: true });
+  await knex('campaigns').insert({ id, owner_id: donor.id, name: 'Permission race' });
   await knex('campaign_members').insert([donor, recipient].map(user => ({
     campaign_id: id, user_id: user.id, status: 'active',
   })));

@@ -103,8 +103,9 @@ function publicAsset(a) {
     campaign_id: a.campaign_id,
     user_id: a.user_id,
     url: a.url,
-    source: a.source,
-    source_url: a.source_url,
+    // Computed, not stored (Fix 3): an upload has bytes of ours in storage, an
+    // external link does not. The image picker marks external links with it.
+    source: a.storage_key ? 'upload' : 'external',
     kind: a.kind,
     status: a.status,
     mime: a.mime,
@@ -279,7 +280,6 @@ router.post('/upload',
             user_id: req.user.id,
             storage_key: key,
             url: storage.publicUrl(key),
-            source: 'upload',
             kind,
             status: 'pending',
             reserved_bytes: reservedBytes || null,
@@ -492,11 +492,10 @@ router.post('/external', async (req, res, next) => {
           user_id: req.user.id,
           storage_key: null,
           url: url.value,
-          source_url: url.value,
-          source: 'external',
           kind,
           // Ready immediately: there is nothing of ours to verify. The honesty
-          // is in `source`, which says where this came from.
+          // is in storage_key being NULL, which the API reports as
+          // source: 'external'.
           status: 'ready',
         },
       });

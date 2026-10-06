@@ -40,6 +40,23 @@ rows: up, down and up again; the schema after `down` is identical to the
 25-migration schema (`pg_dump -s`), and the second `up` gives the same schema as
 the first.
 
+Redundancy cleanup (Fix 3, migration `20261007000000_redundancy_cleanup.js`),
+run in the development container against PostgreSQL 16 (the owner's macOS run
+on PostgreSQL 17 is still to be recorded): `test:all` 94 suites (47 unit,
+38 integration, 9 adversarial), 4,777 assertions, 0 failures (unit 2,511 ·
+DB 1,779 · security 487). New suite `test-redundancy-cleanup.js` (51): catalog,
+the composite combat FK refusing a mismatched or re-pointed row and still
+cascading on scene deletion, the migration down/up on seeded rows inside a
+rolled-back transaction (both refusals, the reported-only counts, the `down`
+backfills), the read-only dry-run script (a write inside its transaction is
+refused with 25006), and `is_public` computed over HTTP (create, detail, search
+filters, PATCH both ways, a DB-inserted fixture with
+`tests/helpers/campaignFixture.js`). The manual-only
+`test-stale-asset-atomicity.js` passed 40 assertions. Separately: up, down and up
+again on the test database; the schema after `down` matches the 26-migration
+schema (`pg_dump -s`) except that the four re-created columns come last in their
+tables, as any re-added column does.
+
 The earlier owner-reported full macOS run, immediately before frontend organization:
 
 | Group | Suites | Assertions |
@@ -58,7 +75,7 @@ Earlier audit results remain [historical evidence](history/authorization-audit.m
 
 The authoritative registration and order are the `UNIT`, `DB`, and `SEC` arrays
 in `tests/suites.js`. They are explicit lists, not automatic discovery, and
-currently register 47 / 37 / 9 suites. The 70-suite record above predates the
+currently register 47 / 38 / 9 suites. The 70-suite record above predates the
 suites added since then. All original suite entries retain their relative order.
 
 Suites live in `tests/unit/`, `tests/integration/`, and `tests/security/`.

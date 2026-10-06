@@ -2,8 +2,16 @@
 // can leak it — the same discipline as SAFE_COLUMNS in routes/auth.js.
 const SAFE_COLUMNS = [
   'id', 'owner_id', 'name', 'description', 'img_url',
-  'is_public', 'is_open', 'active_scene_id', 'created_at', 'updated_at',
+  'is_open', 'active_scene_id', 'created_at', 'updated_at',
 ];
+
+// Public = no password. Since the redundancy cleanup (Fix 3) password_hash is
+// the single stored fact; is_public is computed from it, so the two can never
+// disagree. Callers pass rows that include password_hash (every campaign query
+// selects it), which has_password already relies on.
+function isPublicCampaign(c) {
+  return !c.password_hash;
+}
 
 // Shapes a campaign for the client. has_password is exposed as a BOOLEAN (never
 // the hash) so the UI knows whether to prompt; is_gm is derived per-viewer.
@@ -15,7 +23,7 @@ function publicCampaign(c, viewerId) {
     name: c.name,
     description: c.description,
     img_url: c.img_url,
-    is_public: c.is_public,
+    is_public: isPublicCampaign(c),
     // Whether the game is open. Sent to EVERY member, not just the GM: a player
     // needs to know why the table is unreachable, and a dashboard that shows a
     // campaign but cannot say it is closed is worse than one that hides it.
@@ -56,7 +64,7 @@ function searchResult(c) {
     name: c.name,
     description: c.description,
     img_url: c.img_url,
-    is_public: c.is_public,
+    is_public: isPublicCampaign(c),
     is_open: c.is_open !== false,
     has_password: !!c.password_hash,
     owner_username: c.owner_username,
@@ -65,4 +73,4 @@ function searchResult(c) {
   };
 }
 
-module.exports = { SAFE_COLUMNS, publicCampaign, publicMember, searchResult };
+module.exports = { SAFE_COLUMNS, isPublicCampaign, publicCampaign, publicMember, searchResult };

@@ -43,7 +43,7 @@ const sock = (userId, sid) => ({ connected: true, data: { userId, authSessionId:
 async function main() {
   const auth = createAuthorization(knex);
   const owner = await user('gm');
-  const [c] = await knex('campaigns').insert({ name: `${RUN}-game`, owner_id: owner, is_public: true }).returning('id');
+  const [c] = await knex('campaigns').insert({ name: `${RUN}-game`, owner_id: owner }).returning('id');
   const cid = c.id || c; created.campaigns.push(cid);
   // The owner needs no membership row: owner_id alone authorizes them.
   async function player(tag, status = 'active') {

@@ -29,6 +29,7 @@ if (process.env.NODE_ENV !== 'test') {
   throw new Error('stale-asset atomicity suite requires NODE_ENV=test');
 }
 const knex = require('../../src/db');
+const { FIXTURE_CAMPAIGN_HASH } = require('../helpers/campaignFixture');
 const storage = require('../../src/services/storage');
 const budget = require('../../src/services/storageBudget');
 
@@ -334,7 +335,7 @@ async function main() {
     [owner] = await knex('users').insert({
       email: `saa-${RUN_TOKEN}@example.invalid`, username: `saa${RUN_TOKEN}`, password_hash: 'x',
     }).returning('id').then((r) => r.map((x) => x.id));
-    [campaignId] = await knex('campaigns').insert({ name: `stale-asset-atomicity-${RUN_TOKEN}`, owner_id: owner }).returning('id')
+    [campaignId] = await knex('campaigns').insert({ name: `stale-asset-atomicity-${RUN_TOKEN}`, owner_id: owner, password_hash: FIXTURE_CAMPAIGN_HASH }).returning('id')
       .then((r) => r.map((x) => x.id || x));
 
     if (CHILD_MODE) throw new Error(`unknown stale-asset atomicity child mode: ${CHILD_MODE}`);

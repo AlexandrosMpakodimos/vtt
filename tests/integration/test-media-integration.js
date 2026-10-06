@@ -19,6 +19,7 @@ const BASE = process.env.BASE_URL || 'http://127.0.0.1:3000';
 const MEDIA_HOST = process.env.MEDIA_HOST || 'media.test';
 const http = require('http');
 const knex = require('../../src/db');
+const { FIXTURE_CAMPAIGN_HASH } = require('../helpers/campaignFixture');
 
 // A raw HTTP request that CAN override the Host header — fetch() cannot, it
 // derives Host from the URL, so the host-restriction probes must use this. Set
@@ -100,7 +101,7 @@ async function main() {
 
   // Build a ready asset directly (no bucket needed for the token/host/header
   // checks; the actual byte-serving path is noted when no bucket is configured).
-  const [camp] = await knex('campaigns').insert({ name: `mgi-${Date.now()}`, owner_id: user.id }).returning('id');
+  const [camp] = await knex('campaigns').insert({ name: `mgi-${Date.now()}`, owner_id: user.id, password_hash: FIXTURE_CAMPAIGN_HASH }).returning('id');
   const campaignId = camp.id || camp;
   await knex('campaign_members').insert({ campaign_id: campaignId, user_id: user.id, status: 'active' }).catch(() => {});
   const pub = (process.env.R2_PUBLIC_BASE_URL || 'https://pub.r2.dev').replace(/\/+$/, '');

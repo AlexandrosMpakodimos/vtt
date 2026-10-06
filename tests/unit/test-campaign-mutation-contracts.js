@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const { createCampaignOperations } = require('../../src/services/campaigns/operations');
 const { createCampaignMutationHandlers } = require('../../src/routes/campaignMutations');
 const { createCampaignAuth } = require('../../src/middleware/campaignAuthFactory');
-const { publicCampaign, publicMember, searchResult } = require('../../src/services/campaigns/presentation');
+const { SAFE_COLUMNS, publicCampaign, publicMember, searchResult } = require('../../src/services/campaigns/presentation');
 const CID = '10000000-0000-4000-8000-000000000001';
 const OWNER = '20000000-0000-4000-8000-000000000001';
 const PLAYER = '20000000-0000-4000-8000-000000000002';
@@ -23,8 +23,9 @@ async function bounded(promise) {
 
 function fixture(action, { pause = false, failCommit = false, campaign = {}, body } = {}) {
   let state = {
-    campaigns: [{ id: CID, owner_id: OWNER, name: 'Table', is_public: true,
-      is_open: action !== 'transfer', password_hash: 'fixture-hash',
+    // Public by default: since Fix 3 public means password_hash IS NULL.
+    campaigns: [{ id: CID, owner_id: OWNER, name: 'Table',
+      is_open: action !== 'transfer', password_hash: null,
       deleted_at: action === 'restore' ? new Date(Date.now() - 1000).toISOString() : null,
       ...campaign }],
     campaign_members: [
@@ -162,12 +163,24 @@ async function commitContract(action, failCommit) {
   await f.run();
   check('refused DELETE has no eviction', f.res.statusCode === 404 && !f.state().campaigns[0].deleted_at && f.effects.length === 1);
 
-  f = fixture('patch', { campaign: { is_public: false }, body: { is_public: true } });
+  f = fixture('patch', { campaign: { password_hash: 'fixture-hash' }, body: { is_public: true } });
   await f.run();
-  check('PATCH uses locked visibility and clears hash going public', !f.error() && f.state().campaigns[0].password_hash === null && f.res.body.campaign.has_password === false);
+  check('PATCH uses locked visibility and clears hash going public', !f.error() && f.state().campaigns[0].password_hash === null && f.res.body.campaign.has_password === false
+    && f.res.body.campaign.is_public === true);
+  check('PATCH stores no is_public column', !('is_public' in f.state().campaigns[0]));
+  check('a visibility change still refreshes other dashboards', JSON.stringify(f.effects) === JSON.stringify([['response'], CARD]));
+  f = fixture('patch', { body: { is_public: true } });
+  await f.run();
+  check('an unchanged visibility is still an update (no 400), as when it was a column',
+    f.res.statusCode === 200 && f.state().campaigns[0].password_hash === null && JSON.stringify(f.effects) === JSON.stringify([['response'], CARD]));
+  f = fixture('patch', { body: { is_public: false, password: 'newsecret' } });
+  await f.run();
+  check('going private stores only the hash and reports is_public false', f.res.statusCode === 200
+    && f.state().campaigns[0].password_hash === 'new-fixture-hash' && !('is_public' in f.state().campaigns[0])
+    && f.res.body.campaign.is_public === false && f.res.body.campaign.has_password === true);
   f = fixture('patch', { body: { is_public: false } });
   await f.run();
-  check('PATCH refuses private without a password', f.res.statusCode === 400 && f.res.body.error === 'a password is required to make a campaign private' && f.state().campaigns[0].is_public === true);
+  check('PATCH refuses private without a password', f.res.statusCode === 400 && f.res.body.error === 'a password is required to make a campaign private' && f.state().campaigns[0].password_hash === null);
   f = fixture('patch', { body: { is_open: 'false' } });
   await f.run();
   check('PATCH retains explicit string-false support', f.res.statusCode === 200 && f.state().campaigns[0].is_open === false && f.effects[0][0] === 'evictGamePlayers');
@@ -191,13 +204,13 @@ async function commitContract(action, failCommit) {
   f = fixture('create', { body: { name: 'Table', is_public: true, password: 'roompw' } });
   await f.run();
   check('public create with password refused before DB/hash', f.res.statusCode === 400 && f.counts().transactions === 0 && f.counts().hashing === 0);
-  f = fixture('join', { campaign: { is_public: false }, body: { password: 'wrong' } });
+  f = fixture('join', { campaign: { password_hash: 'fixture-hash' }, body: { password: 'wrong' } });
   f.state().campaign_members[1].status = 'active';
   await f.run();
   check('already-active private join skips password and capacity work', f.res.statusCode === 200 && f.counts().verifying === 0 && f.counts().transactions === 0);
 
   const row = { id: CID, owner_id: OWNER, password_hash: 'fixture-hash', settings: { movement: 'custom' },
-    archived_at: null, is_open: false, is_public: false, owner_username: 'GM', member_count: '2' };
+    archived_at: null, is_open: false, owner_username: 'GM', member_count: '2' };
   check('campaign projection retains viewer/open/password fields', publicCampaign(row, OWNER).is_gm
     && publicCampaign(row, PLAYER).is_gm === false && publicCampaign(row, PLAYER).is_open === false
     && publicCampaign(row, PLAYER).has_password);
@@ -206,6 +219,12 @@ async function commitContract(action, failCommit) {
   check('campaign projection carries no settings field', !('settings' in publicCampaign(row, OWNER)));
   check('search projection stays narrower and includes private campaigns', !('settings' in searchResult(row))
     && !('password_hash' in searchResult(row)) && searchResult(row).is_public === false && searchResult(row).member_count === 2);
+  // Fix 3: is_public is computed from password_hash, never read from a column.
+  check('is_public is computed from the hash, ignoring any stored flag',
+    publicCampaign({ ...row, is_public: true }, OWNER).is_public === false
+    && publicCampaign({ ...row, password_hash: null, is_public: false }, OWNER).is_public === true
+    && searchResult({ ...row, password_hash: null }).is_public === true);
+  check('SAFE_COLUMNS no longer names is_public', !SAFE_COLUMNS.includes('is_public'));
   check('member projection stays allow-listed', !('password_hash' in publicMember({ user_id: PLAYER, password_hash: 'fixture-hash' })));
   console.log(`${passed} passed, 0 failed`);
 })().catch(error => { console.error(error); console.log(`${passed} passed, 1 failed`); process.exitCode = 1; });

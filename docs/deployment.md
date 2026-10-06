@@ -248,6 +248,15 @@ and the unknown keys to remove. It exits 2 (and names table, key and count, neve
 row contents) if the migration would refuse a row; the migration itself stops in
 that case with nothing changed.
 
+Fix 3 (`20261007000000_redundancy_cleanup.js`) has the same kind of dry run:
+`node scripts/redundancy-precheck.js` counts, in a READ ONLY transaction, the
+campaigns whose `is_public` disagrees with `password_hash IS NULL` and the combat
+rows whose `campaign_id` is not their scene's. Either count above zero makes the
+migration stop with nothing changed, and the script exits 2. It also reports,
+without refusing, how many `assets.source`/`source_url` and `messages.type`
+values differ from what the code computes (those columns are dropped; `down`
+restores computed values). Counts only, never row contents.
+
 Only after the migration succeeds should the new production application run.
 Production session auto-creation is disabled; there is no readiness coordinator
 in this patch. Existing development/test auto-creation is retained.

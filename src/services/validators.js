@@ -780,21 +780,6 @@ function validateHpOverride(v) {
   return validateInt(v, { min: -9999, max: 9999, field: 'hp_override' });
 }
 
-// Message body types. An app-level allow-list with no DB CHECK, consistent with
-// FOG_TYPES and ITEM_TYPES. Note this does NOT gate confidentiality: whisper_to
-// being non-empty is the only thing that makes a row private, so a 'chat' with a
-// populated whisper_to is private and a 'whisper' with an empty one is not.
-const MESSAGE_TYPES = ['chat', 'roll', 'system', 'whisper'];
-function validateMessageType(v) {
-  if (v === undefined || v === null || v === '') return { value: 'chat' };
-  if (typeof v !== 'string') return { error: 'type must be text' };
-  const s = v.trim().toLowerCase();
-  if (!MESSAGE_TYPES.includes(s)) {
-    return { error: `type must be one of: ${MESSAGE_TYPES.join(', ')}` };
-  }
-  return { value: s };
-}
-
 // A chat line. Shorter than actors.notes (5000) on purpose: this is a message in
 // a live log, not a document, and every one of them is broadcast to every
 // recipient and then held in the campaign's history.
@@ -854,7 +839,6 @@ module.exports = {
   validateGrid, GRID_TYPES, MAX_GRID_OFFSET,
   validateImgFrame, validateImgScale,
   validateHpOverride,
-  validateMessageType, MESSAGE_TYPES,
   validateMessageContent, MAX_MESSAGE_LENGTH,
   validateWhisperTo, MAX_WHISPER_RECIPIENTS,
 };

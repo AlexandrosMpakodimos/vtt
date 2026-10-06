@@ -41,6 +41,8 @@ const DB = [
   'test-schema-cleanup.js',
   // JSON schemas (Fix 2): catalog, database refusals, the migration rolled back, HTTP.
   'test-json-migration.js',
+  // Redundancy cleanup (Fix 3): catalog, composite FK, the migration rolled back, dry run, HTTP.
+  'test-redundancy-cleanup.js',
   // Storage budget ledger + durable cleanup. DB-backed (real Postgres) but NOT
   // server-backed: they exercise the serialisable accounting directly, which is
   // where the money-safety property lives. Use the isolated wrapper for these
