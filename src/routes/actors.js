@@ -64,7 +64,7 @@ const {
   validUuid, validateImageUrl, validateBool,
   validateActorInt, ACTOR_INT_FIELDS,
   validateShortText, validateLongText, validateActorSize,
-  validateJsonBlob, validateQuantity,
+  validateActorData, validateQuantity,
 } = require('../services/validators');
 const { withAtomicCap } = require('../services/atomicCap');
 const { shapeItemFor } = require('./items');
@@ -284,7 +284,8 @@ async function validateActorField(field, raw, campaignId) {
       return r.error ? r : { column: 'notes', value: r.value };
     }
     case 'data': {
-      const r = validateJsonBlob(raw, 'data');
+      // Fix 2: allow-listed keys only (ACTOR_DATA_SCHEMA), unknown keys dropped.
+      const r = validateActorData(raw);
       // node-pg infers a plain object into jsonb correctly, but stringifying is
       // what M3 learned to do explicitly for fog points; being explicit here
       // costs nothing and removes a class of driver-inference surprise.
@@ -818,6 +819,9 @@ router.get('/:actorId/inventory', requireMember, async (req, res, next) => {
         'items.weight as i_weight',
         'items.description as i_description',
         'items.properties as i_properties',
+        'items.img_offset_x as i_img_offset_x',
+        'items.img_offset_y as i_img_offset_y',
+        'items.img_scale as i_img_scale',
         'items.identified as i_identified',
         'items.created_at as i_created_at',
         'items.updated_at as i_updated_at',
@@ -838,6 +842,9 @@ router.get('/:actorId/inventory', requireMember, async (req, res, next) => {
         campaign_id: r.i_campaign_id,
         name: r.i_name,
         img_url: r.i_img_url,
+        img_offset_x: r.i_img_offset_x,
+        img_offset_y: r.i_img_offset_y,
+        img_scale: r.i_img_scale,
         type: r.i_type,
         weight: r.i_weight,
         description: r.i_description,

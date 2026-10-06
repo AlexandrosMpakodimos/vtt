@@ -18,10 +18,12 @@ const { formFieldProblems } = require('../helpers/formfields');
 //
 //   2. `data` AND `properties` ARE SINGLE COLUMNS. Both sheets scatter one JSONB
 //      column across dozens of inputs and must reassemble it losslessly on every
-//      save — including preserving keys the current viewer cannot edit, and
-//      refusing a raw-JSON key that already has its own field. A bug here
-//      silently deletes a player's spell slots, and no server test would catch
-//      it because the payload would be perfectly valid.
+//      save. A bug here silently deletes a player's notes, and no server test
+//      would catch it because the payload would be perfectly valid. Since Fix 2
+//      (2026-10-06) the server keeps only the keys these editors have fields for,
+//      so there is no raw-JSON editor and no unknown key to carry through a save
+//      (tests/unit/test-json-schemas.js checks the field lists against the
+//      server's schemas).
 //
 // Network is stubbed: this suite asserts what the CLIENT builds and sends.
 // Whether the server accepts it is test-actors.js / break-actors.js.
@@ -139,7 +141,9 @@ async function clickSave(container) {
   }
   check('every sheet field agrees with the server allow-lists', mismatches.length === 0, mismatches.join(' | '));
 
-  const onSheet = new Set(columnFields.map((f) => f.key));
+  // The `data` column is on the sheet as its sub-fields (path 'data').
+  const onSheet = new Set([...columnFields.map((f) => f.key),
+    ...(Sheet.FIELDS.some((f) => f.path === 'data') ? ['data'] : [])]);
   // Columns that are writable but deliberately NOT sheet fields. Each earns its
   // exemption for a stated reason, and the list is short on purpose — it is the
   // escape hatch that would otherwise let this probe rot into meaninglessness.
@@ -237,7 +241,7 @@ async function clickSave(container) {
     !!c.querySelector('#sheet-size') && c.querySelector('#sheet-size').type === 'hidden' && !!c.querySelector('#sheet-size').closest('.vtt-dd'));
   check('the Advanced data section is gone from the Backstory tab',
     !c.querySelector('.fo-advanced') && ![...c.querySelectorAll('summary')].some((s) => /Advanced/.test(s.textContent)));
-  check('...but the data node is still built (unknown keys still round-trip)', !!c.querySelector('#sheet-data'));
+  check('and no raw-JSON node is built at all (Fix 2: data has a server-side schema)', !c.querySelector('#sheet-data'));
 
   // Tab switching must NOT save/discard — a pending edit survives a tab change.
   field(c, 'personality_traits').value = 'Bold and reckless';
@@ -340,7 +344,7 @@ async function clickSave(container) {
   sent = null;
   c = mount();
   Sheet.render(c, {
-    actor: baseActor({ data: { gold: 5, sk_stealth: '+7', familiar: 'owl' } }),
+    actor: baseActor({ data: { gp: 5, sk_stealth: '+7', alignment: 'Neutral' } }),
     isGm: true, me: GM,
     onSave: async (p) => { sent = p; return { status: 200 }; },
   });
@@ -387,24 +391,20 @@ async function clickSave(container) {
   sent = null;
   c = mount();
   Sheet.render(c, {
-    actor: baseActor({ data: { gold: 120, familiar: 'owl', sk_stealth: '+7' } }),
+    actor: baseActor({ data: { gp: 120, ideals: 'Freedom', sk_stealth: '+7' } }),
     isGm: false, me: PLAYER,
     onSave: async (p) => { sent = p; return { status: 200 }; },
   });
-  check('a claimed data key populates its own field', field(c, 'sk_stealth').value === '+7');
-  const rawBox = field(c, 'data');
-  const leftover = JSON.parse(rawBox.value);
-  check('the raw JSON box shows only UNCLAIMED keys',
-    leftover.familiar === 'owl' && !('sk_stealth' in leftover), rawBox.value);
-  check('and unclaimed keys include ones with no field at all', 'gold' in leftover);
+  check('a data key populates its own field', field(c, 'sk_stealth').value === '+7');
 
   field(c, 'sk_perception').value = '+4';
   await clickSave(c);
   check('changing one data sub-field sends the whole reassembled object', sent && sent.data, JSON.stringify(sent));
   check('the new value is present', sent.data.sk_perception === '+4');
-  check('the previously-set sub-field SURVIVES', sent.data.sk_stealth === '+7');
-  check('and so do the unclaimed keys — nothing is silently dropped',
-    sent.data.familiar === 'owl' && sent.data.gold === 120, JSON.stringify(sent.data));
+  check('the previously-set sub-fields SURVIVE — nothing is silently dropped',
+    sent.data.sk_stealth === '+7' && sent.data.gp === 120 && sent.data.ideals === 'Freedom', JSON.stringify(sent.data));
+  check('the reassembled object holds only keys the sheet has fields for',
+    Object.keys(sent.data).every((k) => Sheet.FIELDS.some((f) => f.path === 'data' && f.key === k)), JSON.stringify(sent.data));
 
   // Proficiency ticks are stored only when true, so an unproficient skill costs
   // nothing in the 8 KB budget.
@@ -414,18 +414,16 @@ async function clickSave(container) {
   check('a ticked proficiency is stored as true', sent.data.sk_stealth_p === true);
   check('unticked proficiencies are absent, not false', !('sk_perception_p' in sent.data), JSON.stringify(sent.data));
 
-  // A key that has its own field must not also be settable in the raw box, or
-  // the two would fight over it, last-writer-wins.
-  sent = null;
-  field(c, 'data').value = '{"sk_stealth": "+99"}';
+  // A server refusal that names a data key lands beside that key's field.
+  c = mount();
+  Sheet.render(c, {
+    actor: baseActor({ data: {} }), isGm: false, me: PLAYER,
+    onSave: async () => ({ status: 400, data: { error: 'data.experience_points must be between 0 and 999999' } }),
+  });
+  field(c, 'experience_points').value = '5';
   await clickSave(c);
-  check('a raw-JSON key that duplicates a field is refused', sent === null);
-  check('and the error names the offending key', /sk_stealth/.test(c.textContent));
-
-  sent = null;
-  field(c, 'data').value = '{not json';
-  await clickSave(c);
-  check('invalid JSON is caught client-side, not sent as a 400', sent === null);
+  check('a refused data value is reported beside its own field',
+    /experience_points/.test(field(c, 'experience_points').parentNode.textContent), c.textContent.slice(0, 200));
 
   // ======================================================================
   // 5. the item editor
@@ -433,7 +431,7 @@ async function clickSave(container) {
   const baseItem = {
     id: 'i-1', campaign_id: 'c-1', name: 'Flame Tongue',
     img_url: null, type: 'weapon', weight: 3, description: 'Bursts into flame.',
-    properties: { damage: '2d6', charges: 3, homebrew: true }, identified: false,
+    properties: { damage: '2d6', charges: 3, magical: true }, identified: false,
     created_at: 1, updated_at: 1,
   };
 
@@ -481,9 +479,31 @@ async function clickSave(container) {
 
     await clickSave(cc);
     check('the chosen image is saved', sentImg && sentImg.img_url === 'new.png', JSON.stringify(sentImg));
-    check('the item framing is stored in properties', sentImg && sentImg.properties
-      && sentImg.properties.img_offset_x === 0.3 && sentImg.properties.img_scale === 1.6,
+    check('the item framing is sent as the three framing fields (columns since Fix 2)', sentImg
+      && sentImg.img_offset_x === 0.3 && sentImg.img_offset_y === -0.2 && sentImg.img_scale === 1.6,
+      JSON.stringify(sentImg));
+    check('...and never inside properties', !sentImg.properties
+      || !['img_offset_x', 'img_offset_y', 'img_scale'].some((k) => k in sentImg.properties),
       JSON.stringify(sentImg && sentImg.properties));
+  }
+
+  // An item that already has framing loads it from the columns and offers it to
+  // the picker; an untouched item sends no framing.
+  {
+    const cc = mount();
+    let offered = null; let sentFrame = 'unsent';
+    ItemSheet.render(cc, {
+      item: { id: 'i-fr', campaign_id: 'c-1', name: 'Orb', type: 'misc', img_url: 'orb.png', img_offset_x: 0.25, img_offset_y: -0.5, img_scale: 2, weight: 1, description: '', identified: true, properties: {} },
+      onPickImage: (current, cb, curFrame) => { offered = curFrame; },
+      onSave: async (p) => { sentFrame = p; return { status: 200 }; },
+    });
+    cc.querySelector('.ie-thumb-btn').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    check('stored framing columns are offered to the picker',
+      offered && offered.offsetX === 0.25 && offered.offsetY === -0.5 && offered.scale === 2, JSON.stringify(offered));
+    itemField(cc, 'name').value = 'Orb of light';
+    await clickSave(cc);
+    check('an edit that does not touch the picture sends no framing',
+      sentFrame && sentFrame.name === 'Orb of light' && !('img_scale' in sentFrame) && !('img_offset_x' in sentFrame), JSON.stringify(sentFrame));
   }
 
   itemSent = null;
@@ -516,8 +536,8 @@ async function clickSave(container) {
   itemField(c, 'damage_type').value = 'fire';
   await clickSave(c);
   check('a new properties sub-key is sent with the whole object', itemSent && itemSent.properties);
-  check('existing sub-keys survive', itemSent.properties.damage === '2d6' && itemSent.properties.charges === 3);
-  check('unclaimed properties survive too', itemSent.properties.homebrew === true, JSON.stringify(itemSent.properties));
+  check('existing sub-keys survive', itemSent.properties.damage === '2d6' && itemSent.properties.charges === 3
+    && itemSent.properties.magical === true, JSON.stringify(itemSent.properties));
   check('charges came back as a NUMBER, not a string', typeof itemSent.properties.charges === 'number');
 
   // ======================================================================
@@ -555,14 +575,16 @@ async function clickSave(container) {
   check('an over-budget save is not sent', itemSent === null);
   check('and the size error is surfaced', /\bbytes\b/.test(c.querySelector('.ie-err-summary').textContent));
 
-  // Unknown/custom keys are preserved even though there is no JSON editor.
+  // Every key the editor sends is one it has a field for (the server's schema).
   itemSent = null;
   c = mount();
   ItemSheet.render(c, { item: baseItem, onSave: async (p) => { itemSent = p; return { status: 200 }; } });
   itemField(c, 'damage').value = '3d6';
   itemField(c, 'damage').dispatchEvent(new window.Event('input'));
   await clickSave(c);
-  check('a pre-existing unknown key survives a save with no JSON editor', itemSent && itemSent.properties.homebrew === true, JSON.stringify(itemSent && itemSent.properties));
+  check('a properties save carries only keys the editor has fields for',
+    itemSent && Object.keys(itemSent.properties).every((k) => ItemSheet.FIELDS.some((f) => f.path === 'properties' && f.key === k)),
+    JSON.stringify(itemSent && itemSent.properties));
 
   // Save failure keeps the draft and allows retry; repeated clicks don't double-submit.
   let attempts = 0;
@@ -578,14 +600,14 @@ async function clickSave(container) {
   // Player projection never discloses an unidentified item's private fields.
   // It DOES carry image framing (offset/zoom) — pure geometry, nothing secret —
   // so a deliberately-cropped picture looks the same to everyone.
-  const projU = ItemSheet.playerProjection({ identified: false, name: 'Flame Tongue', type: 'weapon', img_url: 'x.png', description: 'secret', weight: 3, properties: { damage: '2d6', img_offset_x: 0.2, img_scale: 1.5 } });
+  const projU = ItemSheet.playerProjection({ identified: false, name: 'Flame Tongue', type: 'weapon', img_url: 'x.png', img_offset_x: 0.2, img_scale: 1.5, description: 'secret', weight: 3, properties: { damage: '2d6' } });
   check('unidentified projection drops the name', projU.name === undefined);
   check('unidentified projection drops description and weight',
     projU.description === undefined && projU.weight === undefined);
-  check('unidentified projection exposes ONLY framing in properties (no secret keys)',
-    projU.properties && projU.properties.damage === undefined
-    && projU.properties.img_offset_x === 0.2 && projU.properties.img_scale === 1.5,
+  check('unidentified projection carries no properties at all (no secret keys)', projU.properties === undefined,
     JSON.stringify(projU.properties));
+  check('...but does carry the image framing (geometry, nothing secret)',
+    projU.img_offset_x === 0.2 && projU.img_offset_y === 0 && projU.img_scale === 1.5, JSON.stringify(projU));
   check('unidentified projection keeps type + image + identified:false',
     projU.type === 'weapon' && projU.img_url === 'x.png' && projU.identified === false);
   const projI = ItemSheet.playerProjection({ identified: true, name: 'Flame Tongue', type: 'weapon', img_url: 'x.png', description: 'burns', weight: 3, properties: { damage: '2d6' } });
@@ -603,8 +625,7 @@ async function clickSave(container) {
   const baseSpell = {
     id: 's-1', campaign_id: 'c-1', name: 'Magic Missile', level: 1,
     description: 'Three darts of force.',
-    // school owned by a field; homebrew is an UNKNOWN key that must survive.
-    properties: { school: 'evocation', casting_time: '1 action', homebrew: true },
+    properties: { school: 'evocation', casting_time: '1 action' },
     created_at: 1, updated_at: 1,
   };
 
@@ -639,10 +660,10 @@ async function clickSave(container) {
     check('the chosen level is sent as an integer', sent && sent.level === 3, JSON.stringify(sent));
   }
 
-  // Editing: only changed fields go, and UNKNOWN properties survive untouched.
+  // Editing: only changed fields go.
   spellSent = null;
   c = mount();
-  SpellSheet.render(c, { spell: baseSpell, schoolValues: [], onSave: async (p, n) => { spellSent = p; spellNew = n; return { status: 200 }; } });
+  SpellSheet.render(c, { spell: baseSpell, onSave: async (p, n) => { spellSent = p; spellNew = n; return { status: 200 }; } });
   check('an unchanged spell has its save button disabled', saveButton(c).disabled === true);
   spellField(c, 'description').value = 'Now three glowing darts.';
   spellField(c, 'description').dispatchEvent(new window.Event('input'));
@@ -651,42 +672,34 @@ async function clickSave(container) {
   check('only the changed field is in the patch', spellSent && spellSent.description === 'Now three glowing darts.', JSON.stringify(spellSent));
   check('...and the name is not resent when unchanged', spellSent && !('name' in spellSent), JSON.stringify(spellSent));
 
-  // Changing a detail field carries the WHOLE reassembled properties object,
-  // and the unknown `homebrew` key rides along untouched.
+  // Changing a detail field carries the WHOLE reassembled properties object.
   spellSent = null;
   c = mount();
-  SpellSheet.render(c, { spell: baseSpell, schoolValues: [], onSave: async (p) => { spellSent = p; return { status: 200 }; } });
+  SpellSheet.render(c, { spell: baseSpell, onSave: async (p) => { spellSent = p; return { status: 200 }; } });
   spellField(c, 'range').value = '120 feet';
   spellField(c, 'range').dispatchEvent(new window.Event('input'));
   await clickSave(c);
   check('editing a detail field sends the whole properties object', spellSent && spellSent.properties, JSON.stringify(spellSent));
   check('...the new detail value is present', spellSent.properties.range === '120 feet');
   check('...the untouched school is preserved', spellSent.properties.school === 'evocation');
-  check('...and the UNKNOWN homebrew key survives the round-trip', spellSent.properties.homebrew === true, JSON.stringify(spellSent.properties));
+  check('...and the object holds only the editor\'s own keys (the server schema, Fix 2)',
+    Object.keys(spellSent.properties).every((k) => SpellSheet.DETAIL_KEYS.includes(k)), JSON.stringify(spellSent.properties));
 
-  // A custom (non-standard) school value is preserved and offered, not dropped.
+  // The school list is "Not specified" plus the eight schools — nothing else
+  // (the server refuses any other value since Fix 2).
   {
     const cc = mount();
     let sent = null;
-    const customSpell = { id: 's-c', campaign_id: 'c-1', name: 'Chaos Bolt', level: 2, description: '', properties: { school: 'chronomancy' }, created_at: 1, updated_at: 1 };
-    SpellSheet.render(cc, { spell: customSpell, schoolValues: ['chronomancy'], onSave: async (p) => { sent = p; return { status: 200 }; } });
-    const schoolDd = spellField(cc, 'school').closest('.vtt-dd');
-    check('a custom school is shown as the selected value', schoolDd.querySelector('.vtt-dd-btn').textContent === 'chronomancy', schoolDd.querySelector('.vtt-dd-btn').textContent);
-    // Editing only the name must NOT drag properties into the patch (nothing in
-    // properties changed), so the custom school can't be clobbered.
-    spellField(cc, 'name').value = 'Chaos Bolt II';
+    SpellSheet.render(cc, { spell: baseSpell, onSave: async (p) => { sent = p; return { status: 200 }; } });
+    check('the school options are exactly Not specified + the eight schools',
+      JSON.stringify(SpellSheet.schoolOptions()) === JSON.stringify([''].concat(SpellSheet.SCHOOLS)) && SpellSheet.SCHOOLS.length === 8);
+    check('no "Other saved properties" block remains', !cc.querySelector('.ie-orphan'));
+    // Editing only the name must NOT drag properties into the patch.
+    spellField(cc, 'name').value = 'Magic Missile II';
     spellField(cc, 'name').dispatchEvent(new window.Event('input'));
     await clickSave(cc);
-    check('a name-only edit does not resend (and cannot rewrite) properties',
-      sent && sent.name === 'Chaos Bolt II' && !('properties' in sent), JSON.stringify(sent));
-    // Editing a detail DOES send properties — and the custom school rides along.
-    sent = null;
-    spellField(cc, 'duration').value = 'instantaneous';
-    spellField(cc, 'duration').dispatchEvent(new window.Event('input'));
-    await clickSave(cc);
-    check('editing a detail preserves the custom school in the sent properties',
-      sent && sent.properties && sent.properties.school === 'chronomancy' && sent.properties.duration === 'instantaneous',
-      JSON.stringify(sent && sent.properties));
+    check('a name-only edit does not resend properties',
+      sent && sent.name === 'Magic Missile II' && !('properties' in sent), JSON.stringify(sent));
   }
 
   // A failed save keeps the draft open with an actionable error, and does not
@@ -709,7 +722,7 @@ async function clickSave(container) {
   {
     const cc = mount();
     let dirty = false;
-    SpellSheet.render(cc, { spell: baseSpell, schoolValues: [], onDirtyChange: (d) => { dirty = d; }, onSave: async () => ({ status: 200 }) });
+    SpellSheet.render(cc, { spell: baseSpell, onDirtyChange: (d) => { dirty = d; }, onSave: async () => ({ status: 200 }) });
     check('a freshly-rendered editor is not dirty', dirty === false);
     spellField(cc, 'description').value = 'changed';
     spellField(cc, 'description').dispatchEvent(new window.Event('input'));

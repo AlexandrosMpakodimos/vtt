@@ -255,8 +255,9 @@ const STAT_FIELDS = [
   check('out-of-range ability score rejected (400)', bigStr.status === 400);
   const badSize = await gm.req('PATCH', `${A}/${aria.id}`, { size: 'Colossal' });
   check('unknown size rejected (400)', badSize.status === 400);
-  const goodData = await player.req('PATCH', `${A}/${aria.id}`, { data: { gold: 120, slots: { 1: 3 } } });
-  check('the data blob accepts an object (200)', goodData.status === 200 && goodData.data.actor.data.gold === 120, JSON.stringify(goodData.data));
+  const goodData = await player.req('PATCH', `${A}/${aria.id}`, { data: { gp: 120, slots: { 1: 3 } } });
+  check('the data blob accepts an object (200)', goodData.status === 200 && goodData.data.actor.data.gp === 120, JSON.stringify(goodData.data));
+  check('...keeping only allow-listed keys (Fix 2: unknown `slots` dropped)', goodData.data && !('slots' in goodData.data.actor.data), JSON.stringify(goodData.data));
   const arrData = await player.req('PATCH', `${A}/${aria.id}`, { data: [1, 2, 3] });
   check('the data blob rejects an array (400)', arrData.status === 400);
   const hugeData = await player.req('PATCH', `${A}/${aria.id}`, { data: { s: 'x'.repeat(9000) } });

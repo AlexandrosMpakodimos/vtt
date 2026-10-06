@@ -240,6 +240,14 @@ development/test route; only migrate:production is supported for production.
 Never attach migrations to build or application start. Render Free's lack of a
 pre-deploy migration hook and release overlap remain separate deployment gates.
 
+A migration that rewrites data can be dry-run first. For Fix 2
+(`20261006000000_json_schemas.js`), `node scripts/json-schemas-precheck.js`
+takes the same environment as `migrate:production`, runs the migration's
+pre-check in a READ ONLY transaction and prints, per table, the rows to rewrite
+and the unknown keys to remove. It exits 2 (and names table, key and count, never
+row contents) if the migration would refuse a row; the migration itself stops in
+that case with nothing changed.
+
 Only after the migration succeeds should the new production application run.
 Production session auto-creation is disabled; there is no readiness coordinator
 in this patch. Existing development/test auto-creation is retained.

@@ -115,7 +115,6 @@ window.VTTSheet = (function () {
     // in `data` — it is the one long-form field with room to spare, and putting
     // it here keeps the JSON budget for the short fields above.
     { key: 'notes', label: 'Backstory & session notes', type: 'textarea', rows: 6, max: 5000, tier: 'player', group: 'freeform', wide: true },
-    { key: 'data', label: 'Advanced — any other keys, as JSON', type: 'json', tier: 'player', group: 'freeform', wide: true },
   ];
 
   // --- saving throws and skills ------------------------------------------
@@ -164,9 +163,11 @@ window.VTTSheet = (function () {
     FIELDS.push({ key, label: `${label} (${abil})`, type: 'text', max: 8, tier: 'player', path: 'data', group: 'skills', narrow: true });
   }
 
-  // data keys claimed by structured fields above. The raw JSON editor shows only
-  // what is left, so the two never fight over the same key.
-  const CLAIMED = new Set(FIELDS.filter((f) => f.path === 'data').map((f) => f.key));
+  // Fix 2 (2026-10-06): the fields with path 'data' above ARE the schema of
+  // actors.data. The server keeps exactly these keys (ACTOR_DATA_SCHEMA in
+  // src/services/validators.js, checked against this list by
+  // tests/unit/test-json-schemas.js) and drops any other, so there is no raw-JSON
+  // editor and no "unknown key" to carry through a save any more.
   const MAX_DATA_BYTES = 8192;   // mirrors MAX_JSON_BYTES in validators.js
 
   const GROUPS = [
@@ -182,15 +183,15 @@ window.VTTSheet = (function () {
     {
       id: 'freeform',
       title: 'Free text',
-      hint: 'Anything the fields above do not cover. The server stores it and never interprets it. `data` is bounded to 8 KB, depth 6 and 200 keys in total, including every field above.',
+      hint: 'Anything the fields above do not cover. The server stores it and never interprets it.',
     },
   ];
 
 
-  // Key ORDER differs between the stored blob and the reassembled one: the raw
-  // leftover keys are copied in first, then the structured fields. A plain
-  // JSON.stringify comparison therefore reports an untouched sheet as dirty and
-  // PATCHes the whole column on every save. Compare canonically instead.
+  // Key ORDER differs between the stored blob (jsonb order) and the reassembled
+  // one (field order). A plain JSON.stringify comparison would therefore report
+  // an untouched sheet as dirty and PATCH the whole column on every save.
+  // Compare canonically instead.
   function canonical(v) {
     if (Array.isArray(v)) return v.map(canonical);
     if (v && typeof v === 'object') {
@@ -228,14 +229,6 @@ window.VTTSheet = (function () {
   }
 
   function valueOf(actor, field) {
-    // The raw JSON editor shows only the UNCLAIMED keys, so editing "Ideals"
-    // above and editing the blob below can never disagree about the same key.
-    if (field.type === 'json') {
-      const blob = actor.data || {};
-      const leftover = {};
-      for (const k of Object.keys(blob)) if (!CLAIMED.has(k)) leftover[k] = blob[k];
-      return Object.keys(leftover).length ? JSON.stringify(leftover, null, 2) : '';
-    }
     const v = field.path === 'data' ? (actor.data || {})[field.key] : actor[field.key];
     if (field.type === 'bool') return v === true ? 'true' : '';
     if (v === null || v === undefined) return '';
@@ -324,9 +317,9 @@ window.VTTSheet = (function () {
         // Expose a setter that also refreshes the dd button label on revert.
         node._ddSet = (v) => { if (ddCtl && ddCtl.set) ddCtl.set(v); else node.value = v; };
         mount = dd;
-      } else if (f.type === 'textarea' || f.type === 'json') {
+      } else if (f.type === 'textarea') {
         node = el('textarea');
-        node.rows = f.rows || (f.type === 'json' ? 6 : 4);
+        node.rows = f.rows || 4;
         if (f.max) node.maxLength = f.max;
         node.value = valueOf(a, f);
       } else {
@@ -690,16 +683,6 @@ window.VTTSheet = (function () {
       sec.appendChild(slot(fieldByKey[key], 'prose').wrap);
       pageJourn.appendChild(sec);
     }
-    // The raw `data` JSON editor is intentionally NOT shown (removed from the
-    // Backstory tab). Its node is still built — hidden — so assembleData keeps
-    // preserving unknown/legacy JSON keys and the byte-cap validation still runs.
-    // Editing structured sub-fields (skills, saves, currency, etc.) continues to
-    // work; only the raw-JSON escape hatch is gone from the UI.
-    {
-      const hidden = slot(fieldByKey.data, 'prose');
-      hidden.wrap.style.display = 'none';
-      pageJourn.appendChild(hidden.wrap);
-    }
     pages.appendChild(pageJourn); pageEls.journal = pageJourn;
 
     main.appendChild(pages);
@@ -786,42 +769,12 @@ window.VTTSheet = (function () {
       if (!placed) errBox.textContent = msg;
     }
 
-    // `data` is ONE column, so every structured sub-field plus the leftover blob
-    // has to be reassembled into a single object on every save. Returns null on
-    // a client-side error (already reported next to the offending field).
+    // `data` is ONE column, so every structured sub-field has to be reassembled
+    // into a single object on every save. Returns null on a client-side error
+    // (already reported next to the offending field).
     function assembleData() {
       const next = {};
       let bad = false;
-
-      const jsonEntry = inputs.get('data');
-      if (jsonEntry && !jsonEntry.node.disabled) {
-        const raw = jsonEntry.node.value.trim();
-        if (raw !== '') {
-          try {
-            const parsed = JSON.parse(raw);
-            if (Array.isArray(parsed) || typeof parsed !== 'object' || parsed === null) {
-              jsonEntry.errNode.textContent = 'must be a JSON object, e.g. {"familiar": "owl"}';
-              bad = true;
-            } else {
-              for (const k of Object.keys(parsed)) {
-                if (CLAIMED.has(k)) {
-                  jsonEntry.errNode.textContent = `"${k}" already has its own field above — remove it here`;
-                  bad = true;
-                } else {
-                  next[k] = parsed[k];
-                }
-              }
-            }
-          } catch (e) {
-            jsonEntry.errNode.textContent = 'invalid JSON: ' + e.message;
-            bad = true;
-          }
-        }
-      } else {
-        // Not editable by this viewer: preserve whatever is already stored.
-        const blob = a.data || {};
-        for (const k of Object.keys(blob)) if (!CLAIMED.has(k)) next[k] = blob[k];
-      }
 
       for (const [key, { field, node, errNode }] of inputs) {
         if (field.path !== 'data') continue;
@@ -864,15 +817,6 @@ window.VTTSheet = (function () {
         if (raw === '') continue;
         next[key] = field.type === 'int' ? (Number(raw) || 0) : raw;
       }
-      const jsonEntry = inputs.get('data');
-      if (jsonEntry && !jsonEntry.node.disabled) {
-        try {
-          const parsed = JSON.parse(jsonEntry.node.value.trim() || '{}');
-          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-            for (const k of Object.keys(parsed)) if (!CLAIMED.has(k)) next[k] = parsed[k];
-          }
-        } catch { /* mid-typing, ignore */ }
-      }
       return next;
     }
 
@@ -882,7 +826,7 @@ window.VTTSheet = (function () {
       counter.className = used > MAX_DATA_BYTES ? 'sheet-error' : 'muted';
     }
     for (const { field, node } of inputs.values()) {
-      if (field.path === 'data' || field.type === 'json') {
+      if (field.path === 'data') {
         node.addEventListener('input', refreshCounter);
         node.addEventListener('change', refreshCounter);
       }
@@ -898,7 +842,7 @@ window.VTTSheet = (function () {
 
       // Column-backed fields first; only dirty ones are sent.
       for (const [key, { field, node, errNode }] of inputs) {
-        if (field.path === 'data' || field.type === 'json') continue;
+        if (field.path === 'data') continue;
         if (node.disabled) continue;
         const raw = node.value;
         if (raw === valueOf(a, field)) continue;

@@ -7,11 +7,16 @@
 // (the read view / preview below mirror the server projection exactly); the GM
 // benefit is calmer authoring.
 //
-// Data model (unchanged): fields the `items` table has get a real column (name,
-// type, weight, description, identified). Everything else — rarity, attunement,
-// damage, armour, charges, cost, effect, source — is a sub-key of `properties`
-// (bounded JSONB, 8 KB). Nothing here is computed or enforced: armour class,
-// damage, cost, weight, charges and attunement are RECORDED, not executed.
+// Data model: fields the `items` table has get a real column (name, type,
+// weight, description, identified, and since Fix 2 the image framing
+// img_offset_x / img_offset_y / img_scale). Everything else — rarity,
+// attunement, damage, armour, charges, cost, effect, source — is a sub-key of
+// `properties` (JSONB, 8 KB). The FIELDS with path 'properties' below are that
+// document's schema: the server keeps exactly these keys
+// (ITEM_PROPERTIES_SCHEMA in src/services/validators.js, checked against this
+// list by tests/unit/test-json-schemas.js) and drops any other. Nothing here is
+// computed or enforced: armour class, damage, cost, weight, charges and
+// attunement are RECORDED, not executed.
 
 window.VTTItemSheet = (function () {
   const TYPES = ['weapon', 'armor', 'consumable', 'misc'];
@@ -60,8 +65,17 @@ window.VTTItemSheet = (function () {
     { key: 'source', label: 'Source / notes', type: 'textarea', rows: 3, max: 200, path: 'properties', group: 'source', wide: true },
   ];
 
-  const CLAIMED = new Set(FIELDS.filter((f) => f.path === 'properties').map((f) => f.key));
   const MAX_PROPS_BYTES = 8192;
+
+  // Image framing from an item row (columns since Fix 2). Absent = identity crop.
+  function frameOf(item) {
+    const src = item || {};
+    return {
+      img_offset_x: Number(src.img_offset_x) || 0,
+      img_offset_y: Number(src.img_offset_y) || 0,
+      img_scale: Number(src.img_scale) > 0 ? Number(src.img_scale) : 1,
+    };
+  }
 
   function canonical(v) {
     if (Array.isArray(v)) return v.map(canonical);
@@ -84,35 +98,25 @@ window.VTTItemSheet = (function () {
 
   function valueOf(item, field) {
     if (!item) return '';
-    if (field.type === 'json') {
-      const blob = item.properties || {};
-      const leftover = {};
-      for (const k of Object.keys(blob)) if (!CLAIMED.has(k)) leftover[k] = blob[k];
-      return Object.keys(leftover).length ? JSON.stringify(leftover, null, 2) : '';
-    }
     const v = field.path === 'properties' ? (item.properties || {})[field.key] : item[field.key];
     if (field.type === 'bool') return v === true ? 'true' : '';
     if (v === null || v === undefined) return '';
     return String(v);
   }
 
+  // Mirrors the server's projection (routes/items.js shapeItemFor).
   function playerProjection(draft) {
+    const frame = frameOf(draft);
     if (draft.identified) {
       return {
-        identified: true, name: draft.name, img_url: draft.img_url, type: draft.type,
+        identified: true, name: draft.name, img_url: draft.img_url, ...frame, type: draft.type,
         weight: draft.weight, description: draft.description, properties: draft.properties || {},
       };
     }
-    // Unidentified: only type + image reach a player. We also carry the three
-    // IMAGE FRAMING values (how the picture is cropped) — not secret, and the
-    // blurred art should still be framed the way the GM set it — but nothing
-    // else from properties (no damage, effect, rarity, …).
-    const src = draft.properties || {};
-    const frameOnly = {};
-    if (src.img_offset_x !== undefined) frameOnly.img_offset_x = src.img_offset_x;
-    if (src.img_offset_y !== undefined) frameOnly.img_offset_y = src.img_offset_y;
-    if (src.img_scale !== undefined) frameOnly.img_scale = src.img_scale;
-    return { identified: false, type: draft.type, img_url: draft.img_url, properties: frameOnly };
+    // Unidentified: only type + image reach a player, with the three IMAGE
+    // FRAMING values (how the picture is cropped) — not secret, and the blurred
+    // art should still be framed the way the GM set it — and no properties at all.
+    return { identified: false, type: draft.type, img_url: draft.img_url, ...frame };
   }
 
   function render(container, ctx) {
@@ -129,7 +133,9 @@ window.VTTItemSheet = (function () {
       description: valueOf(item, fieldById('description')),
       weight: valueOf(item, fieldById('weight')),
       properties: JSON.parse(JSON.stringify((item && item.properties) || {})),
+      ...frameOf(item),
     };
+    const baseFrame = frameOf(item);
     const inputs = new Map();
     let dirty = false;
     function markDirty() {
@@ -162,10 +168,7 @@ window.VTTItemSheet = (function () {
       const u = draft.img_url.trim();
       if (u) {
         thumbImg.src = u; thumbImg.style.display = 'block'; thumbEmpty.style.display = 'none';
-        const ox = Number(draft.properties.img_offset_x) || 0;
-        const oy = Number(draft.properties.img_offset_y) || 0;
-        const sc = Number(draft.properties.img_scale) > 0 ? Number(draft.properties.img_scale) : 1;
-        window.VTTImageFrame.apply(thumbImg, thumb, ox, oy, sc);
+        window.VTTImageFrame.apply(thumbImg, thumb, draft.img_offset_x, draft.img_offset_y, draft.img_scale);
       } else { thumbImg.removeAttribute('src'); thumbImg.style.display = 'none'; thumbEmpty.style.display = 'grid'; }
     }
     identity.appendChild(thumbBtn);
@@ -200,16 +203,14 @@ window.VTTItemSheet = (function () {
     function setImage(url, framing) {
       draft.img_url = url || '';
       imgHidden.value = draft.img_url;
-      // Item art framing lives in properties (items have no dedicated columns).
-      // A new image with no crop resets to identity; an explicit crop is stored.
+      // Item art framing: three columns since Fix 2 (rule C3), like actors and
+      // tokens. A removed image resets to identity; an explicit crop is stored.
       if (framing) {
-        setProp('img_offset_x', framing.offsetX || 0);
-        setProp('img_offset_y', framing.offsetY || 0);
-        setProp('img_scale', framing.scale > 0 ? framing.scale : 1);
+        draft.img_offset_x = Number(framing.offsetX) || 0;
+        draft.img_offset_y = Number(framing.offsetY) || 0;
+        draft.img_scale = framing.scale > 0 ? Number(framing.scale) : 1;
       } else if (!url) {
-        setProp('img_offset_x', undefined);
-        setProp('img_offset_y', undefined);
-        setProp('img_scale', undefined);
+        Object.assign(draft, frameOf(null));
       }
       syncThumb(); markDirty();
     }
@@ -220,11 +221,7 @@ window.VTTItemSheet = (function () {
     // standalone harness) we fall back to a small URL popover.
     function openImageEditor() {
       if (typeof ctx.onPickImage === 'function') {
-        const curFrame = {
-          offsetX: Number(draft.properties.img_offset_x) || 0,
-          offsetY: Number(draft.properties.img_offset_y) || 0,
-          scale: Number(draft.properties.img_scale) > 0 ? Number(draft.properties.img_scale) : 1,
-        };
+        const curFrame = { offsetX: draft.img_offset_x, offsetY: draft.img_offset_y, scale: draft.img_scale };
         ctx.onPickImage(draft.img_url, (url, framing) => setImage(url, framing), curFrame);
         return;
       }
@@ -407,7 +404,7 @@ window.VTTItemSheet = (function () {
         parent.appendChild(cell);
         inputs.set(key, { field: f, node: hidden, errNode, get: () => hidden.value });
         return;
-      } else if (f.type === 'textarea' || f.type === 'json') {
+      } else if (f.type === 'textarea') {
         const lab = el('label', { cls: 'ie-lab', text: f.label }); lab.setAttribute('for', id);
         node = el('textarea'); node.id = id; node.rows = f.rows || 6; if (f.max) node.maxLength = f.max;
         node.value = draft.properties[key] != null ? String(draft.properties[key]) : '';
@@ -523,9 +520,9 @@ window.VTTItemSheet = (function () {
       chargesDisc.setSummary(s);
     }
 
-    // Properties come straight off the draft. Unknown/custom keys that were on
-    // the item are seeded into draft.properties at render and pass through here
-    // untouched, so removing the Advanced JSON editor does not drop them.
+    // Properties come straight off the draft, which only ever holds keys this
+    // editor has a field for (the server stores no others since Fix 2). Values
+    // kept from a different item type (see syncOrphans) are such keys too.
     function assembleProps() {
       const next = {};
       for (const k of Object.keys(draft.properties)) {
@@ -570,6 +567,11 @@ window.VTTItemSheet = (function () {
       if (isNew ? draft.weight !== '' : String(draft.weight) !== wPrev) { patch.weight = draft.weight === '' ? 0 : Number(draft.weight); }
       const nextProps = assembleProps();
       if (isNew ? Object.keys(nextProps).length > 0 : !sameJson(nextProps, (item && item.properties) || {})) patch.properties = nextProps;
+      // Framing columns: sent when they differ from what was loaded (a new item
+      // sends them only when not the identity crop, which is the column default).
+      for (const k of ['img_offset_x', 'img_offset_y', 'img_scale']) {
+        if (draft[k] !== baseFrame[k]) patch[k] = draft[k];
+      }
       return patch;
     }
     function updateSaveState() {
@@ -681,18 +683,17 @@ window.VTTItemSheet = (function () {
     const pr = (identified && p.properties) || {};
     const rarity = identified ? pr.rarity : '';
 
-    // Framing geometry is available for BOTH states (unidentified carries only
-    // the frame sub-keys), so read it from p.properties, not the identified-gated
-    // `pr`. For the blurred unidentified image we bake a little extra zoom into
-    // the same transform so the blur's soft edge can't reveal the frame beneath —
-    // while still honouring the GM's crop.
-    const fr = p.properties || {};
+    // Framing geometry is available for BOTH states (top-level columns since
+    // Fix 2), so it is read from `p`, not the identified-gated `pr`. For the
+    // blurred unidentified image we bake a little extra zoom into the same
+    // transform so the blur's soft edge can't reveal the frame beneath — while
+    // still honouring the GM's crop.
     const hero = el('div', { cls: 'ir-hero' + (identified ? '' : ' ir-hero-blur') });
     if (rarity && RARITY_COLOR[rarity]) hero.style.setProperty('--ir-rarity', RARITY_COLOR[rarity]);
     if (p.img_url) {
       const im = document.createElement('img'); im.alt = ''; im.src = p.img_url;
-      const ox = Number(fr.img_offset_x) || 0, oy = Number(fr.img_offset_y) || 0;
-      let sc = Number(fr.img_scale) > 0 ? Number(fr.img_scale) : 1;
+      const ox = Number(p.img_offset_x) || 0, oy = Number(p.img_offset_y) || 0;
+      let sc = Number(p.img_scale) > 0 ? Number(p.img_scale) : 1;
       if (!identified) sc *= 1.25;   // extra cover for the blur edge
       window.VTTImageFrame.apply(im, hero, ox, oy, sc);
       im.addEventListener('error', () => { im.remove(); hero.appendChild(el('div', { cls: 'ir-hero-empty', text: '?' })); });
