@@ -12,6 +12,7 @@ process.env.MEDIA_HOST = process.env.MEDIA_HOST || 'media.test';
 process.env.MEDIA_TOKEN_SECRET = process.env.MEDIA_TOKEN_SECRET || 'testsecret';
 
 const knex = require('../../src/db');
+const { FIXTURE_CAMPAIGN_HASH } = require('../helpers/campaignFixture');
 const storage = require('../../src/services/storage');
 const budget = require('../../src/services/storageBudget');
 
@@ -75,7 +76,7 @@ async function main() {
   const owner = await mkUser('owner');
   const member = await mkUser('member');
   const outsider = await mkUser('outsider');
-  const [camp] = await knex('campaigns').insert({ name: `mg-${Date.now()}`, owner_id: owner }).returning('id');
+  const [camp] = await knex('campaigns').insert({ name: `mg-${Date.now()}`, owner_id: owner, password_hash: FIXTURE_CAMPAIGN_HASH }).returning('id');
   const campaignId = camp.id || camp;
   await knex('campaign_members').insert({ campaign_id: campaignId, user_id: member, status: 'active' }).catch(() => {});
   const [mapAsset] = await knex('assets').insert({

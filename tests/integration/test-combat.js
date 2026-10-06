@@ -285,7 +285,7 @@ async function mk(name) {
   console.log('\n--- chat ---');
   const line = await player.req('POST', M, { content: 'I swing at the goblin' });
   t('a player can post', line.status === 201, `${line.status}`);
-  t('type defaults to chat', line.data.message.type === 'chat');
+  t('a message carries no stored type (dropped in Fix 3)', !('type' in line.data.message));
   t('speaker_name is taken from the session', !!line.data.message.speaker_name);
   t('whisper_to is null for a public message', line.data.message.whisper_to === null);
 
@@ -311,7 +311,7 @@ async function mk(name) {
   t('total is the measured sum plus the modifier',
     rd.total === rd.results.reduce((a, b) => a + b, 0) + 3, JSON.stringify(rd));
   t('every die landed inside 1..6', rd.results.every((x) => x >= 1 && x <= 6), JSON.stringify(rd.results));
-  t('a roll is typed roll', r.data.message.type === 'roll');
+  t('a roll is a message with roll_data and no type field', !!r.data.message.roll_data && !('type' in r.data.message));
   t('formula stored canonically', rd.formula === '2d6+3');
 
   const labelled = await player.req('POST', M, { formula: 'd20', content: 'Perception' });
@@ -322,7 +322,11 @@ async function mk(name) {
   console.log('\n--- whisper ---');
   const w = await gm.req('POST', M, { content: 'psst', whisper_to: [player.id] });
   t('a whisper is accepted', w.status === 201, `${w.status}`);
-  t('a whisper is typed whisper', w.data.message.type === 'whisper');
+  t('a whisper is a message with whisper_to and no type field', !('type' in w.data.message));
+  const forgedType = await player.req('POST', M, { content: 'announcement', type: 'system' });
+  t('a type sent by the client is ignored, not stored', forgedType.status === 201
+    && !('type' in forgedType.data.message)
+    && !('type' in (await knex('messages').where({ id: forgedType.data.message.id }).first())));
   t('whisper_to is stored', Array.isArray(w.data.message.whisper_to)
     && w.data.message.whisper_to.includes(player.id));
   const seen = (await player.req('GET', M)).data.messages;

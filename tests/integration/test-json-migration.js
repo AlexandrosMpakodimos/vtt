@@ -21,6 +21,7 @@
 
 const BASE = process.env.BASE_URL || 'http://localhost:3000';
 const knex = require('../../src/db');
+const { FIXTURE_CAMPAIGN_HASH } = require('../helpers/campaignFixture');
 const v = require('../../src/services/validators');
 const migration = require('../../src/db/migrations/20261006000000_json_schemas');
 
@@ -89,7 +90,7 @@ async function parents(trx) {
   const [user] = await trx('users').insert({
     email: `json-${tag}@example.invalid`, username: `json${tag}`, password_hash: 'x',
   }).returning('*');
-  const [campaign] = await trx('campaigns').insert({ owner_id: user.id, name: `json ${tag}` }).returning('*');
+  const [campaign] = await trx('campaigns').insert({ owner_id: user.id, name: `json ${tag}`, password_hash: FIXTURE_CAMPAIGN_HASH }).returning('*');
   return { user, campaign };
 }
 

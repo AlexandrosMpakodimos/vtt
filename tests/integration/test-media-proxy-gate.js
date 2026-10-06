@@ -48,6 +48,7 @@
 const http = require('node:http');
 const net = require('node:net');
 const crypto = require('node:crypto');
+const { FIXTURE_CAMPAIGN_HASH } = require('../helpers/campaignFixture');
 const express = require('express');
 const helmet = require('helmet');
 
@@ -170,7 +171,7 @@ async function mkUser(tag, suffix = EMAIL_SUFFIX, db = knex) {
   return u.id;
 }
 async function mkCampaign(name, ownerId, db = knex) {
-  const [c] = await db('campaigns').insert({ name, owner_id: ownerId }).returning('id');
+  const [c] = await db('campaigns').insert({ name, owner_id: ownerId, password_hash: FIXTURE_CAMPAIGN_HASH }).returning('id');
   const id = c.id || c;
   created.campaigns.push(id);
   return id;

@@ -42,7 +42,7 @@ async function makeUser() {
 async function scenario(kind, recipient, donor) {
   // Fixtures represent capacity without spending 19 HTTP creates per scenario.
   await knex('campaigns').insert(Array.from({ length: 19 }, (_, i) => ({
-    id: randomUUID(), owner_id: recipient.id, name: 'Capacity ' + i, is_public: true,
+    id: randomUUID(), owner_id: recipient.id, name: 'Capacity ' + i,
   })));
   const operations = [];
   const subjects = [];
@@ -50,7 +50,7 @@ async function scenario(kind, recipient, donor) {
     const id = randomUUID();
     const owner = mode === 'restore' ? recipient : donor;
     const deleted_at = mode === 'restore' ? new Date() : null;
-    await knex('campaigns').insert({ id, owner_id: owner.id, name: kind + ' subject', is_public: true, deleted_at });
+    await knex('campaigns').insert({ id, owner_id: owner.id, name: kind + ' subject', deleted_at });
     await knex('campaign_members').insert({ campaign_id: id, user_id: owner.id, status: 'active' });
     if (mode === 'transfer') await knex('campaign_members').insert({ campaign_id: id, user_id: recipient.id, status: 'active' });
     subjects.push({ id, mode, owner: owner.id });

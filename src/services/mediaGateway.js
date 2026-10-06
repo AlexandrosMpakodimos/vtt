@@ -448,7 +448,7 @@ async function rewriteBatch(urls, viewerId) {
 // The set of object keys that hold a stored image URL anywhere in this app's
 // payloads. Rewriting is restricted to EXACTLY these keys so the walker can
 // never touch a field that merely happens to contain a URL-like string (a chat
-// message body, a source_url provenance field, a description). If a new image
+// message body, a description). If a new image
 // field is ever added, it goes here — deliberately, not by pattern-guessing.
 const IMAGE_URL_KEYS = new Set(['img_url', 'avatar_url', 'url']);
 

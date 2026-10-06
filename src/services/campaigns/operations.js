@@ -6,7 +6,7 @@ const {
   validateCampaignName, validateCampaignDescription, validateImageUrl,
   validateCampaignPassword, validateColor, validateBool,
 } = require('../validators');
-const { SAFE_COLUMNS } = require('./presentation');
+const { SAFE_COLUMNS, isPublicCampaign } = require('./presentation');
 const { SOFT_DELETE_DAYS } = require('./constants');
 
 function createCampaignOperations({
@@ -29,7 +29,8 @@ function createCampaignOperations({
 
     const isPublic = body.is_public === true || body.is_public === 'true';
 
-    // public = listed, no password. private = listed, password required.
+    // public = listed, no password. private = listed, password required. Only
+    // the hash is stored: a NULL hash IS the public state (Fix 3).
     let password_hash = null;
     if (!isPublic) {
       const p = validateCampaignPassword(body.password);
@@ -70,7 +71,6 @@ function createCampaignOperations({
               name: n.value,
               description: d.value,
               img_url: img.value,
-              is_public: isPublic,
               password_hash,
             })
             .returning([...SAFE_COLUMNS, 'password_hash']);
@@ -142,14 +142,14 @@ function createCampaignOperations({
     }
 
     // 3. 'left' or brand new — private campaigns verify the password here.
-    if (!campaign.is_public) {
+    if (!isPublicCampaign(campaign)) {
       const supplied = input && input.password;
       // Bound before hashing: mirrors the pre-hash guard in config/passport.js
       // so an oversized body can't force expensive Argon2id work.
       if (typeof supplied !== 'string' || supplied.length === 0 || supplied.length > 128) {
         return { status: 401, error: 'incorrect campaign password' };
       }
-      const ok = campaign.password_hash && (await verifyPassword(campaign.password_hash, supplied));
+      const ok = await verifyPassword(campaign.password_hash, supplied);
       if (!ok) return { status: 401, error: 'incorrect campaign password' };
     }
 
@@ -290,32 +290,37 @@ function createCampaignOperations({
         updates.img_url = img.value;
       }
 
-      // Visibility and password interact, so they are resolved together.
+      // Visibility and password interact, so they are resolved together. Only
+      // password_hash is stored (Fix 3): clearing it makes the campaign public,
+      // setting it makes it private.
+      const wasPublic = isPublicCampaign(campaign);
       const nextIsPublic = body.is_public === undefined
-        ? campaign.is_public
+        ? wasPublic
         : (body.is_public === true || body.is_public === 'true');
-
-      if (body.is_public !== undefined) updates.is_public = nextIsPublic;
 
       if (nextIsPublic) {
         // Going public drops the password: a public campaign has no secret to keep.
         if (body.password) {
           return { status: 400, error: 'a public campaign cannot have a password' };
         }
-        if (!campaign.is_public) updates.password_hash = null;
+        if (!wasPublic) updates.password_hash = null;
       } else {
         if (body.password !== undefined) {
           const p = validateCampaignPassword(body.password);
           if (p.error) return { status: 400, error: p.error };
           updates.password_hash = await hashPassword(p.value);
-        } else if (campaign.is_public && body.is_public !== undefined) {
+        } else if (wasPublic && body.is_public !== undefined) {
           // Going private requires a password in the same request; otherwise the
           // campaign would sit private with a NULL hash and be unjoinable.
           return { status: 400, error: 'a password is required to make a campaign private' };
         }
       }
 
-      if (Object.keys(updates).length === 0) {
+      // A visibility sent unchanged still counts as an update, as it did while
+      // is_public was a column: the write bumps updated_at and the change set
+      // below still names it, so other dashboards redraw the card.
+      const visibilitySent = body.is_public !== undefined;
+      if (Object.keys(updates).length === 0 && !visibilitySent) {
         return { status: 400, error: 'nothing to update' };
       }
 
@@ -326,7 +331,7 @@ function createCampaignOperations({
         .update(updates)
         .returning([...SAFE_COLUMNS, 'password_hash']);
 
-      return { row, updates };
+      return { row, updates: visibilitySent ? { ...updates, is_public: nextIsPublic } : updates };
     });
     return result;
   }

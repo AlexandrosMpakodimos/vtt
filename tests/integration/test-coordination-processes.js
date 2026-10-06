@@ -3,6 +3,7 @@
 const assert = require('node:assert/strict');
 const { randomBytes, randomUUID } = require('node:crypto');
 const { fork } = require('node:child_process');
+const { FIXTURE_CAMPAIGN_HASH } = require('../helpers/campaignFixture');
 const path = require('node:path');
 if(process.env.NODE_ENV !== 'test')throw Error('NODE_ENV=test is required');
 const base=require('../../knexfile').test;
@@ -54,7 +55,7 @@ async function marker(c,method,args,event){const tag=randomUUID();await c.call(m
   await db.raw('CREATE TABLE session (sid text PRIMARY KEY, sess json NOT NULL, expire timestamp NOT NULL)');
   const owner=await fixtureUser('owner'),player=await fixtureUser('player'),other=await fixtureUser('other');
   const campaign=randomUUID(),scene=randomUUID(),hiddenScene=randomUUID();
-  await db('campaigns').insert({id:campaign,owner_id:owner.id,is_open:true,active_scene_id:scene});
+  await db('campaigns').insert({id:campaign,owner_id:owner.id,is_open:true,active_scene_id:scene,password_hash: FIXTURE_CAMPAIGN_HASH});
   await db('campaign_members').insert([owner,player,other].map(u=>({campaign_id:campaign,user_id:u.id,status:'active'})));
   const a=await child(),b=await child();
   const gm=await socketAt(a,owner.id,owner.sid),pl=await socketAt(b,player.id,player.sid),plTab=await socketAt(a,player.id,player.sid),outsider=await socketAt(b,other.id,other.sid);

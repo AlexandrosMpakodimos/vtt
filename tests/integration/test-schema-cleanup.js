@@ -18,6 +18,7 @@
 
 const BASE = process.env.BASE_URL || 'http://localhost:3000';
 const knex = require('../../src/db');
+const { FIXTURE_CAMPAIGN_HASH } = require('../helpers/campaignFixture');
 const { io } = require('socket.io-client');
 const migration = require('../../src/db/migrations/20261005000000_schema_cleanup');
 
@@ -91,7 +92,7 @@ async function fixtures(trx) {
   const [user] = await trx('users').insert({
     email: `schema-${tag}@example.invalid`, username: `schema${tag}`, password_hash: 'x',
   }).returning('*');
-  const [campaign] = await trx('campaigns').insert({ owner_id: user.id, name: `schema ${tag}` }).returning('*');
+  const [campaign] = await trx('campaigns').insert({ owner_id: user.id, name: `schema ${tag}`, password_hash: FIXTURE_CAMPAIGN_HASH }).returning('*');
   const [scene] = await trx('scenes').insert({ campaign_id: campaign.id, name: 'S' }).returning('*');
   const [actor] = await trx('actors').insert({ campaign_id: campaign.id, name: 'A' }).returning('*');
   const [item] = await trx('items').insert({ campaign_id: campaign.id, name: 'I', type: 'misc' }).returning('*');
@@ -205,10 +206,10 @@ function probe(name, expected, build) {
       campaign_id: f.campaign.id, user_id: f.user.id, speaker_name: 'n', speaker_role: 'admin', content: 'x' })),
     probe('asset status outside the set', CHECK, (f, trx) => trx('assets').insert({
       campaign_id: f.campaign.id, user_id: f.user.id, url: 'https://example.invalid/x.png',
-      source: 'external', kind: 'map', status: 'served' })),
+      kind: 'map', status: 'served' })),
     probe('asset kind outside the set', CHECK, (f, trx) => trx('assets').insert({
       campaign_id: f.campaign.id, user_id: f.user.id, url: 'https://example.invalid/x.png',
-      source: 'external', kind: 'banner', status: 'ready' })),
+      kind: 'banner', status: 'ready' })),
     probe('budget period_source outside the set', CHECK, (f, trx) => trx('storage_budget').where({ id: true }).update({ period_source: 'guess' })),
     probe('cleanup reason outside the set', CHECK, (f, trx) => trx('storage_cleanup').insert({
       storage_key: 'k', reason: 'because' })),

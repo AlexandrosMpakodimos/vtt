@@ -10,6 +10,7 @@
 // incomplete inventory refuses to initialise.
 
 const knex = require('../../src/db');
+const { FIXTURE_CAMPAIGN_HASH } = require('../helpers/campaignFixture');
 const storage = require('../../src/services/storage');
 const budget = require('../../src/services/storageBudget');
 
@@ -83,13 +84,13 @@ async function main() {
   await clearRows();
   // insert a ready asset, a pending asset, a cleanup row
   const camp = await knex('campaigns').insert({
-    name: 'recon-test', owner_id: null,
+    name: 'recon-test', owner_id: null, password_hash: FIXTURE_CAMPAIGN_HASH,
   }).returning('id').catch(async () => {
     // campaigns may require owner_id; make a user first
     const [u] = await knex('users').insert({
       email: `recon-${Date.now()}@x.com`, username: `recon${Date.now()}`, password_hash: 'x',
     }).returning('id');
-    return knex('campaigns').insert({ name: 'recon-test', owner_id: u.id }).returning('id');
+    return knex('campaigns').insert({ name: 'recon-test', owner_id: u.id, password_hash: FIXTURE_CAMPAIGN_HASH }).returning('id');
   });
   const campaignId = Array.isArray(camp) ? camp[0].id || camp[0] : camp;
   await knex('assets').insert([

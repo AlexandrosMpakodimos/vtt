@@ -15,6 +15,7 @@ process.env.MEDIA_TOKEN_SECRET = process.env.MEDIA_TOKEN_SECRET || 'testsecret';
 process.env.R2_PUBLIC_BASE_URL = process.env.R2_PUBLIC_BASE_URL || 'https://pub.r2.dev';
 
 const knex = require('../../src/db');
+const { FIXTURE_CAMPAIGN_HASH } = require('../helpers/campaignFixture');
 const gw = require('../../src/services/mediaGateway');
 if (!process.env.MEDIA_ORIGIN) throw new Error('Run through scripts/test-local.js');
 
@@ -47,7 +48,7 @@ async function main() {
   const [u] = await knex('users').insert({
     email: `rw-${Date.now()}@x.com`, username: `rw${Date.now()}`, password_hash: 'x',
   }).returning('id');
-  const [c] = await knex('campaigns').insert({ name: `rw-${Date.now()}`, owner_id: u.id }).returning('id');
+  const [c] = await knex('campaigns').insert({ name: `rw-${Date.now()}`, owner_id: u.id, password_hash: FIXTURE_CAMPAIGN_HASH }).returning('id');
   const cid = c.id || c;
   const [a1] = await knex('assets').insert({
     campaign_id: cid, user_id: u.id, storage_key: 'c/rw/map/one.png',
@@ -59,7 +60,7 @@ async function main() {
   }).returning('id');
   await knex('assets').insert({
     campaign_id: cid, user_id: u.id, storage_key: null,
-    url: 'https://external.example/pic.png', source: 'external', kind: 'portrait', status: 'ready',
+    url: 'https://external.example/pic.png', kind: 'portrait', status: 'ready',
   });
   const id1 = a1.id || a1; const id2 = a2.id || a2;
 

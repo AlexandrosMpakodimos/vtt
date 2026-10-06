@@ -248,8 +248,9 @@ function upload(who, kind, campaignId, body = PNG, mime = 'image/png', idem) {
   t('...marked as external', ext.data.asset.source === 'external');
   t('...ready immediately, since there is nothing of ours to verify',
     ext.data.asset.status === 'ready');
-  t('...with the original address kept for provenance',
-    ext.data.asset.source_url === 'https://example.com/aria.png');
+  t('...with the original address kept as its url',
+    ext.data.asset.url === 'https://example.com/aria.png');
+  t('...and no stored source_url copy (dropped in Fix 3)', !('source_url' in ext.data.asset));
   t('...and no storage key, because we host nothing',
     (await knex('assets').where({ id: ext.data.asset.id }).first()).storage_key === null);
   note('the trade-off', 'every player fetches this directly, disclosing their IP to that host');
@@ -352,7 +353,7 @@ function upload(who, kind, campaignId, body = PNG, mime = 'image/png', idem) {
   // Fixtures via knex; only the racing writes go over HTTP.
   await knex('assets').insert(Array.from({ length: MAX_USER - 3 }, (_, i) => ({
     user_id: racer.id, campaign_id: null, url: `https://example.com/f${i}.png`,
-    source: 'external', kind: 'avatar', status: 'ready',
+    kind: 'avatar', status: 'ready',
   })));
   const preload = Number((await knex('assets')
     .where({ user_id: racer.id, campaign_id: null, status: 'ready' }).count({ n: '*' }).first()).n);

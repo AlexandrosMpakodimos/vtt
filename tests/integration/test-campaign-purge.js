@@ -22,6 +22,7 @@
 // stubbed, so no bucket is involved.
 
 const knex = require('../../src/db');
+const { FIXTURE_CAMPAIGN_HASH } = require('../helpers/campaignFixture');
 const storage = require('../../src/services/storage');
 const budget = require('../../src/services/storageBudget');
 
@@ -61,7 +62,7 @@ async function makeUser(tag) {
 }
 async function makeCampaign(owner, tag, deletedDaysAgo) {
   const [c] = await knex('campaigns').insert({
-    name: `${RUN}-${tag}`, owner_id: owner,
+    name: `${RUN}-${tag}`, owner_id: owner, password_hash: FIXTURE_CAMPAIGN_HASH,
     deleted_at: deletedDaysAgo == null ? null : knex.raw(`now() - interval '${deletedDaysAgo} days'`),
   }).returning('id');
   return c.id || c;
@@ -87,7 +88,7 @@ async function main() {
   await makeAsset({ campaign_id: expired, user_id: owner, storage_key: key('verified'), bytes: 3_000_000, bytes_verified: true });
   await makeAsset({ campaign_id: expired, user_id: owner, storage_key: key('unverified'), bytes: 500, bytes_verified: false });
   await makeAsset({ campaign_id: expired, user_id: owner, storage_key: key('pending'), status: 'pending', reserved_bytes: 2_000_000 });
-  await makeAsset({ campaign_id: expired, user_id: owner, storage_key: null, source: 'external', url: 'https://elsewhere.example/a.png' });
+  await makeAsset({ campaign_id: expired, user_id: owner, storage_key: null, url: 'https://elsewhere.example/a.png' });
   const avatar = await makeAsset({ campaign_id: null, user_id: owner, kind: 'avatar', storage_key: key('avatar'), bytes: 100, bytes_verified: true });
   const keepWindow = await makeAsset({ campaign_id: inWindow, user_id: owner, storage_key: key('in-window'), bytes: 100, bytes_verified: true });
   const keepLive = await makeAsset({ campaign_id: live, user_id: owner, storage_key: key('live'), bytes: 100, bytes_verified: true });

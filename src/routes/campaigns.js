@@ -156,8 +156,9 @@ router.get('/search', async (req, res, next) => {
         .orWhereILike('c.description', term)
         .orWhereILike('owner.username', term));
     }
-    if (visibility === 'public') query.where('c.is_public', true);
-    if (visibility === 'private') query.where('c.is_public', false);
+    // Public = no password (Fix 3: is_public is computed, not stored).
+    if (visibility === 'public') query.whereNull('c.password_hash');
+    if (visibility === 'private') query.whereNotNull('c.password_hash');
 
     const rows = await query
       .join('users as owner', 'owner.id', 'c.owner_id')

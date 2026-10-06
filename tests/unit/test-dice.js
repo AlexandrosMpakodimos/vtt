@@ -194,15 +194,9 @@ t('boolean refused', !!v.validateHpOverride(true).error);
 t('past upper bound refused', !!v.validateHpOverride(10000).error);
 t('past lower bound refused', !!v.validateHpOverride(-10000).error);
 
-console.log('\n--- M5 validators: message type (allow-list, NOT a confidentiality gate) ---');
-t('chat accepted', v.validateMessageType('chat').value === 'chat');
-t('roll accepted', v.validateMessageType('roll').value === 'roll');
-t('system accepted', v.validateMessageType('system').value === 'system');
-t('whisper accepted', v.validateMessageType('whisper').value === 'whisper');
-t('absent defaults to chat', v.validateMessageType(undefined).value === 'chat');
-t('case tolerated', v.validateMessageType('WHISPER').value === 'whisper');
-t('unknown type refused', !!v.validateMessageType('shout').error);
-t('non-string refused', !!v.validateMessageType(['chat']).error);
+console.log('\n--- M5 validators: message type (dropped in Fix 3) ---');
+t('no message type validator or allow-list remains',
+  !('validateMessageType' in v) && !('MESSAGE_TYPES' in v));
 
 console.log('\n--- M5 validators: message content ---');
 t('ordinary line accepted', v.validateMessageContent('I attack the goblin').value === 'I attack the goblin');
