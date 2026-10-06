@@ -93,8 +93,8 @@ function isProjected(a) {
 }
 
 function hpBar(a) {
-  // Derived from the ACTOR, never from tokens.bar1_*, which stays meaningful
-  // only for unlinked tokens. A projected NPC carries no hp at all, so a player
+  // Derived from the ACTOR (tokens carry no HP of their own). A projected NPC
+  // carries no hp at all, so a player
   // simply gets no bar — the confidentiality rule and the display rule are the
   // same rule.
   if (isProjected(a) || !a.hp_max) return null;
@@ -351,27 +351,11 @@ function renderActors() {
 // IMAGE LIBRARY (M6)
 // ---------------------------------------------------------------------------
 //
-// The upload is a three-step conversation and the middle step does not involve
-// this application at all:
-//
-//   1. ask the server to authorise ONE upload   -> presigned URL + asset id
-//   2. PUT the file straight to the bucket      -> our server sees nothing
-//   3. tell the server it finished              -> it reads the bytes back and
-//                                                  verifies them
-//
-// Step 2 is a plain fetch to a different origin. That is the point: the file
-// never passes through the application, so a large upload costs it no memory
-// and no bandwidth, and the JSON body limit is irrelevant.
-//
-// Step 3 is the one that matters. Everything before it is this client's word,
-// and the bucket stores raw bytes rather than transcoding them — so the server
-// checks the magic numbers before the asset becomes usable. A file that is not
-// what it claims to be is deleted rather than stored, and the interface says so.
-//
-// THE HEADERS IN STEP 2 ARE NOT OPTIONAL. The content type and length are part
-// of the signature the server produced; sending anything else makes the bucket
-// refuse the PUT before our code is involved. That is how the size limit is
-// enforced by the storage provider rather than by trust.
+// One upload path: the file is POSTed to /api/assets/upload, and the server
+// checks its magic numbers, meters it and writes it to storage exactly once
+// before the asset becomes usable. A file that is not what it claims to be is
+// refused, and the interface says so. (The earlier presign -> direct PUT ->
+// confirm conversation was removed on 2026-10-05.)
 
 let assets = [];
 

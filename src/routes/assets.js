@@ -10,26 +10,24 @@
 // survive review.
 //
 // ---------------------------------------------------------------------------
-// THE UPLOAD IS A THREE-STEP CONVERSATION
+// ONE UPLOAD PATH
 // ---------------------------------------------------------------------------
-//   POST /api/assets/presign    we authorise ONE upload and record it pending
-//   (client PUTs the bytes straight to R2 — never through this server)
-//   POST /api/assets/:id/confirm  we read the bytes back and verify them
+//   POST /api/assets/upload     the bytes come THROUGH the server: validated,
+//                               metered, written to R2 once, then marked ready
+//   POST /api/assets/external   record a pasted link (no bytes)
 //
-// The middle step deliberately does not involve us. Proxying the file would
-// double the bandwidth, put an arbitrary-size body through a process that
-// currently caps JSON at 100 kB, and buy nothing: we verify afterwards either
-// way, and the presigned URL already pins the type and the length.
-//
-// The third step is the one that matters. Everything before it is the client's
-// word, and R2 — unlike an image CDN — stores exactly what it is given.
+// [CHANGED 2026-10-05] The legacy three-step presigned conversation (POST
+// /presign, a browser PUT straight to R2, POST /:id/confirm) was removed in the
+// schema cleanup. It had been disabled in production (UPLOAD_MODE=strict) since
+// the controlled path landed, because a presigned PUT is a replayable grant the
+// budget cannot meter exactly. UPLOAD_MODE no longer exists.
 
 const express = require('express');
 const knex = require('../db');
 const { requireAuth } = require('../middleware/auth');
 const { contentWriteLimiter } = require('../middleware/rateLimit');
 const { withAtomicCap } = require('../services/atomicCap');
-const { validateImageUrl, validateInt, validUuid } = require('../services/validators');
+const { validateImageUrl, validUuid } = require('../services/validators');
 const storage = require('../services/storage');
 const budget = require('../services/storageBudget');
 const queueFailedUpload = require('../services/failedUploadCleanup');
@@ -59,19 +57,6 @@ async function budgetActive() {
   }
   return true;
 }
-
-// UPLOAD_MODE controls which write paths exist.
-//   'proxy'  (default): the controlled, server-proxied upload is available AND
-//            the legacy presigned-PUT path remains, for compatibility during
-//            cutover. Both are metered; presign's replay weakness persists while
-//            it is enabled, which is why strict mode exists.
-//   'strict': ONLY the controlled path. Legacy presign issuance is DISABLED
-//            (returns 410 Gone). This is the state in which the upload path has
-//            no replayable, under-metered grant. Cutover moves here once every
-//            client is on the controlled path and outstanding presigned grants
-//            (max UPLOAD_URL_TTL_SECONDS old) have expired.
-const UPLOAD_MODE = (process.env.UPLOAD_MODE || 'proxy').toLowerCase();
-const STRICT_UPLOADS = UPLOAD_MODE === 'strict';
 
 // A hard ceiling on any request body the upload route will buffer, independent
 // of the per-kind limit, so a hostile Content-Length cannot make the server
@@ -106,8 +91,9 @@ function requireStorage(req, res, next) {
 const MAX_ASSETS_PER_CAMPAIGN = 300;
 const MAX_ASSETS_PER_USER = 20;
 
-// A presigned URL that is never used leaves a pending row holding quota. It is
-// reclaimed by the sweep in server.js after this long.
+// A controlled upload holds a `pending` row only while its request runs. One
+// left behind (a crash mid-upload) still holds quota; the sweep in server.js
+// reclaims it after this long.
 const PENDING_TTL_MINUTES = 30;
 
 function publicAsset(a) {
@@ -161,187 +147,10 @@ async function mayCreate({ userId, kind, campaignId }) {
   return { ok: true, isOwner };
 }
 
-// POST /api/assets/presign — authorise exactly one upload.
-//
-// Refusals are 404 rather than 403 for a campaign the caller cannot reach, so
-// this route cannot be used to discover which campaigns exist. A member who may
-// not upload a MAP gets 403, because by then their membership is established
-// and the refusal discloses nothing new.
-router.post('/presign', (req, res, next) => {
-  // Strict mode disables the legacy presigned-PUT path entirely — before the
-  // storage-configured check, because the endpoint is GONE in strict mode
-  // whether or not a bucket is present. A grant already issued before the switch
-  // remains valid only until it expires (UPLOAD_URL_TTL_SECONDS); no NEW grant
-  // is issued here.
-  if (STRICT_UPLOADS) {
-    return res.status(410).json({
-      error: 'presign_disabled',
-      message: 'direct presigned uploads are disabled; use POST /api/assets/upload',
-    });
-  }
-  return next();
-}, requireStorage, async (req, res, next) => {
-  try {
-    const body = req.body || {};
-
-    const kind = typeof body.kind === 'string' ? body.kind.trim().toLowerCase() : '';
-    if (!storage.KINDS.includes(kind)) {
-      return res.status(400).json({ error: `kind must be one of: ${storage.KINDS.join(', ')}` });
-    }
-
-    const campaignId = body.campaign_id === undefined || body.campaign_id === null
-      ? null : body.campaign_id;
-    if (campaignId !== null && !validUuid(campaignId)) {
-      return res.status(404).json({ error: 'campaign not found' });
-    }
-
-    const perm = await mayCreate({ userId: req.user.id, kind, campaignId });
-    if (!perm.ok) {
-      if (perm.forbidden) return res.status(403).json({ error: `only the GM may upload a ${kind}` });
-      return res.status(404).json({ error: 'campaign not found' });
-    }
-
-    const mime = typeof body.mime === 'string' ? body.mime.trim().toLowerCase() : '';
-    const fmt = storage.formatFor(mime);
-    if (!fmt) {
-      // SVG lands here, and that is the point: it is not in the allow-list, so
-      // there is no path by which a scriptable image reaches the bucket.
-      return res.status(400).json({ error: `mime must be one of: ${storage.allowedMimes().join(', ')}` });
-    }
-
-    const limit = storage.limitFor(kind);
-    const size = validateInt(body.bytes, { min: 1, max: limit, field: 'bytes' });
-    if (size.error) return res.status(400).json({ error: size.error });
-
-    const key = storage.buildKey({
-      campaignId, userId: req.user.id, kind, ext: fmt.ext,
-    });
-
-    // The quota is claimed BEFORE the URL is issued, not after the upload
-    // succeeds. Issuing an authorisation that would exceed the cap and then
-    // refusing the result would waste the user's upload and leave an object in
-    // the bucket to clean up.
-    //
-    // [FIXED 2026-08-09] The count MUST include `pending`, and originally did
-    // not — it counted only `ready`, which meant a pending row claimed nothing
-    // and the cap did not hold at all:
-    //
-    //   with zero ready rows, request five hundred presigned URLs — every one
-    //   passes a check against zero — then upload and confirm them all. Confirm
-    //   performs no cap check; it only flips a status. Five hundred assets
-    //   against a limit of three hundred.
-    //
-    // The comment directly above described the intent correctly and the code
-    // did something else. An authorisation that has been issued is an allowance
-    // that has been spent, whether or not the bytes ever arrive; the stale-row
-    // sweep is what returns it if they do not.
-    //
-    // Expressed as a callback because the primitive takes a `where` object and
-    // this needs a set membership. Knex groups the callback's conditions, so
-    // the scope and the status test are ANDed as one clause.
-    // The BYTE budget is reserved before the presigned URL is issued, for the
-    // same reason the IMAGE cap is claimed here rather than at confirm: an
-    // authorisation to write is an allowance spent whether or not the bytes
-    // arrive. The maximum accepted size is reserved (the request's declared
-    // bytes, already bounded by the kind limit); the stale-row sweep releases it
-    // if the upload never completes, and confirm converts it to committed if it
-    // does. Only when the budget is ACTIVE — see budgetActive() — otherwise this
-    // is a no-op and uploads behave exactly as before.
-    const active = await budgetActive();
-    let reservedBytes = 0;
-    if (active) {
-      try {
-        await budget.reserveBytes(size.value);
-        reservedBytes = size.value;
-      } catch (err) {
-        if (err.budgetExceeded) {
-          return res.status(507).json({
-            error: 'storage_budget_reached',
-            message: 'the application has reached its storage budget; new uploads are paused',
-          });
-        }
-        throw err;
-      }
-    }
-
-    const scope = campaignId ? { campaign_id: campaignId } : { user_id: req.user.id, campaign_id: null };
-    let row;
-    try {
-      const rows = await withAtomicCap({
-        table: 'assets',
-        where: function countsAgainstQuota() {
-          this.where(scope).whereIn('status', ['pending', 'ready']);
-        },
-        max: campaignId ? MAX_ASSETS_PER_CAMPAIGN : MAX_ASSETS_PER_USER,
-        capMessage: campaignId
-          ? `a campaign may hold at most ${MAX_ASSETS_PER_CAMPAIGN} images`
-          : `you may hold at most ${MAX_ASSETS_PER_USER} personal images`,
-        insert: {
-          campaign_id: campaignId,
-          user_id: req.user.id,
-          storage_key: key,
-          url: storage.publicUrl(key),
-          source: 'upload',
-          kind,
-          status: 'pending',
-          reserved_bytes: reservedBytes || null,
-        },
-      });
-      row = rows[0];
-    } catch (err) {
-      // The image cap refused AFTER we reserved bytes: give the reservation back
-      // so a refused upload does not leak budget.
-      if (reservedBytes) await budget.releaseReservedBytes(reservedBytes).catch(() => {});
-      if (err.capExceeded) return res.status(409).json({ error: err.message });
-      throw err;
-    }
-
-    // The presigned PUT is a Class A operation the account will be billed for
-    // when the client uses it. Charge the permit now, while active; a failure to
-    // charge releases the byte reservation too.
-    if (active) {
-      try {
-        await budget.charge('put');
-      } catch (err) {
-        if (reservedBytes) await budget.releaseReservedBytes(reservedBytes).catch(() => {});
-        await knex('assets').where({ id: row.id }).del().catch(() => {});
-        if (err.budgetExceeded) {
-          return res.status(507).json({
-            error: 'operation_budget_reached',
-            message: 'the application has reached its operation budget; new uploads are paused',
-          });
-        }
-        throw err;
-      }
-    }
-
-    const uploadUrl = await storage.presignUpload({ key, mime, bytes: size.value });
-
-    return res.status(201).json({
-      asset: publicAsset(row),
-      upload: {
-        url: uploadUrl,
-        method: 'PUT',
-        // Content-Type only. `Content-Length` is a FORBIDDEN HEADER NAME in
-        // fetch — the browser drops it from a Headers object and sets it
-        // itself from the body — so sending it here is inert at best and
-        // misleading at worst. It is still signed, and the browser still
-        // transmits it, so the size limit is still enforced by the storage
-        // service; it simply is not something the client sets.
-        headers: { 'Content-Type': mime },
-        expires_in: storage.UPLOAD_URL_TTL_SECONDS,
-      },
-    });
-  } catch (err) {
-    return next(err);
-  }
-});
-
 // POST /api/assets/upload — the CONTROLLED upload path.
 //
-// This is the path the safety brief requires and the answer to "presigned
-// uploads bypass exact operation enforcement". Instead of handing the browser a
-// replayable PUT grant, the bytes come THROUGH the server: we validate them,
+// Instead of handing the browser a replayable PUT grant, the bytes come THROUGH
+// the server: we validate them,
 // reserve budget, write the object to R2 exactly once (metered, one charged
 // permit per real SDK attempt), verify, and commit. There is no client-held
 // grant to replay, so one authorised upload is one object and one set of
@@ -407,10 +216,9 @@ router.post('/upload',
         return res.status(400).json({ error: `a ${kind} may be at most ${limit} bytes` });
       }
 
-      // Verify the bytes ARE the declared type BEFORE writing anything. The
-      // presign path could only check this after the object existed (a read-back
-      // at confirm); here the bytes are in hand, so a liar never reaches R2 at
-      // all — no wasted write, no object to clean up.
+      // Verify the bytes ARE the declared type BEFORE writing anything. The bytes
+      // are in hand, so a liar never reaches R2 at all — no wasted write, no
+      // object to clean up.
       if (!storage.magicMatches(mime, bytes)) {
         return res.status(400).json({ error: 'that file is not the image type it claims to be' });
       }
@@ -440,8 +248,7 @@ router.post('/upload',
 
       const active = await budgetActive();
 
-      // Reserve the ACTUAL byte count (we have the bytes, so no need to reserve a
-      // declared maximum as presign does).
+      // Reserve the ACTUAL byte count (the bytes are in hand).
       if (active) {
         try {
           await budget.reserveBytes(bytes.length);
@@ -501,7 +308,6 @@ router.post('/upload',
       // every retry is charged and recorded in upload_attempts.
       const MAX_WRITE_ATTEMPTS = 3;
       let lastErr = null;
-      let etag = null;
       for (let attempt = 1; attempt <= MAX_WRITE_ATTEMPTS; attempt += 1) {
         if (active) {
           try {
@@ -530,8 +336,7 @@ router.post('/upload',
         }
         try {
           attemptedWrite = true;
-          const put = await storage.putObject({ key, mime, body: bytes });
-          etag = put.etag;
+          await storage.putObject({ key, mime, body: bytes });
           wroteObject = true;
           await knex('assets').where({ id: row.id }).update({ upload_attempts: attempt }).catch(() => {});
           break;
@@ -590,7 +395,6 @@ router.post('/upload',
         mime,
         bytes: realBytes,
         bytes_verified: active ? realBytes <= (row.reserved_bytes || realBytes) : false,
-        etag: etag || null,
         reserved_bytes: null,
         updated_at: knex.fn.now(),
       }).returning('*');
@@ -628,217 +432,6 @@ router.post('/upload',
     }
   });
 
-
-// bytes back out of the bucket and checks them against the magic numbers for
-// the format that was claimed.
-//
-// A file whose bytes disagree with its declared type is DELETED and the row
-// marked rejected — not stored and flagged, because an object that is not what
-// it says it is has no reason to remain in the bucket.
-router.post('/:id/confirm', requireStorage, async (req, res, next) => {
-  try {
-    if (!validUuid(req.params.id)) return res.status(404).json({ error: 'asset not found' });
-
-    // Scoped to the uploader. Confirming somebody else's pending upload would
-    // let one user complete another's authorisation.
-    const asset = await knex('assets')
-      .where({ id: req.params.id, user_id: req.user.id }).first();
-    if (!asset) return res.status(404).json({ error: 'asset not found' });
-    if (asset.status !== 'pending') {
-      return res.status(409).json({ error: `asset is already ${asset.status}` });
-    }
-
-    const active = await budgetActive();
-
-    // The readback is a Class B GET. Charge the permit before touching R2, while
-    // active; if the operation budget is exhausted we do not read.
-    if (active) {
-      try {
-        await budget.charge('get');
-      } catch (err) {
-        if (err.budgetExceeded) {
-          return res.status(507).json({
-            error: 'operation_budget_reached',
-            message: 'the application has reached its operation budget; try again next period',
-          });
-        }
-        throw err;
-      }
-    }
-
-    let head;
-    try {
-      head = await storage.readHead(asset.storage_key);
-    } catch {
-      // Nothing is there. The presigned URL was issued and never used, or the
-      // upload failed. Not an error on the client's part; the row simply never
-      // becomes usable. The reservation is left for the sweep to reclaim.
-      return res.status(409).json({ error: 'no upload found for that asset' });
-    }
-
-    const declared = head.reportedMime;
-    const ok = storage.magicMatches(declared, head.head);
-
-    if (!ok) {
-      // The bytes are not the image they claimed to be. The object must not
-      // remain. Deletion can fail, and a swallowed failure is exactly the leak
-      // the durable cleanup queue exists to catch: try once, and if it does not
-      // succeed, record the object so a worker retries until absence is
-      // established. The size was never HEADed (we do not HEAD a liar), so no
-      // committed bytes are involved — only the presign reservation.
-      //
-      // The R2 call happens here, ONCE, before any transaction opens, and its
-      // result (removed) is a plain boolean closed over below — a retried
-      // transaction never re-calls R2, it only redoes the database-only work.
-      //
-      // The row's own read at the top of this handler is not trustworthy for a
-      // budget decision: it was taken before the HEAD call above, and the sweep
-      // (cleanupStaleAssets) may have claimed and removed this exact row in the
-      // meantime. So the guard, the queue insert and the reservation release all
-      // happen together, atomically, gated on a FRESH read of the row's current
-      // state, in one SERIALIZABLE transaction — the same discipline used
-      // throughout storageBudget.js. If the row is no longer 'pending' (the
-      // sweep, or a concurrent confirm request for the same id, already
-      // finished it), this request contributes nothing further: no release, no
-      // queue insert, no row write — whoever actually claimed the row already
-      // did all of that.
-      const removed = await storage.remove(asset.storage_key);
-      const claim = await budget.inSerializable(async (trx) => {
-        // Row lock, belt-and-braces alongside SERIALIZABLE (same pattern as the
-        // cleanup worker's own batch claim).
-        const current = await trx('assets').where({ id: asset.id }).forUpdate().first();
-        if (!current || current.status !== 'pending') return { claimed: false };
-
-        await trx('assets').where({ id: asset.id })
-          .update({ status: 'rejected', reserved_bytes: null, updated_at: trx.fn.now() });
-
-        if (!removed) {
-          await trx('storage_cleanup').insert({
-            storage_key: asset.storage_key,
-            bytes: null, // size unknown for a rejected upload
-            reason: 'rejected',
-          });
-        }
-        // reserved_bytes is a bigint column: node-pg returns it as a numeric
-        // string, never a JS number, so Number(...) is required — a typeof
-        // check against 'number' would never fire for a value read back from
-        // Postgres (a pre-existing defect in the code this replaced, confirmed
-        // present before this patch; see the scope notes).
-        if (active) {
-          const reservedBytes = Number(current.reserved_bytes);
-          if (reservedBytes > 0) await budget.releaseReservedBytesIn(trx, reservedBytes);
-        }
-        return { claimed: true };
-      });
-
-      if (!claim.claimed) {
-        return res.status(409).json({ error: 'asset is no longer pending' });
-      }
-      return res.status(400).json({
-        error: 'that file is not the image type it claims to be',
-      });
-    }
-
-    // The SIZE is established authoritatively by a HEAD, never by the ranged
-    // read above. `readHead` fetches sixteen bytes to check the magic numbers,
-    // and the length of that slice is sixteen — recording it as the object's
-    // size stored 16 for every upload regardless of the real file (the bug this
-    // replaces). A HEAD returns the whole object's Content-Length. It costs one
-    // Class B operation, which is the correct price for learning what we are
-    // about to be billed to store.
-    // The HEAD that establishes the authoritative size is itself a Class B
-    // operation. Charge it too.
-    if (active) {
-      try {
-        await budget.charge('head');
-      } catch (err) {
-        if (err.budgetExceeded) {
-          return res.status(507).json({
-            error: 'operation_budget_reached',
-            message: 'the application has reached its operation budget; try again next period',
-          });
-        }
-        throw err;
-      }
-    }
-
-    let authoritative;
-    try {
-      authoritative = await storage.headSize(asset.storage_key);
-    } catch {
-      // The object was there for the ranged read a moment ago; if the HEAD
-      // fails now, do not guess a size. Leave the row pending for the sweep to
-      // reconcile rather than committing a byte count we cannot stand behind.
-      return res.status(409).json({ error: 'could not verify the stored object size' });
-    }
-    if (typeof authoritative.bytes !== 'number' || authoritative.bytes <= 0) {
-      return res.status(409).json({ error: 'stored object reported no size' });
-    }
-
-    // Same reasoning as the rejection path above: the row's state is re-read
-    // fresh, under a row lock, inside one SERIALIZABLE transaction that also
-    // performs the reservation commit/release and the final row write — not the
-    // stale pre-HEAD-call snapshot. The HEAD that produced `authoritative` has
-    // already happened, outside any transaction; nothing here calls R2, so a
-    // retry on serialization conflict only redoes database work.
-    const claim = await budget.inSerializable(async (trx) => {
-      const current = await trx('assets').where({ id: asset.id }).forUpdate().first();
-      if (!current || current.status !== 'pending') return { claimed: false };
-
-      // Reconcile the reservation against the real stored size. We reserved the
-      // declared maximum at presign; the object may be smaller. Commit the
-      // ACTUAL bytes, and release the difference so the ledger reflects what is
-      // truly stored rather than what was promised. The signed content-length
-      // means the real size cannot EXCEED the reservation, so this only ever
-      // releases; a larger-than-reserved size would be a provider anomaly and is
-      // clamped by committing the reservation and flagging the row for
-      // reconciliation.
-      // Same bigint-round-trips-as-string note as the rejection path above:
-      // Number(...), not typeof.
-      const reservedBytes = Number(current.reserved_bytes) || 0;
-      if (active) {
-        const realBytes = authoritative.bytes;
-        if (reservedBytes > 0) {
-          const toCommit = Math.min(realBytes, reservedBytes);
-          await budget.commitReservedBytesIn(trx, toCommit);
-          if (reservedBytes > toCommit) {
-            await budget.releaseReservedBytesIn(trx, reservedBytes - toCommit);
-          }
-          // realBytes should never exceed reserved (length is signed); if a
-          // provider ever reported otherwise, the extra is NOT silently
-          // committed — bytes_verified is left false below so the reconciler
-          // revisits it.
-        }
-      }
-
-      const trustworthy = !active
-        ? false // when inactive we still record the real size, but it is not yet
-        // ledger-charged; the reconciler will fold it in at initialisation.
-        : (Number.isFinite(reservedBytes) && current.reserved_bytes != null
-          ? authoritative.bytes <= reservedBytes
-          : false);
-
-      const [row] = await trx('assets').where({ id: asset.id }).update({
-        status: 'ready',
-        mime: declared,
-        bytes: authoritative.bytes,
-        bytes_verified: trustworthy,
-        etag: authoritative.etag || null,
-        reserved_bytes: null,
-        updated_at: trx.fn.now(),
-      }).returning('*');
-
-      return { claimed: true, row };
-    });
-
-    if (!claim.claimed) {
-      return res.status(409).json({ error: 'asset is no longer pending' });
-    }
-    return res.json({ asset: publicAsset(claim.row) });
-  } catch (err) {
-    return next(err);
-  }
-});
 
 // POST /api/assets/external — record a pasted link.
 //
@@ -883,7 +476,7 @@ router.post('/external', async (req, res, next) => {
     try {
       const rows = await withAtomicCap({
         table: 'assets',
-        // Same scope as presign. An external link is `ready` immediately and has
+        // Same scope as an upload. An external link is `ready` immediately and has
         // no pending state of its own, but it must be counted against the SAME
         // total — otherwise the two routes would enforce two different caps on
         // one allowance, and the cheaper one would be the way around the other.

@@ -170,7 +170,7 @@ async function selectScene(sceneId) {
 
   const tokenCount = (r.data.tokens || []).length;
   document.getElementById('info').textContent =
-    `${scene.name} — ${scene.width}×${scene.height}px, ${tokenCount} token(s)`;
+    `${scene.name} — ${tokenCount} token(s)`;
   // (The pre-emptive "changing the cell size moves tokens" warning was removed.)
   document.getElementById('hazard').textContent = '';
 

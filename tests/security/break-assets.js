@@ -94,9 +94,8 @@ async function makeCampaign(gm, name) {
   try {
     const identityResponse = await fetch(BASE + '/__test/identity');
     const identity = await identityResponse.json();
-    if (!identityResponse.ok || identity.storageBackend !== 'memory' ||
-        identity.uploadMode !== 'strict') {
-      throw new Error('Requires the strict memory test server');
+    if (!identityResponse.ok || identity.storageBackend !== 'memory') {
+      throw new Error('Requires the memory test server');
     }
     const dbIdentity = (await knex.raw(
       'SELECT current_database() AS database, current_user AS role'
@@ -136,8 +135,9 @@ async function makeCampaign(gm, name) {
     const disabled = await gm.req('POST', '/api/assets/presign', {
       ...map, bytes: PNG.length,
     });
-    expect('legacy presign is disabled', disabled, 410);
-    check('disabled presign supplies no grant', !disabled.data?.upload);
+    // Removed outright on 2026-10-05 (it answered 410 before): no route, no grant.
+    expect('legacy presign route does not exist', disabled, 404);
+    check('no presign grant is ever supplied', !disabled.data?.upload);
 
     expect('anonymous upload is refused', await agent().upload(map), 401);
     expect('player cannot upload a map', await player.upload(map), 403);

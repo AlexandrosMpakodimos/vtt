@@ -39,7 +39,6 @@ Object.assign(env, {
   MEDIA_ORIGIN: 'http://media.test:3001',
   MAIL_JSON: '1',
   SKIP_HIBP: '1',
-  UPLOAD_MODE: 'strict',
 });
 
 for (const name of [
@@ -63,8 +62,7 @@ async function verifyServer() {
     identity.database !== 'vtt_test' ||
     identity.role !== 'vtt_test_runner' ||
     identity.storageConfigured !== true ||
-    identity.storageBackend !== 'memory' ||
-    identity.uploadMode !== 'strict'
+    identity.storageBackend !== 'memory'
   ) {
     throw new Error('Refusing to run tests against an unexpected server.');
   }

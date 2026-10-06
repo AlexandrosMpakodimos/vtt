@@ -1084,7 +1084,6 @@
     .bar > i.low { background: #c33; }
 
     .tag { font-size: 10px; padding: 0 4px; border: 1px solid #999; border-radius: 3px; }
-    .tag.prop { border-color: #a40; color: #a40; }
     .tag.hidden { border-color: #808; color: #808; }
 
     .tok { display: flex; align-items: center; gap: 6px; padding: 3px 0;

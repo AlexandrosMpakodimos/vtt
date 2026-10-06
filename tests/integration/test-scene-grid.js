@@ -94,8 +94,10 @@ async function mk(name) {
   t('the GM renames a scene', ren.status === 200 && ren.data.scene.name === 'Bridge at dusk', `${ren.status}`);
   const img = await gm.req('PATCH', P, { img_url: 'https://example.com/map.png' });
   t('the map image can be set', img.status === 200 && img.data.scene.img_url === 'https://example.com/map.png');
+  // scenes.width/height were dropped (2026-10-05): a PATCH carrying only them
+  // has nothing to update.
   const dims = await gm.req('PATCH', P, { width: 2400, height: 1800 });
-  t('dimensions can be changed', dims.status === 200 && dims.data.scene.width === 2400);
+  t('dimensions are no longer a writable field', dims.status === 400, `${dims.status}`);
   t('an empty PATCH is refused', (await gm.req('PATCH', P, {})).status === 400);
 
   console.log('\n--- the grid MERGES rather than replaces ---');

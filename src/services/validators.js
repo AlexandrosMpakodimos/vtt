@@ -140,15 +140,6 @@ function validateTokenSize(v, field) {
   return r;
 }
 
-// Scene canvas dimension in pixels. Positive integer, bounded to sane limits.
-function validateSceneDimension(v, field, dflt) {
-  if (v === undefined || v === null || v === '') return { value: dflt };
-  const n = typeof v === 'number' ? v : Number(v);
-  if (!Number.isInteger(n)) return { error: `${field} must be a whole number of pixels` };
-  if (n < 100 || n > 20000) return { error: `${field} must be between 100 and 20000 pixels` };
-  return { value: n };
-}
-
 // A batch of token ids (for group move / delete / copy). Rejects non-arrays,
 // empties, over-long batches (a DoS bound), and any malformed uuid — so a
 // hostile body can never reach the DB or spin the server on a huge list.
@@ -606,11 +597,6 @@ function validateImgScale(v) {
 // M5 — combat and chat
 // ---------------------------------------------------------------------------
 
-// Combat name. Optional; a fight does not need a title.
-function validateCombatName(v) {
-  return validateShortText(v, 'name', 100);
-}
-
 // Per-instance hit points for one combatant. NULL is meaningful and is NOT an
 // absent value: it means "this combatant has no per-fight HP of its own", which
 // is the correct state for a player character (their sheet is authoritative) and
@@ -686,7 +672,7 @@ module.exports = {
   validateCampaignName, validateCampaignDescription, validateImageUrl,
   validateCampaignPassword, validateColor,
   validateSceneName, validateTokenName, validateGridCoord, validateTokenSize,
-  validateSceneDimension, validateTokenIdList, validateBool,
+  validateTokenIdList, validateBool,
   validateFogType, validateFogPoints, FOG_TYPES, MAX_FOG_POINTS,
   validUuid, validateInt, validateActorInt, ACTOR_INT_FIELDS,
   validateShortText, validateLongText, validateActorSize, ACTOR_SIZES,
@@ -696,7 +682,7 @@ module.exports = {
   validateSpellName, validateSpellLevel, validateSpellSource, SPELL_SOURCES,
   validateGrid, GRID_TYPES, MAX_GRID_OFFSET,
   validateImgFrame, validateImgScale,
-  validateCombatName, validateHpOverride,
+  validateHpOverride,
   validateMessageType, MESSAGE_TYPES,
   validateMessageContent, MAX_MESSAGE_LENGTH,
   validateWhisperTo, MAX_WHISPER_RECIPIENTS,

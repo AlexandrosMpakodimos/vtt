@@ -15,6 +15,16 @@ runs (70 defended, 0 vulnerable each), and the full `npm run test:all` run
 passed 89 suites (45 unit, 35 integration, 9 adversarial) with 4,531
 assertions and 0 failures.
 
+Schema cleanup (Fix 1, migration `20261005000000_schema_cleanup.js`), run in
+the development container against PostgreSQL 16 (the owner's macOS run on
+PostgreSQL 17 is still to be recorded): `test:all` 90 suites (45 unit,
+36 integration, 9 adversarial), 4,586 assertions, 0 failures. The new
+`test-schema-cleanup.js` checks the catalog against the migration's own lists,
+that PostgreSQL refuses rule-breaking rows (32 probes, each run in a
+rolled-back transaction), copy/paste link and framing preservation, and the
+socket ping bound. The manual-only `test-stale-asset-atomicity.js` passed
+40 assertions; its confirm-route race scenarios were removed with that route.
+
 The earlier owner-reported full macOS run, immediately before frontend organization:
 
 | Group | Suites | Assertions |
@@ -33,7 +43,7 @@ Earlier audit results remain [historical evidence](history/authorization-audit.m
 
 The authoritative registration and order are the `UNIT`, `DB`, and `SEC` arrays
 in `tests/suites.js`. They are explicit lists, not automatic discovery, and
-currently register 45 / 35 / 9 suites. The 70-suite record above predates the
+currently register 45 / 36 / 9 suites. The 70-suite record above predates the
 suites added since then. All original suite entries retain their relative order.
 
 Suites live in `tests/unit/`, `tests/integration/`, and `tests/security/`.

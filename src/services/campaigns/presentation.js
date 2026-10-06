@@ -2,7 +2,7 @@
 // can leak it — the same discipline as SAFE_COLUMNS in routes/auth.js.
 const SAFE_COLUMNS = [
   'id', 'owner_id', 'name', 'description', 'img_url',
-  'is_public', 'is_open', 'active_scene_id', 'settings', 'created_at', 'updated_at',
+  'is_public', 'is_open', 'active_scene_id', 'created_at', 'updated_at',
 ];
 
 // Shapes a campaign for the client. has_password is exposed as a BOOLEAN (never
@@ -26,7 +26,6 @@ function publicCampaign(c, viewerId) {
     // list and search do; detail does not). Lets a card show whose game it is.
     ...(c.owner_username !== undefined ? { owner_username: c.owner_username } : {}),
     active_scene_id: c.active_scene_id,
-    settings: c.settings,
     created_at: c.created_at,
     updated_at: c.updated_at,
     // archived is the VIEWER's own dashboard state (from their campaign_members

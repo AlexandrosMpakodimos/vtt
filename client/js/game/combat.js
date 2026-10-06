@@ -537,18 +537,10 @@ function renderTokens() {
     }
     const nm = el('span', { cls: 'grow', text: t.name || '(unnamed)' });
     row.appendChild(nm);
-    if (t.is_prop) row.appendChild(el('span', { cls: 'tag prop', text: 'prop' }));
     if (t.hidden) row.appendChild(el('span', { cls: 'tag hidden', text: 'hidden' }));
     row.appendChild(el('span', { cls: 'muted', text: inFight.has(t.id) ? 'in fight' : '—' }));
 
     if (isGm) {
-      row.appendChild(button(t.is_prop ? 'un-prop' : 'make prop', async () => {
-        const r = await api('PATCH', `/api/campaigns/${campaign.id}/scenes/${sceneId}/tokens/${t.id}`,
-          { is_prop: !t.is_prop });
-        show('PATCH token is_prop', r);
-        await loadScene();
-        await loadCombat();
-      }));
       if (combat && combat.active && !inFight.has(t.id)) {
         row.appendChild(button('add', async () => {
           const r = await api('POST', `${combatPath()}/combatants`, { token_id: t.id });
@@ -1091,7 +1083,7 @@ async function loadCombat() {
     }
   }
   document.getElementById('combatInfo').textContent = combat
-    ? `${combat.name || '(unnamed)'} — ${combat.active ? 'RUNNING' : 'ended'} — ${combatants.length} combatant(s)`
+    ? `${combat.active ? 'RUNNING' : 'ended'} — ${combatants.length} combatant(s)`
     : `no encounter on this scene${all.length && isGm ? ` (${all.length} elsewhere in this campaign)` : ''}`;
   renderStrip();
   renderTokens();
@@ -1109,9 +1101,7 @@ async function loadMessages() {
 // ---------------------------------------------------------------------------
 
 async function startCombat() {
-  const r = await api('POST', `/api/campaigns/${campaign.id}/combat`, {
-    scene_id: sceneId, name: str('combatName'),
-  });
+  const r = await api('POST', `/api/campaigns/${campaign.id}/combat`, { scene_id: sceneId });
   show('POST combat', r);
   await loadCombat();
 }
@@ -1163,7 +1153,6 @@ async function placeToken() {
     name: str('tokName') || 'Token',
     x: Math.floor(Math.random() * 10),
     y: Math.floor(Math.random() * 10),
-    is_prop: document.getElementById('tokProp').checked,
   });
   show('POST token', r);
   await loadScene();

@@ -85,6 +85,11 @@ let suppressNextClear = false;
 let activeSceneId = null;      // the campaign's active scene, per the server
 let lastSceneList = [];        // last list the server sent, for cheap re-render
 const GRID_PX = 50;
+// The scene canvas, in pixels. Every scene is this size: the columns
+// scenes.width/height always held these defaults (no UI ever wrote another
+// value), so they were dropped in the 2026-10-05 schema cleanup and the size
+// lives here. An object rather than two consts so a test can shrink it.
+const SCENE_SIZE = { w: 1400, h: 1050 };
 
 // --- fog state (M3) ---
 // Fog lives in a parallel world to tokens on purpose. FOG MODE is the switch:
@@ -377,8 +382,8 @@ async function openScene(sceneId) {
 
   scene = r.data.scene;
   document.getElementById('scene-title').textContent = `— ${scene.name}`;
-  stage.style.width = scene.width + 'px';
-  stage.style.height = scene.height + 'px';
+  stage.style.width = SCENE_SIZE.w + 'px';
+  stage.style.height = SCENE_SIZE.h + 'px';
   stageBg.style.backgroundImage = scene.img_url ? `url("${CSS.escape(scene.img_url)}")` : 'none';
   applyGridAlignment();
   applyGridOverlay();
@@ -395,9 +400,9 @@ async function openScene(sceneId) {
   // Fog arrives in the same "load heavy" payload as the tokens.
   fog.clear();
   fogSelection.clear();
-  fogLayer.setAttribute('width', scene.width);
-  fogLayer.setAttribute('height', scene.height);
-  fogLayer.setAttribute('viewBox', `0 0 ${scene.width} ${scene.height}`);
+  fogLayer.setAttribute('width', SCENE_SIZE.w);
+  fogLayer.setAttribute('height', SCENE_SIZE.h);
+  fogLayer.setAttribute('viewBox', `0 0 ${SCENE_SIZE.w} ${SCENE_SIZE.h}`);
   for (const f of (r.data.fog || [])) fog.set(f.id, f);
   renderFog();
 
@@ -465,8 +470,8 @@ function applyGridAlignment() {
     // its edges. Instead, size the background to the image's own natural
     // dimensions so the WHOLE image shows, uncropped, whatever its aspect ratio.
     //
-    // This is safe to do without touching the stored scene.width/height (which
-    // would need a migration and would move the fog mask): token coordinates are
+    // This is safe to do without touching the scene size (SCENE_SIZE, which
+    // would move the fog mask): token coordinates are
     // grid-cell anchored (rendered at x*GRID_PX), not measured within the scene
     // box, so they don't shift when the image's drawn extent changes. An image
     // larger than the scene box simply extends into the grid pad (already 24
@@ -542,8 +547,8 @@ function applyGridOverlay() {
   if (scene) {
     pad.style.left = -PAD_PX + 'px';
     pad.style.top = -PAD_PX + 'px';
-    pad.style.width = (scene.width + PAD_PX * 2) + 'px';
-    pad.style.height = (scene.height + PAD_PX * 2) + 'px';
+    pad.style.width = (SCENE_SIZE.w + PAD_PX * 2) + 'px';
+    pad.style.height = (SCENE_SIZE.h + PAD_PX * 2) + 'px';
   }
 
   if (grid.type === 'none') {
@@ -1000,8 +1005,8 @@ document.getElementById('place-token').addEventListener('click', async () => {
   // Keep the whole block on the canvas: if it would overflow the scene, shift it
   // back rather than dropping tokens off the edge. Scene dimensions are pixels;
   // the grid is GRID_PX per unit.
-  const sceneCols = Math.floor(scene.width / GRID_PX);
-  const sceneRows = Math.floor(scene.height / GRID_PX);
+  const sceneCols = Math.floor(SCENE_SIZE.w / GRID_PX);
+  const sceneRows = Math.floor(SCENE_SIZE.h / GRID_PX);
   const maxX = Math.max(...specs.map((s) => s.x + footprint));
   const maxY = Math.max(...specs.map((s) => s.y + footprint));
   const shiftX = Math.max(0, maxX - sceneCols);
@@ -1212,8 +1217,8 @@ function clampView() {
   // The world starts at stage-local -PAD_PX, not 0, so the upper bound on
   // view.x is PAD_PX * z rather than 0 — the map may be pushed right until the
   // grid's left edge reaches the viewport's, and no further.
-  const sw = (scene.width + PAD_PX * 2) * view.z;
-  const sh = (scene.height + PAD_PX * 2) * view.z;
+  const sw = (SCENE_SIZE.w + PAD_PX * 2) * view.z;
+  const sh = (SCENE_SIZE.h + PAD_PX * 2) * view.z;
   const originX = PAD_PX * view.z;
   const originY = PAD_PX * view.z;
 
@@ -1240,8 +1245,8 @@ function centerView() {
   if (!scene) return;
   const vw = wrap.clientWidth;
   const vh = wrap.clientHeight;
-  const sw = (scene.width + PAD_PX * 2) * view.z;
-  const sh = (scene.height + PAD_PX * 2) * view.z;
+  const sw = (SCENE_SIZE.w + PAD_PX * 2) * view.z;
+  const sh = (SCENE_SIZE.h + PAD_PX * 2) * view.z;
   const originX = PAD_PX * view.z;
   const originY = PAD_PX * view.z;
   view.x = (vw - sw) / 2 + originX;
@@ -1818,10 +1823,19 @@ async function deleteSelection() {
 // Snapshot the fields a paste needs to recreate a token. Deliberately excludes
 // id / created_by / scene_id — the server assigns those; a snapshot is data, not
 // a reference to a row.
+//
+// [FIXED 2026-10-05] This used to send only name, picture, size, hidden and
+// position, so a pasted or duplicated token came back UNLINKED from its
+// character, with the inherited portrait baked in as its own picture and its
+// framing lost — later HP and portrait changes no longer reached it. It now
+// keeps the character link and sends the picture and framing only when the
+// source token OWNS them (img_inherited / frame_inherited from the server), so
+// an inheriting token's copy keeps inheriting. The copy route resolves the
+// actor again (same campaign, same checks as placement).
 function snapshotToken(row) {
-  return {
+  const snap = {
+    actor_id: row.actor_id || null,
     name: row.name,
-    img_url: row.img_url,
     width: Number(row.width),
     height: Number(row.height),
     hidden: !!row.hidden,
@@ -1829,6 +1843,24 @@ function snapshotToken(row) {
     x: Number(row.x),
     y: Number(row.y),
   };
+  const ownsPicture = !row.img_inherited && !!row.img_url;
+  if (ownsPicture) snap.img_url = row.img_url;
+  // Framing describes a picture: send it for an owned picture, or as an
+  // override over an inherited one. An unlinked token with no picture has none.
+  if (!row.frame_inherited && (ownsPicture || row.actor_id)) {
+    snap.img_offset_x = Number(row.img_offset_x) || 0;
+    snap.img_offset_y = Number(row.img_offset_y) || 0;
+    snap.img_scale = Number(row.img_scale) || 1;
+  }
+  return snap;
+}
+
+// The copy-route spec for one snapshot at a position. Optional keys are left
+// out (not sent as null) so the server's "absent means inherit" rule applies.
+function copySpec(snap, x, y) {
+  const spec = { ...snap, x, y };
+  if (!spec.actor_id) delete spec.actor_id;
+  return spec;
 }
 
 function copySelection() {
@@ -1845,15 +1877,8 @@ async function pasteClipboard() {
   if (clipboard.length === 0) return log('clipboard empty');
   const minX = Math.min(...clipboard.map((t) => t.x));
   const minY = Math.min(...clipboard.map((t) => t.y));
-  const specs = clipboard.map((t) => ({
-    name: t.name,
-    img_url: t.img_url || undefined,
-    width: t.width,
-    height: t.height,
-    hidden: t.hidden,
-    x: cursorGrid.x + (t.x - minX),   // preserve relative layout
-    y: cursorGrid.y + (t.y - minY),
-  }));
+  // Preserve the group's relative layout around the cursor.
+  const specs = clipboard.map((t) => copySpec(t, cursorGrid.x + (t.x - minX), cursorGrid.y + (t.y - minY)));
   const r = await api('POST', `/api/campaigns/${campaignId}/scenes/${scene.id}/tokens/copy`, { tokens: specs });
   show(`paste -> ${r.status}`, { at: cursorGrid, count: r.data && r.data.tokens && r.data.tokens.length });
 }
@@ -1865,8 +1890,8 @@ async function duplicateSelection() {
   const rows = [...selection].map((id) => tokens.get(id)).filter(Boolean).map((e) => e.row);
   if (rows.length === 0) return;
   const specs = rows.map((row) => {
-    const s = snapshotToken(row);
-    return { ...s, img_url: s.img_url || undefined, x: s.x + 1, y: s.y + 1 };
+    const snap = snapshotToken(row);
+    return copySpec(snap, snap.x + 1, snap.y + 1);
   });
   const r = await api('POST', `/api/campaigns/${campaignId}/scenes/${scene.id}/tokens/copy`, { tokens: specs });
   show(`duplicate -> ${r.status}`, { count: r.data && r.data.tokens && r.data.tokens.length });
@@ -1992,7 +2017,7 @@ function renderFog() {
   const defs = svgEl('defs');
   const mask = svgEl('mask', { id: 'fog-mask' });
   // Black base: nothing is painted until a covered region says otherwise.
-  mask.appendChild(svgEl('rect', { x: 0, y: 0, width: scene.width, height: scene.height, fill: 'black' }));
+  mask.appendChild(svgEl('rect', { x: 0, y: 0, width: SCENE_SIZE.w, height: SCENE_SIZE.h, fill: 'black' }));
   const remember = (id, el) => {
     if (!fogNodes.has(id)) fogNodes.set(id, []);
     fogNodes.get(id).push(el);
@@ -2008,7 +2033,7 @@ function renderFog() {
   // choice, NOT a security boundary: the scene image reaches every member
   // regardless, so fog conceals nothing that a player could not already fetch.
   const painted = svgEl('rect', {
-    x: 0, y: 0, width: scene.width, height: scene.height,
+    x: 0, y: 0, width: SCENE_SIZE.w, height: SCENE_SIZE.h,
     fill: '#0b0b12', 'fill-opacity': isGm() ? 0.55 : 1, mask: 'url(#fog-mask)',
   });
   painted.setAttribute('pointer-events', 'none');
@@ -2022,7 +2047,7 @@ function renderFog() {
     // landed on is decided in JS by fogPick(), so overlapping regions resolve by
     // a rule we control (most recent wins) rather than by SVG document order.
     fogLayer.appendChild(svgEl('rect', {
-      x: 0, y: 0, width: scene.width, height: scene.height, fill: 'transparent', class: 'fog-catch',
+      x: 0, y: 0, width: SCENE_SIZE.w, height: SCENE_SIZE.h, fill: 'transparent', class: 'fog-catch',
     }));
     for (const f of fog.values()) {
       const cls = 'fog-outline' + (f.revealed ? ' revealed' : '') + (fogSelection.has(f.id) ? ' selected' : '');
@@ -2343,7 +2368,7 @@ fogToolEl.addEventListener('change', () => {
 
 document.getElementById('fog-cover-all').addEventListener('click', async () => {
   if (!scene) return show('open a scene first');
-  const cols = scene.width / GRID_PX, rows = scene.height / GRID_PX;
+  const cols = SCENE_SIZE.w / GRID_PX, rows = SCENE_SIZE.h / GRID_PX;
   await createFog('rect', [{ x: 0, y: 0 }, { x: cols, y: rows }], false);
 });
 
@@ -2675,8 +2700,8 @@ socket.on('scene:updated', (d) => {
   }
   if (!scene || !d || d.id !== scene.id) return;
   scene = d;
-  stage.style.width = scene.width + 'px';
-  stage.style.height = scene.height + 'px';
+  stage.style.width = SCENE_SIZE.w + 'px';
+  stage.style.height = SCENE_SIZE.h + 'px';
   stageBg.style.backgroundImage = scene.img_url ? `url("${CSS.escape(scene.img_url)}")` : 'none';
   applyGridAlignment();
   applyGridOverlay();

@@ -45,7 +45,7 @@ window.__calls = calls;
 window.eval(fs.readFileSync(rootPath('client/js/shared/common.js'),'utf8') + '\n' + fs.readFileSync(rootPath('client/js/game/scene.js'),'utf8') + `
 ;(function(){
   const calls = window.__calls;
-  campaignId='C'; scene={id:'S',width:1000,height:800,img_url:null};  // 20x16 grid
+  campaignId='C'; scene={id:'S',img_url:null}; SCENE_SIZE.w=1000; SCENE_SIZE.h=800;  // 20x16 grid
   currentCampaignOwnerId='GM'; me={id:'GM'};
 
   // Simple and robust: clear the log, click, wait long enough for the async

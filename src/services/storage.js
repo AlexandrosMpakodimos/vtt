@@ -1,5 +1,5 @@
-// Object storage: presigned uploads to Cloudflare R2, and verification of what
-// actually arrived.
+// Object storage: server-proxied uploads to Cloudflare R2, verified reads and
+// deletes.
 //
 // A leaf module with no route knowledge, for the same reason atomicCap.js and
 // sceneAccess.js are: it is a shared primitive, and keeping it out of the
@@ -16,49 +16,30 @@
 // WHY THE BYTES ARE VERIFIED, AND WHY THAT IS OUR JOB HERE
 // ---------------------------------------------------------------------------
 // An image CDN — Cloudinary, Cloudflare Images — TRANSCODES what it receives.
-// An SVG containing a script goes in and a PNG comes out, so the validation is
-// done for you by the act of storage.
-//
-// R2 does neither. It stores the bytes it is given and serves them back
-// unchanged, with the content type they were stored with. Choosing it moves
-// that responsibility here, which is more work and a more honest position: the
-// declared content type is a claim made by the client, and a claim is not
-// evidence.
-//
-// Four defences, layered deliberately:
+// R2 does not: it stores the bytes it is given and serves them back unchanged.
+// The declared content type is a claim made by the client, and a claim is not
+// evidence. Three defences, layered deliberately:
 //
 //   1. NO SVG. Raster formats only. This removes the stored-cross-site-
-//      scripting vector at the source rather than trying to sanitise markup,
-//      which is a losing game.
+//      scripting vector at the source rather than trying to sanitise markup.
 //
-//   2. THE SIGNATURE PINS THE LENGTH. A presigned PUT commits the client to an
-//      exact content length, so "upload five gigabytes" is refused by the
-//      storage service before any of our code runs.
+//   2. THE SERVER HOLDS THE BYTES. Uploads go through POST /api/assets/upload
+//      (routes/assets.js): the body is bounded, its magic numbers are checked
+//      against the claimed format BEFORE anything is written, and the object is
+//      written once by putObject below. No browser ever holds a write grant.
+//      [CHANGED 2026-10-05] The legacy presigned-PUT path (presignUpload, the
+//      confirm read-back via readHead) was removed in the schema cleanup; it had
+//      been disabled in production since cutover (UPLOAD_MODE=strict).
 //
-//      [CORRECTED 2026-08-09] An earlier version of this comment claimed the
-//      signature pinned the content TYPE as well. It does not: the signed
-//      header list is `content-length;host`, and the type travels unsigned.
-//      Checked rather than assumed only after the claim had already been
-//      written down — which is the reason defence 3 exists and is not
-//      redundant with this one.
-//
-//   3. THE SERVER READS THE BYTES BACK. After the client reports success, the
-//      first bytes are fetched from the bucket and checked against the magic
-//      numbers for the format claimed. An object whose bytes disagree with its
-//      extension is deleted, not stored. This is the step that makes the other
-//      three meaningful: without it, everything above is the client's word.
-//
-//   4. A SEPARATE ORIGIN. Objects are served from the bucket's own hostname,
-//      never from the application's. If anything ever did get through, it
-//      executes somewhere with no access to session cookies. Cross-origin is
-//      the security boundary here, not an inconvenience.
+//   3. A SEPARATE ORIGIN. Objects are never served from the application's own
+//      pages: reads go through the media gateway and the vtt-media Worker, with
+//      a sandbox CSP and nosniff.
 
 const crypto = require('crypto');
 const {
   S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand,
   HeadObjectCommand, ListObjectsV2Command,
 } = require('@aws-sdk/client-s3');
-const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 
 const ACCOUNT_ID = process.env.R2_ACCOUNT_ID;
 const BUCKET = process.env.R2_BUCKET;
@@ -80,17 +61,10 @@ const client = configured
       secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
     },
     // [FIXED 2026-08-09] Without this the SDK adds a CRC32 checksum to every
-    // PUT by default — and for a PRESIGNED url it computes that checksum at
-    // SIGNING time, when there is no body. The result is
-    // `x-amz-checksum-crc32=AAAAAA==`, the CRC32 of nothing, baked into the
-    // signature. The real bytes never match it, so the storage service rejects
-    // an upload that is otherwise perfectly valid.
-    //
-    // It survived the suite because the failure is silent until a body is
-    // actually sent, and the first browser upload is what exposed it. Integrity
-    // is not lost: the checksum would only have restated what the transport's
-    // own TLS already guarantees, whereas the byte verification at confirm
-    // checks something the transport cannot — whether the file is an image.
+    // PUT by default. Found on the (since removed) presigned path, where it was
+    // computed at signing time over an empty body. Kept: the checksum would
+    // only restate what TLS already guarantees, while the magic-number check
+    // verifies what the transport cannot — whether the file is an image.
     requestChecksumCalculation: 'WHEN_REQUIRED',
     // Pinned to 1 so the SDK never retries a write invisibly. A silent internal
     // retry would be an extra Class A operation the account is billed for but the
@@ -150,11 +124,6 @@ const KIND_LIMITS = {
 
 const KINDS = Object.keys(KIND_LIMITS);
 
-// How long a presigned URL lives. Short: it is an authorisation to write into
-// our bucket, and the client is expected to use it immediately. Long enough to
-// survive a slow upload starting, not long enough to be worth passing around.
-const UPLOAD_URL_TTL_SECONDS = 300;
-
 function isConfigured() { return configured; }
 // Same guard, same reason — KIND_LIMITS is looked up by key too.
 function limitFor(kind) {
@@ -198,41 +167,6 @@ function publicUrl(key) {
   return `${PUBLIC_BASE}/${key}`;
 }
 
-// Authorise an upload to this key until the URL expires.
-//
-// [CORRECTED 2026-09-11] An earlier version of this comment claimed the grant
-// authorised "exactly one upload." IT DOES NOT. A presigned URL is a bearer
-// authorisation valid until it expires (UPLOAD_URL_TTL_SECONDS): the same URL
-// can be PUT to repeatedly, and each PUT overwrites the object at `key`. So:
-//
-//   - The client can replay the grant and issue many writes, not one. Every
-//     write is a Class A operation the account is billed for, and none of them
-//     pass back through our confirm step.
-//   - A client can confirm (we read the bytes, verify them, mark the row ready
-//     with a size), and THEN PUT different bytes to the same still-valid URL,
-//     mutating the object AFTER we recorded what it was. Confirmation is a
-//     snapshot, not a lock.
-//
-// The size limit IS still real: `content-length` is signed, so R2 refuses a PUT
-// whose length does not match. The TYPE is not signed (see defence 2's
-// correction above) and is caught only by the byte read at confirm. Neither of
-// those closes replay. Replay is bounded structurally instead — by a short TTL,
-// by the per-operation budget that meters every write, and (in strict mode) by
-// not exposing a browser PUT URL at all and taking the bytes through the server
-// so the object is written exactly once under our control. Until that path is
-// the only one, treat a confirmed object's recorded size/type as true AS OF
-// confirmation, and re-establish it from an authoritative HEAD before charging
-// or trusting it downstream.
-async function presignUpload({ key, mime, bytes }) {
-  const command = new PutObjectCommand({
-    Bucket: BUCKET,
-    Key: key,
-    ContentType: mime,
-    ContentLength: bytes,
-  });
-  return getSignedUrl(client, command, { expiresIn: UPLOAD_URL_TTL_SECONDS });
-}
-
 // Write bytes to the bucket in ONE attempt, from the server. This is the
 // controlled-upload primitive: the object is created by us, from a body we have
 // already validated and bounded, so it is written exactly once under our control
@@ -246,17 +180,16 @@ async function presignUpload({ key, mime, bytes }) {
 // operations the account is billed for and one the budget saw; pinning attempts
 // to 1 collapses that gap.
 //
-// Returns { etag } on success. Throws on failure; the caller decides whether the
+// Resolves on success. Throws on failure; the caller decides whether the
 // outcome was clean (release/commit) or ambiguous (preserve the reservation).
 async function putObject({ key, mime, body }) {
-  const res = await client.send(new PutObjectCommand({
+  await client.send(new PutObjectCommand({
     Bucket: BUCKET,
     Key: key,
     ContentType: mime,
     ContentLength: body.length,
     Body: body,
   }));
-  return { etag: typeof res.ETag === 'string' ? res.ETag.replace(/^"|"$/g, '') : null };
 }
 
 // Read a whole object's bytes. Used by the media gateway to serve an image
@@ -275,68 +208,18 @@ async function getObject(key) {
   };
 }
 
-// Read the first bytes of a stored object, for the magic-number check ONLY.
-//
-// A ranged read, so verifying a twelve-megabyte map costs sixteen bytes of
-// transfer rather than twelve megabytes. R2's free tier counts operations
-// rather than bytes, but pulling whole files back to look at their first eight
-// would be a self-inflicted bandwidth cost and a memory hazard.
-//
-// [CORRECTED 2026-09-11] This used to also return `reportedBytes`, taken from
-// the ranged response's `ContentLength`. THAT IS NOT THE OBJECT'S SIZE. A
-// response to `Range: bytes=0-15` has a Content-Length of 16 (the length of the
-// SLICE), so recording it as the object's size stored 16 for every upload, no
-// matter how large — which would make a byte ledger built on it fiction. The
-// full length of a ranged response lives in Content-Range's total
-// (`bytes 0-15/<total>`), not in Content-Length, and R2 may or may not send it.
-// The authoritative source is a HEAD; see `headSize` below. This function no
-// longer reports a size at all, so no caller can accidentally trust the wrong
-// one. It still surfaces `contentRangeTotal` when present, purely so a caller
-// that wants to can cross-check the HEAD against it.
-async function readHead(key, length = 16) {
-  const res = await client.send(new GetObjectCommand({
-    Bucket: BUCKET,
-    Key: key,
-    Range: `bytes=0-${length - 1}`,
-  }));
-  const chunks = [];
-  for await (const chunk of res.Body) chunks.push(chunk);
-  return {
-    head: Buffer.concat(chunks),
-    // R2 echoes back the stored content type. Recorded for the audit trail, and
-    // deliberately NOT trusted — it is the client's claim, round-tripped.
-    reportedMime: res.ContentType || null,
-    // The FULL object size parsed out of Content-Range's total, when the
-    // provider sends one. NOT Content-Length (which is the slice length, 16).
-    // May be null; `headSize` is the authoritative path.
-    contentRangeTotal: parseContentRangeTotal(res.ContentRange),
-  };
-}
-
-// Parse the total object size out of an S3/R2 `Content-Range` header.
-// Shape: `bytes 0-15/1048576` -> 1048576. `bytes 0-15/*` (unknown total) and
-// anything malformed -> null. Pure and exported so the suite can pin the exact
-// trap (a 16-byte slice must never be read as a 16-byte object).
-function parseContentRangeTotal(header) {
-  if (typeof header !== 'string') return null;
-  const m = /^bytes\s+\d+-\d+\/(\d+)$/i.exec(header.trim());
-  if (!m) return null;
-  const total = Number(m[1]);
-  return Number.isSafeInteger(total) && total >= 0 ? total : null;
-}
-
 // The authoritative size and type of a stored object: a HEAD request.
 //
-// This is what the byte ledger charges against and what confirm records. A HEAD
+// This is what the byte ledger charges against after an upload. A HEAD
 // returns the object's real Content-Length (the WHOLE object, because there is
 // no Range on it) and its stored Content-Type. It is a Class B operation, so it
 // is metered like any other read.
 //
 // Returns integers/strings the caller can trust as "what R2 says it is storing
-// right now", which after a successful verified write is the truth. It is still
-// not proof of what the bytes ARE — that is what the magic-number check on
-// readHead establishes — but it IS proof of how many bytes there are, which is
-// the number that costs money.
+// right now", which after a successful verified write is the truth. It is not
+// proof of what the bytes ARE — the upload route checks that before writing —
+// but it IS proof of how many bytes there are, which is the number that costs
+// money.
 async function headSize(key) {
   const res = await client.send(new HeadObjectCommand({ Bucket: BUCKET, Key: key }));
   const bytes = typeof res.ContentLength === 'number' ? res.ContentLength : null;
@@ -370,7 +253,7 @@ async function listPage({ continuationToken = undefined, maxKeys = 1000 } = {}) 
   };
 }
 
-
+// Does `head` start with the magic numbers of `mime`?
 //
 // Pure and exported so the suite can exercise every format and every near-miss
 // without a bucket, a network or credentials. This is the function that decides
@@ -389,7 +272,7 @@ function magicMatches(mime, head) {
   return true;
 }
 
-// Remove an object. Used when verification fails and when an asset is
+// Remove an object. Used when an upload is abandoned and when an asset is
 // discarded. Failure is swallowed: an object we could not delete is a storage
 // leak, not a correctness problem, and throwing here would turn "this file was
 // rejected" into "the request failed".
@@ -406,13 +289,10 @@ module.exports = {
   isConfigured,
   buildKey,
   publicUrl,
-  presignUpload,
   putObject,
-  readHead,
   headSize,
   getObject,
   listPage,
-  parseContentRangeTotal,
   magicMatches,
   remove,
   formatFor,
@@ -421,5 +301,4 @@ module.exports = {
   KINDS,
   KIND_LIMITS,
   FORMATS,
-  UPLOAD_URL_TTL_SECONDS,
 };

@@ -275,11 +275,11 @@ t('img scale accepts', v.validateImgScale(1.4).value === 1.4);
 t('img scale bound low', !!v.validateImgScale(0.01).error);
 t('img scale bound high', !!v.validateImgScale(99).error);
 
-console.log('\n--- M5 validators: combat name ---');
-t('name optional', v.validateCombatName(undefined).value === null);
-t('name accepted', v.validateCombatName('Ambush at the bridge').value === 'Ambush at the bridge');
-t('over-long name refused', !!v.validateCombatName('x'.repeat(101)).error);
-t('non-string refused', !!v.validateCombatName(['x']).error);
+console.log('\n--- schema cleanup: dropped-column validators are gone ---');
+// combat.name and scenes.width/height were dropped (2026-10-05); their
+// validators must not linger as an API that accepts a field with no column.
+t('validateCombatName removed', v.validateCombatName === undefined);
+t('validateSceneDimension removed', v.validateSceneDimension === undefined);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

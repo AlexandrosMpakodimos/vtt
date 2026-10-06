@@ -214,7 +214,6 @@ if (process.env.NODE_ENV === 'test') {
         storageBackend: require('./services/storage').testBackend || 'disabled',
         storageStats: require('./services/storage').testStats || null,
         storageInventory: require('./services/storage').testInventory?.() || null,
-        uploadMode: process.env.UPLOAD_MODE,
       });
     } catch {
       res.status(503).json({ error: 'test_database_unavailable' });

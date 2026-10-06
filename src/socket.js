@@ -33,7 +33,9 @@ const {
 // validUuid lives in the leaf module rather than being re-derived here, for the
 // same reason mayUseScene was collapsed into it during M5: an input rule with
 // two definitions is an input rule with two behaviours.
-const { mayUseSceneFor, validUuid } = require('./services/sceneAccess');
+const {
+  mayUseSceneFor, validUuid, SCENE_WIDTH_PX, SCENE_HEIGHT_PX, GRID_PX,
+} = require('./services/sceneAccess');
 
 const { createRoomLifecycle, roomName, lobbyName } = require('./socket/roomLifecycle');
 
@@ -427,8 +429,11 @@ function initSockets(io, workLifecycle, coordination) {
         if (!Number.isFinite(x) || !Number.isFinite(y)) {
           return respond({ ok: false, error: 'x and y are required' });
         }
-        const maxX = Math.max(1, Math.floor(scene.width / 50));
-        const maxY = Math.max(1, Math.floor(scene.height / 50));
+        // The scene size is a constant since the 2026-10-05 schema cleanup
+        // (scenes.width/height dropped). Reading the dropped columns here would
+        // yield NaN and silently switch this bound off.
+        const maxX = Math.max(1, Math.floor(SCENE_WIDTH_PX / GRID_PX));
+        const maxY = Math.max(1, Math.floor(SCENE_HEIGHT_PX / GRID_PX));
         if (x < -1 || y < -1 || x > maxX + 1 || y > maxY + 1) {
           return respond({ ok: false, error: 'ping is outside the scene' });
         }

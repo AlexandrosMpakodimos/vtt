@@ -16,11 +16,11 @@ window.__check=(name,cond,d='')=>{ if(cond){pass++;console.log('  PASS  '+name);
 window.eval(fs.readFileSync(rootPath('client/js/shared/common.js'), 'utf8'));
 window.eval(fs.readFileSync(rootPath('client/js/game/scene.js'),'utf8') + `
 ;(function(){
-  scene={id:'S',width:1000,height:800,img_url:null}; currentCampaignOwnerId='GM'; me={id:'GM'};
-  upsertToken({id:'T1',scene_id:'S',created_by:'GM',name:'A',x:1,y:1,width:1,height:1,rotation:0,hidden:false,locked:false,conditions:[]});
-  upsertToken({id:'T2',scene_id:'S',created_by:'GM',name:'B',x:3,y:3,width:1,height:1,rotation:0,hidden:false,locked:false,conditions:[]});
-  upsertToken({id:'T3',scene_id:'S',created_by:'GM',name:'C',x:9,y:9,width:1,height:1,rotation:0,hidden:false,locked:false,conditions:[]});
-  upsertToken({id:'T4',scene_id:'S',created_by:'OTHER',name:'D',x:2,y:2,width:1,height:1,rotation:0,hidden:false,locked:false,conditions:[]});
+  scene={id:'S',img_url:null}; SCENE_SIZE.w=1000; SCENE_SIZE.h=800; currentCampaignOwnerId='GM'; me={id:'GM'};
+  upsertToken({id:'T1',scene_id:'S',created_by:'GM',name:'A',x:1,y:1,width:1,height:1,hidden:false,locked:false});
+  upsertToken({id:'T2',scene_id:'S',created_by:'GM',name:'B',x:3,y:3,width:1,height:1,hidden:false,locked:false});
+  upsertToken({id:'T3',scene_id:'S',created_by:'GM',name:'C',x:9,y:9,width:1,height:1,hidden:false,locked:false});
+  upsertToken({id:'T4',scene_id:'S',created_by:'OTHER',name:'D',x:2,y:2,width:1,height:1,hidden:false,locked:false});
   const stg=document.getElementById('stage'), bg=document.getElementById('stage-bg');
   stg.getBoundingClientRect=()=>({left:0,top:0,width:1000,height:800});
   // jsdom reports clientWidth/clientHeight as 0, and a zero-size viewport makes
@@ -601,8 +601,8 @@ window.eval(fs.readFileSync(rootPath('client/js/game/scene.js'),'utf8') + `
   // With a pad on every side, even a small map has somewhere to pan — the world
   // is the image plus the pad, and that is always larger than the viewport.
   resetView();
-  const savedW = scene.width, savedH = scene.height;
-  scene.width = 600; scene.height = 400;      // exactly the viewport
+  const savedW = SCENE_SIZE.w, savedH = SCENE_SIZE.h;
+  SCENE_SIZE.w = 600; SCENE_SIZE.h = 400;      // exactly the viewport
   applyView();
   __check('reset puts the image top-left at the viewport top-left',
     tx().x === 0 && tx().y === 0, JSON.stringify(tx()));
@@ -629,7 +629,7 @@ window.eval(fs.readFileSync(rootPath('client/js/game/scene.js'),'utf8') + `
   __check('...and the pinged point lands at the viewport centre',
     Math.abs(centred - 300) < 1, String(centred));
 
-  scene.width = savedW; scene.height = savedH;
+  SCENE_SIZE.w = savedW; SCENE_SIZE.h = savedH;
   resetView();
 
   // A focus ping moves the viewport. Non-focus must not.

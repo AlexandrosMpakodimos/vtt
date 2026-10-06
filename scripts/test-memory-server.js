@@ -2,10 +2,9 @@ const crypto = require('node:crypto');
 
 if (
   process.env.NODE_ENV !== 'test' ||
-  process.env.PORT !== '3001' ||
-  process.env.UPLOAD_MODE !== 'strict'
+  process.env.PORT !== '3001'
 ) {
-  throw new Error('Memory storage requires the isolated strict-mode test launcher.');
+  throw new Error('Memory storage requires the isolated test launcher.');
 }
 
 // Set before loading modules that capture the public storage origin.
@@ -107,14 +106,6 @@ Object.assign(storage, {
       })),
       nextToken: null,
     };
-  },
-
-  async presignUpload() {
-    throw new Error('Legacy presigning is unavailable in the strict memory fixture.');
-  },
-
-  async readHead() {
-    throw new Error('Legacy readback is unavailable in the strict memory fixture.');
   },
 });
 

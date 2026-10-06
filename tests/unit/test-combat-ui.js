@@ -167,9 +167,9 @@ console.log('\n--- every element the handlers bind to exists in the markup ---')
 // apart. Asserted by id so renaming one without the other is caught.
 const REQUIRED_IDS = [
   'whoami', 'campaignId', 'loadCampaign', 'campaignInfo',
-  'sceneSel', 'combatName', 'startCombat', 'endCombat', 'deleteCombat', 'combatInfo',
+  'sceneSel', 'startCombat', 'endCombat', 'deleteCombat', 'combatInfo',
   'strip', 'scrollLeft', 'scrollRight', 'rosterInfo', 'selected',
-  'tokens', 'tokName', 'tokProp', 'placeToken',
+  'tokens', 'tokName', 'placeToken',
   'chat', 'chatText', 'sendChat', 'diceFormula', 'diceLabel', 'sendRoll',
   'whisperTo', 'out', 'log', 'clearLog', 'diceTray',
   'dice3d', 'diceColor', 'diceClear', 'diceGrab', 'diceLegend', 'diceFade',

@@ -39,12 +39,11 @@
 // ---------------------------------------------------------------------------
 // The HP bar
 // ---------------------------------------------------------------------------
-// tokens.bar1_value / bar1_max have existed since M2 and no route has ever
-// written them. From M4 they stay that way for LINKED tokens: an actor-linked
-// token's bar is DERIVED from actors.hp_current / hp_max, so there is exactly
-// one source of truth and healing a character fixes every token of them on every
-// scene at once. bar1_* remains the manual bar for UNLINKED tokens (a door with
-// 30 hit points, a barricade), which is the job it always looked like it was for.
+// An actor-linked token's bar is DERIVED from actors.hp_current / hp_max, so
+// there is exactly one source of truth and healing a character fixes every token
+// of them on every scene at once. An unlinked token has no bar. (The M2 columns
+// tokens.bar1_value / bar1_max were never written by any route and were dropped
+// in the 2026-10-05 schema cleanup.)
 //
 // Whether a PLAYER sees a monster's HP bar is not a separate decision and needs
 // no per-token toggle: HP is simply not in the projection, so an NPC token
@@ -65,7 +64,7 @@ const {
   validUuid, validateImageUrl, validateBool,
   validateActorInt, ACTOR_INT_FIELDS,
   validateShortText, validateLongText, validateActorSize,
-  validateJsonBlob, validateQuantity, validateSortOrder,
+  validateJsonBlob, validateQuantity,
 } = require('../services/validators');
 const { withAtomicCap } = require('../services/atomicCap');
 const { shapeItemFor } = require('./items');
@@ -123,7 +122,6 @@ function publicActor(a) {
     id: a.id,
     campaign_id: a.campaign_id,
     user_id: a.user_id,
-    folder_id: a.folder_id,
     name: a.name,
     img_url: a.img_url,
     // M6 framing. Postgres returns DECIMAL as a string; coerced so the client
@@ -799,8 +797,10 @@ router.get('/:actorId/inventory', requireMember, async (req, res, next) => {
     const rows = await knex('inventory')
       .join('items', 'items.id', 'inventory.item_id')
       .where('inventory.actor_id', actor.id)
-      .orderBy([{ column: 'inventory.sort_order', order: 'asc' },
-        { column: 'inventory.created_at', order: 'asc' }])
+      // Order of arrival in the bag (inventory.sort_order was never written by
+      // the UI and was dropped on 2026-10-05). id breaks created_at ties.
+      .orderBy([{ column: 'inventory.created_at', order: 'asc' },
+        { column: 'inventory.id', order: 'asc' }])
       .select(
         'inventory.id as inv_id',
         'inventory.actor_id',
@@ -808,12 +808,10 @@ router.get('/:actorId/inventory', requireMember, async (req, res, next) => {
         'inventory.quantity',
         'inventory.equipped',
         'inventory.attuned',
-        'inventory.sort_order',
         'inventory.created_at',
         'inventory.updated_at',
         'items.id as i_id',
         'items.campaign_id as i_campaign_id',
-        'items.folder_id as i_folder_id',
         'items.name as i_name',
         'items.img_url as i_img_url',
         'items.type as i_type',
@@ -833,13 +831,11 @@ router.get('/:actorId/inventory', requireMember, async (req, res, next) => {
       quantity: r.quantity,
       equipped: r.equipped,
       attuned: r.attuned,
-      sort_order: r.sort_order,
       created_at: r.created_at,
       updated_at: r.updated_at,
       item: shapeItemFor(isOwner, {
         id: r.i_id,
         campaign_id: r.i_campaign_id,
-        folder_id: r.i_folder_id,
         name: r.i_name,
         img_url: r.i_img_url,
         type: r.i_type,
@@ -882,8 +878,6 @@ router.post('/:actorId/inventory', requireMember, async (req, res, next) => {
 
     const qty = validateQuantity(body.quantity);
     if (qty.error) return res.status(400).json({ error: qty.error });
-    const sort = validateSortOrder(body.sort_order);
-    if (sort.error) return res.status(400).json({ error: sort.error });
 
     // The row cap and the upsert run in ONE serialisable transaction. The first
     // build checked the count outside any transaction and justified it with "the
@@ -907,7 +901,6 @@ router.post('/:actorId/inventory', requireMember, async (req, res, next) => {
           actor_id: actor.id,
           item_id: item.id,
           quantity: qty.value,
-          sort_order: sort.value,
         },
         conflict: {
           columns: ['actor_id', 'item_id'],
@@ -933,7 +926,6 @@ router.post('/:actorId/inventory', requireMember, async (req, res, next) => {
         quantity: row.quantity,
         equipped: row.equipped,
         attuned: row.attuned,
-        sort_order: row.sort_order,
         created_at: row.created_at,
         updated_at: row.updated_at,
       },
@@ -944,7 +936,7 @@ router.post('/:actorId/inventory', requireMember, async (req, res, next) => {
   }
 });
 
-// PATCH .../inventory/:invId — quantity / equipped / attuned / sort_order.
+// PATCH .../inventory/:invId — quantity / equipped / attuned.
 //
 // Equipping does NOT modify the character's stats: items are "GM interprets" by
 // explicit decision (database-decisions.md), so no armour class is recalculated
@@ -968,11 +960,6 @@ router.patch('/:actorId/inventory/:invId', requireMember, async (req, res, next)
       const q = validateQuantity(body.quantity);
       if (q.error) return res.status(400).json({ error: q.error });
       updates.quantity = q.value;
-    }
-    if (body.sort_order !== undefined) {
-      const s = validateSortOrder(body.sort_order);
-      if (s.error) return res.status(400).json({ error: s.error });
-      updates.sort_order = s.value;
     }
     if (body.equipped !== undefined) {
       const b = validateBool(body.equipped, 'equipped');
@@ -1034,7 +1021,6 @@ router.patch('/:actorId/inventory/:invId', requireMember, async (req, res, next)
         quantity: updated.quantity,
         equipped: updated.equipped,
         attuned: updated.attuned,
-        sort_order: updated.sort_order,
         created_at: updated.created_at,
         updated_at: updated.updated_at,
       },

@@ -1,9 +1,13 @@
-// Reclaims upload authorisations that were issued and never used.
+// Reclaims asset rows left `pending` (or `rejected`) past their TTL.
 //
-// A presigned URL creates a `pending` asset row before the bytes exist, because
-// the quota has to be claimed before the authorisation is handed out. A client
-// that asks for a URL and never uploads therefore holds quota indefinitely, and
-// asking repeatedly would exhaust it without storing a single image.
+// The controlled upload (POST /api/assets/upload) creates a `pending` row before
+// it writes the object, because the quota has to be claimed first. The row
+// normally becomes `ready` or `rejected` within the same request; one that stays
+// `pending` means the process died mid-upload, and it would hold quota (and
+// possibly a reservation and an object) indefinitely. [CHANGED 2026-10-05] The
+// legacy presigned path, which created pending rows a client could abandon at
+// will, was removed; this sweep remains the safety net for interrupted uploads
+// and for any pre-release rows.
 //
 // Extracted from src/server.js (unchanged cadence, unchanged caller) purely so
 // it can be exercised directly against a real database in tests, the same way
@@ -11,25 +15,21 @@
 // behaviour lives here; server.js still owns the setInterval and the
 // immediate-on-boot call, exactly as before.
 //
-// A stale pending row may have an OBJECT behind it: the client got a presigned
-// URL and PUT the bytes but never confirmed, or confirmed and was rejected.
-// Deleting the ROW without deleting the OBJECT turns a tracked upload into
-// invisible storage — the exact leak the durable cleanup queue exists to close.
-// So each stale row that has a storage_key is enqueued for deletion, and its
-// byte reservation (if the budget is active) is released, in the SAME
-// transaction that removes the row itself. Rows with no storage_key (external
-// links never reach 'pending', but be defensive) just go. A 'rejected' row is
-// swept here too: confirm() only marks a rejection, it never deletes the row,
-// and it has already released its own reservation (assets.reserved_bytes is
-// null by then), so this loop's release guard below naturally does nothing
-// further for it — only the row and, if confirm's own delete attempt failed, a
-// cleanup-queue entry remain to do.
+// A stale pending row may have an OBJECT behind it: the write may have landed
+// before the process stopped. Deleting the ROW without deleting the OBJECT turns
+// a tracked upload into invisible storage — the exact leak the durable cleanup
+// queue exists to close. So each stale row that has a storage_key is enqueued
+// for deletion, and its byte reservation (if the budget is active) is released,
+// in the SAME transaction that removes the row itself. Rows with no storage_key
+// (external links never reach 'pending', but be defensive) just go. A
+// 'rejected' row has already released its reservation (reserved_bytes is null),
+// so the release guard below does nothing further for it.
 //
 // The claim IS the DELETE: matching rows are removed by this statement, and its
 // RETURNING set is exactly, and only, the rows this call claimed. Postgres's
 // row-level locking on DELETE gives two concurrent callers (two overlapping
-// instances, or this sweep racing a confirm() finishing the same row) mutual
-// exclusion for free — whichever commits first actually removes a given row;
+// instances) mutual exclusion for free — whichever commits first actually
+// removes a given row;
 // the other's claim for that same row returns nothing, so its loop body below
 // simply never runs for it. Wrapping the claim, the cleanup-queue insert and
 // the reservation release in ONE SERIALIZABLE transaction (the same discipline

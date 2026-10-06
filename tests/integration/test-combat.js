@@ -84,21 +84,25 @@ async function mk(name) {
   const g2 = (await gm.req('POST', `${S}/tokens`, { name: 'Goblin 2', actor_id: goblinActor.id, x: 2, y: 1 })).data.token;
   const g3 = (await gm.req('POST', `${S}/tokens`, { name: 'Goblin 3', actor_id: goblinActor.id, x: 3, y: 1 })).data.token;
   const pcTok = (await gm.req('POST', `${S}/tokens`, { name: 'Aria', actor_id: pcActor.id, x: 5, y: 5 })).data.token;
+  // tokens.is_prop was dropped (2026-10-05): a client-sent flag is ignored and
+  // an unlinked "scenery" token is an ordinary token.
   const rock = (await gm.req('POST', `${S}/tokens`, { name: 'Rock', x: 7, y: 7, is_prop: true })).data.token;
   t('three tokens share one actor', g1.actor_id === g2.actor_id && g2.actor_id === g3.actor_id);
-  t('prop placed with is_prop true', rock.is_prop === true);
-  t('is_prop defaults false', g1.is_prop === false);
+  t('tokens carry no is_prop field', !('is_prop' in rock) && !('is_prop' in g1));
+  t('tokens carry none of the dropped columns',
+    ['rotation', 'bar1_value', 'bar1_max', 'conditions'].every((k) => !(k in g1)));
 
   console.log('\n--- starting an encounter seeds from the board ---');
   const started = (await gm.req('POST', C, { scene_id: scene.id, name: 'Bridge' })).data;
   t('combat created', !!started.combat && started.combat.active === true);
-  t('combat named', started.combat.name === 'Bridge');
+  // combat.name was dropped (2026-10-05): a sent name is ignored, none returned.
+  t('combat carries no name field', !('name' in started.combat));
   const seeded = started.combatants.map((c) => c.token_id);
   t('all four creatures seeded',
     [g1, g2, g3, pcTok].every((x) => seeded.includes(x.id)), JSON.stringify(seeded));
-  t('the prop is NOT seeded', !seeded.includes(rock.id));
-  t('seeded roster length is exactly the non-prop count',
-    started.combatants.length === 4, `${started.combatants.length}`);
+  t('every token on the board is seeded, scenery included', seeded.includes(rock.id));
+  t('seeded roster length is exactly the token count',
+    started.combatants.length === 5, `${started.combatants.length}`);
 
   console.log('\n--- per-instance HP: the goblin problem ---');
   const cg1 = started.combatants.find((c) => c.token_id === g1.id);
@@ -144,35 +148,30 @@ async function mk(name) {
     afterLate.find((c) => c.token_id === late.id).sort_order
       === Math.max(...afterLate.map((c) => c.sort_order)));
 
-  const lateProp = (await gm.req('POST', `${S}/tokens`, { name: 'Barrel', x: 9, y: 2, is_prop: true })).data.token;
-  const afterProp = (await gm.req('GET', `${C}/${started.combat.id}`)).data.combatants;
-  t('a PROP placed mid-fight does NOT join the roster',
-    !afterProp.some((c) => c.token_id === lateProp.id));
+  const barrel = (await gm.req('POST', `${S}/tokens`, { name: 'Barrel', x: 9, y: 2 })).data.token;
+  const afterBarrel = (await gm.req('GET', `${C}/${started.combat.id}`)).data.combatants;
+  t('an unlinked token placed mid-fight joins too (no prop exception)',
+    afterBarrel.some((c) => c.token_id === barrel.id));
 
   const pasted = (await gm.req('POST', `${S}/tokens/copy`, {
     tokens: [
       { name: 'Goblin A', actor_id: goblinActor.id, x: 10, y: 3 },
       { name: 'Goblin B', actor_id: goblinActor.id, x: 11, y: 3 },
-      { name: 'Crate', x: 12, y: 3, is_prop: true },
+      { name: 'Crate', x: 12, y: 3 },
     ],
   })).data.tokens;
   const afterPaste = (await gm.req('GET', `${C}/${started.combat.id}`)).data.combatants;
-  const pastedCreatures = pasted.filter((p) => !p.is_prop);
-  t('pasted creatures joined the roster',
-    pastedCreatures.every((p) => afterPaste.some((c) => c.token_id === p.id)));
-  t('a pasted PROP stayed a prop and did not join',
-    !afterPaste.some((c) => c.token_id === pasted.find((p) => p.is_prop).id));
+  const pastedCreatures = pasted.filter((p) => p.actor_id);
+  t('every pasted token joined the roster',
+    pasted.length === 3 && pasted.every((p) => afterPaste.some((c) => c.token_id === p.id)));
   t('each pasted goblin got its OWN hp_override row',
     pastedCreatures.every((p) => afterPaste.find((c) => c.token_id === p.id).hp_override === 7));
 
-  console.log('\n--- the prop toggle is a two-way sync ---');
-  await gm.req('PATCH', `${S}/tokens/${late.id}`, { is_prop: true });
-  const afterTag = (await gm.req('GET', `${C}/${started.combat.id}`)).data.combatants;
-  t('tagging a roster member a prop REMOVES it from the roster',
-    !afterTag.some((c) => c.token_id === late.id));
-  await gm.req('PATCH', `${S}/tokens/${late.id}`, { is_prop: false });
+  console.log('\n--- is_prop is no longer a writable token field ---');
+  const propPatch = await gm.req('PATCH', `${S}/tokens/${late.id}`, { is_prop: true });
+  t('a PATCH carrying only is_prop has nothing to update', propPatch.status === 400, `${propPatch.status}`);
   const afterUntag = (await gm.req('GET', `${C}/${started.combat.id}`)).data.combatants;
-  t('untagging it puts it back', afterUntag.some((c) => c.token_id === late.id));
+  t('...and the roster is unchanged', afterUntag.some((c) => c.token_id === late.id));
 
   console.log('\n--- removing a combatant vs deleting a token ---');
   const fleeing = afterUntag.find((c) => c.token_id === late.id);

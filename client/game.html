@@ -612,11 +612,10 @@
   <!-- Encounter controls that combat.js binds. The setup modal was removed
        (the Encounter button starts the encounter directly and the initiative
        strip is the UI); these are kept hidden so combat.js's bindings resolve.
-       #sceneSel/#combatName feed the create path; end/delete are driven from the
+       #sceneSel feeds the create path; end/delete are driven from the
        strip; #combatInfo is a status sink. -->
   <div id="encounterControls" hidden>
     <select id="sceneSel"></select>
-    <input id="combatName" />
     <button id="startCombat" type="button"></button>
     <button id="endCombat" type="button"></button>
     <button id="deleteCombat" type="button"></button>
@@ -742,8 +741,6 @@
   <div class="gm-only" hidden>
     <label for="tokName" class="muted">quick-place a token</label>
     <input id="tokName" placeholder="Goblin" />
-    <label for="tokProp" class="muted">prop?</label>
-    <input id="tokProp" type="checkbox" />
     <button id="placeToken" class="btn small secondary" type="button">place</button>
   </div>
 
