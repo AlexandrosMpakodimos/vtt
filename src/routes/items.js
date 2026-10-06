@@ -68,7 +68,6 @@ function publicItem(i) {
   return {
     id: i.id,
     campaign_id: i.campaign_id,
-    folder_id: i.folder_id,
     name: i.name,
     img_url: i.img_url,
     type: i.type,

@@ -204,8 +204,10 @@ const SHELL = [
     // a vtt-dd (+#invItemDd, +#invItem-btn = +2), giving 153. (#actorDialog /
     // #actorHeadTitle are game.html-only, like the other editor dialogs, so they
     // are in SHELL, not the harness union.)
-    // Shared spellbook block adds one static id to the union.
-    t('harness id union is 155', union.length === 155, 'got ' + union.length);
+    // Shared spellbook block adds one static id to the union (155). The schema
+    // cleanup (2026-10-05) removed #combatName (combat.name dropped) and
+    // #tokProp (tokens.is_prop dropped) from the combat harness: 153.
+    t('harness id union is 153', union.length === 153, 'got ' + union.length);
 
     const expected = new Set(union.filter((id) => DEAD.indexOf(id) === -1));
     SHELL.forEach((id) => expected.add(id));

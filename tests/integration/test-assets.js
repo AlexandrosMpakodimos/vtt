@@ -89,17 +89,6 @@ const PNG = Buffer.from(
 
 const NOT_AN_IMAGE = Buffer.from('<!DOCTYPE html><script>alert(1)</script>', 'ascii');
 
-// Upload raw bytes to a presigned URL exactly as a browser would: the headers
-// must match what was signed or R2 refuses before our code sees anything.
-async function putToPresigned(upload, buf) {
-  const res = await fetch(upload.url, {
-    method: upload.method,
-    headers: { 'Content-Type': upload.headers['Content-Type'] },
-    body: buf,
-  });
-  return res.status;
-}
-
 // Remove everything this run created, through the application's own routes.
 //
 // Deliberately NOT `knex('assets').del()`: a direct delete would leave the
@@ -153,8 +142,7 @@ function upload(who, kind, campaignId, body = PNG, mime = 'image/png', idem) {
     identity.database !== 'vtt_test' ||
     identity.role !== 'vtt_test_runner' ||
     identity.storageBackend !== 'memory' ||
-    identity.storageConfigured !== true ||
-    identity.uploadMode !== 'strict'
+    identity.storageConfigured !== true
   ) throw new Error('Unexpected test server');
 
   const databaseIdentity = (await knex.raw(
@@ -202,18 +190,20 @@ function upload(who, kind, campaignId, body = PNG, mime = 'image/png', idem) {
     throw new Error('Player join failed');
   }
 
-  console.log('\n--- strict mode and controlled-upload validation ---');
+  console.log('\n--- the legacy presign path is gone; controlled-upload validation ---');
 
+  // Removed in the 2026-10-05 schema cleanup (it answered 410 in strict mode).
+  // Both legacy steps must now simply not exist.
   const probe = await gm.req('POST', '/api/assets/presign', {
     kind: 'map',
     campaign_id: camp.id,
     mime: 'image/png',
     bytes: PNG.length,
   });
-  expectStatus('strict mode disables presigning', probe, 410);
-  t('presign refusal identifies disabled route',
-    probe.data?.error === 'presign_disabled');
-  t('presign refusal supplies no upload grant', !probe.data?.upload);
+  expectStatus('the legacy presign route no longer exists', probe, 404);
+  t('no upload grant is ever supplied', !probe.data?.upload);
+  const legacyConfirm = await gm.req('POST', '/api/assets/00000000-0000-4000-8000-000000000000/confirm', {});
+  expectStatus('the legacy confirm route no longer exists', legacyConfirm, 404);
 
   expectStatus('anonymous upload is refused',
     await upload(agent(), 'portrait', camp.id), 401);

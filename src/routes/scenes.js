@@ -22,7 +22,7 @@ const { requireMember, requireOwner, validCampaignId } = require('../middleware/
 const gateway = require('../services/mediaGateway');
 const {
   validateSceneName, validateTokenName, validateImageUrl,
-  validateGridCoord, validateTokenSize, validateSceneDimension,
+  validateGridCoord, validateTokenSize,
   validateTokenIdList, validateBool,
   validateFogType, validateFogPoints,
 } = require('../services/validators');
@@ -39,7 +39,7 @@ const { validateGrid, validateImgFrame, validateImgScale } = require('../service
 // fight joins the roster; a token deleted leaves it (via the FK cascade, which
 // cannot notify anyone, hence the explicit broadcast).
 const {
-  autoAddCombatant, afterTokensDeleted, syncPropFlag,
+  autoAddCombatant, afterTokensDeleted,
 } = require('./combat');
 // M4: a token may now be LINKED to an actor. The actor router owns the
 // projection (what a player may see of a character), and this router imports it
@@ -107,11 +107,10 @@ function publicScene(s) {
   return {
     id: s.id,
     campaign_id: s.campaign_id,
-    folder_id: s.folder_id,
     name: s.name,
     img_url: s.img_url,
-    width: s.width,
-    height: s.height,
+    // No width/height: every scene is the same 1400x1050 canvas, a constant in
+    // client/js/game/scene.js (schema cleanup, 2026-10-05).
     grid: s.grid,
     created_at: s.created_at,
     updated_at: s.updated_at,
@@ -156,13 +155,8 @@ function publicToken(t, actor) {
     y: Number(t.y),
     width: Number(t.width),
     height: Number(t.height),
-    rotation: Number(t.rotation),
     hidden: t.hidden,
     locked: t.locked,
-    // M5. The GM's "this is scenery, never a combatant" flag. Safe to send to
-    // players: it is the GM's classification of a token they can already see,
-    // and hidden tokens never reach them at all. Same class as `locked`.
-    is_prop: t.is_prop,
     // M6 image framing. Numeric, so the client can apply the transform without
     // parsing; Postgres returns DECIMAL as a string, hence the coercion.
     //
@@ -194,9 +188,6 @@ function publicToken(t, actor) {
     // migration clears them separately for exactly that reason.
     img_inherited: !!(t.actor_id && (t.img_url === null || t.img_url === undefined)),
     frame_inherited: !!(t.actor_id && (t.img_scale === null || t.img_scale === undefined)),
-    bar1_value: t.bar1_value,
-    bar1_max: t.bar1_max,
-    conditions: t.conditions,
     created_at: t.created_at,
     updated_at: t.updated_at,
   };
@@ -259,7 +250,7 @@ async function loadFogInScene(fogId, sceneId) {
 }
 
 // The single seam for the future per-campaign movement setting. Today it encodes
-// the fixed default; later it will read req.campaign.settings. Returns true if
+// the fixed default (there is no per-campaign setting stored). Returns true if
 // `user` may move `token` in `campaign`.
 //
 //   - owner (GM): may move anything.
@@ -334,11 +325,6 @@ router.post('/', requireOwner, async (req, res, next) => {
 
     const g = validateGrid(body.grid);
     if (g.error) return res.status(400).json({ error: g.error });
-    const w = validateSceneDimension(body.width, 'width', 1400);
-    if (w.error) return res.status(400).json({ error: w.error });
-
-    const h = validateSceneDimension(body.height, 'height', 1050);
-    if (h.error) return res.status(400).json({ error: h.error });
 
     // Hand-listed columns only — never the raw body (mass-assignment immunity).
     // Scene count is capped atomically (abuse prevention, not a gameplay limit).
@@ -353,8 +339,6 @@ router.post('/', requireOwner, async (req, res, next) => {
           campaign_id: req.campaign.id,
           name: n.value,
           img_url: img.value,
-          width: w.value,
-          height: h.value,
           // JSON.stringify because knex will not infer jsonb from a plain
           // object on insert; validateGrid has already allow-listed every key.
           grid: JSON.stringify(g.value === undefined ? {} : g.value),
@@ -476,8 +460,7 @@ router.get('/:sceneId', requireMember, async (req, res, next) => {
     // that was already there rather than needing a second rule.
     //
     // The bar on an actor-linked token is DERIVED from these rows
-    // (hp_current / hp_max), which is why tokens.bar1_* stays untouched for
-    // linked tokens and stays meaningful only for unlinked ones. A player's copy
+    // (hp_current / hp_max); an unlinked token has no bar. A player's copy
     // of an NPC carries no hit points at all, so a monster token simply renders
     // no bar for them — no per-token toggle needed.
     const actorIds = [...new Set(tokens.map((t) => t.actor_id).filter(Boolean))];
@@ -550,16 +533,6 @@ router.patch('/:sceneId', requireOwner, async (req, res, next) => {
         campaignId: req.campaign.id,
       });
       updates.img_url = img.value;
-    }
-    if (body.width !== undefined) {
-      const w = validateSceneDimension(body.width, 'width', 1400);
-      if (w.error) return res.status(400).json({ error: w.error });
-      updates.width = w.value;
-    }
-    if (body.height !== undefined) {
-      const h = validateSceneDimension(body.height, 'height', 1050);
-      if (h.error) return res.status(400).json({ error: h.error });
-      updates.height = h.value;
     }
 
     let gridChanged = false;
@@ -738,25 +711,6 @@ router.post('/:sceneId/tokens', requireMember, async (req, res, next) => {
       hidden = h.value;
     }
 
-    // M5. is_prop marks scenery — a tree, a door, a barricade — so auto-add does
-    // not enrol it when a fight is running on this scene. GM-only, and SILENTLY
-    // DROPPED for a player rather than refused, matching `hidden` immediately
-    // above on this same handler.
-    //
-    // That is deliberate and it is the exception the M4 refuse-vs-ignore
-    // amendment already carved out: that amendment was scoped to ACTORS, and its
-    // stated reason for leaving the token routes alone was that `hidden` is a
-    // GM-only presentation flag with a safe default rather than authored
-    // content. is_prop is exactly that same class of field on exactly that same
-    // route, so it follows its neighbour. Two different behaviours for two
-    // identical booleans in one handler would be worse than matching.
-    let isProp = false;
-    if (isOwner && body.is_prop !== undefined) {
-      const pr = validateBool(body.is_prop, 'is_prop');
-      if (pr.error) return res.status(400).json({ error: pr.error });
-      isProp = pr.value;
-    }
-
     // A linked token INHERITS the character's name, portrait and footprint when
     // the request does not override them — placing a Goblin actor should give a
     // token called "Goblin" wearing the goblin's picture, not an unnamed square.
@@ -847,7 +801,6 @@ router.post('/:sceneId/tokens', requireMember, async (req, res, next) => {
       width: tokenW,
       height: tokenH,
       hidden,
-      is_prop: isProp,
       // Explicit spread of a hand-built object — three known keys, never a body.
       ...(tokenFrame || {}),
     };
@@ -931,7 +884,9 @@ router.post('/:sceneId/tokens', requireMember, async (req, res, next) => {
     else await sockets?.broadcastScene(req.campaign.id, scene.id, 'token:created', shaped);
 
     // M5. A token placed on a scene with a RUNNING fight joins the roster
-    // automatically, unless it is a prop. autoAddCombatant is a no-op when there
+    // automatically. (The tokens.is_prop exception was dropped in the
+    // 2026-10-05 schema cleanup: no live control could set it, so every token
+    // already joined; the GM removes a combatant from the strip.) autoAddCombatant is a no-op when there
     // is no active combat, so this costs one indexed lookup in the ordinary case.
     //
     // The roster broadcast is the two-payload one in routes/combat.js: a hidden
@@ -1069,13 +1024,6 @@ router.patch('/:sceneId/tokens/:tokenId', requireOwner, async (req, res, next) =
       if (b.error) return res.status(400).json({ error: b.error });
       updates.locked = b.value;
     }
-    // M5. Toggling scenery on/off. This route is requireOwner, so unlike
-    // placement there is no player branch to consider.
-    if (body.is_prop !== undefined) {
-      const b = validateBool(body.is_prop, 'is_prop');
-      if (b.error) return res.status(400).json({ error: b.error });
-      updates.is_prop = b.value;
-    }
     // M6 image framing. Placing the art inside its square is presentation, and
     // this route is requireOwner, so there is no player branch to consider.
     for (const [field, fn] of [
@@ -1130,13 +1078,6 @@ router.patch('/:sceneId/tokens/:tokenId', requireOwner, async (req, res, next) =
       }
     }
 
-    // M5. Tagging something a prop while it stands in the roster must REMOVE it,
-    // or the flag is lying; untagging it while a fight runs enrols it. Only
-    // fires when the flag actually changed, so a resize never touches combat.
-    if (body.is_prop !== undefined && row.is_prop !== token.is_prop) {
-      await syncPropFlag(req, row);
-    }
-
     return gateway.sendJson(req, res, { token: shaped });
   } catch (err) {
     return next(err);
@@ -1187,7 +1128,10 @@ router.post('/:sceneId/tokens/batch-delete', requireOwner, async (req, res, next
 // owns them, and the player 1-token cap is never involved).
 //
 // The body carries token SPECS, not ids:
-//   { tokens: [{ name, img_url, width, height, rotation, hidden, x, y }, ...] }
+//   { tokens: [{ actor_id, name, img_url, img_offset_x, img_offset_y, img_scale,
+//                width, height, hidden, x, y }, ...] }
+// The client sends img_url / framing only when the source token OWNS them, so a
+// copy of a linked token keeps inheriting from its character.
 //
 // Why specs and not ids: a clipboard is a SNAPSHOT, not a pointer. An earlier
 // version re-read the source rows from the DB by id, which meant copy-then-delete
@@ -1301,7 +1245,14 @@ router.post('/:sceneId/tokens/copy', requireOwner, async (req, res, next) => {
         if (spec.name === undefined) specName = a.name;
         if (spec.img_url === undefined) {
           specImg = null;
-          specFrame = { img_offset_x: null, img_offset_y: null, img_scale: null };
+          // Inherit the character's picture. Its framing is inherited too,
+          // unless the spec carries the source token's OWN framing: a GM can
+          // re-frame a linked token without giving it its own picture (PATCH),
+          // and a copy must keep that. (Single placement has no such source,
+          // so it ignores body framing without a body picture.)
+          specFrame = sHasFrame
+            ? specBodyFrame
+            : { img_offset_x: null, img_offset_y: null, img_scale: null };
         } else {
           // An explicit picture gets the framing the spec sent for it, else the
           // identity transform (not the character's framing).
@@ -1332,10 +1283,6 @@ router.post('/:sceneId/tokens/copy', requireOwner, async (req, res, next) => {
         hidden,
         ...(specFrame || {}),
         locked: false,          // a pasted token starts unlocked
-        // A copied prop stays a prop: pasting a row of trees should not fill the
-        // initiative roster. Read from the spec like every other field and
-        // validated the same way; this route is requireOwner.
-        is_prop: spec.is_prop === undefined ? false : spec.is_prop === true || spec.is_prop === 'true',
       });
     }
 

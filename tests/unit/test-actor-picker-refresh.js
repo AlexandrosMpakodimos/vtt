@@ -47,7 +47,7 @@ window.eval(fs.readFileSync(rootPath('client/js/shared/common.js'), 'utf8') + '\
   const reads = async (fn) => { await settle(); const before = window.__actorReads; await fn(); await settle(); return window.__actorReads - before; };
 
   campaignId = 'C'; currentCampaignOwnerId = 'GM'; asUser('GM');
-  scene = { id: 'S', width: 1000, height: 800, img_url: null };
+  scene = { id: 'S', img_url: null }; SCENE_SIZE.w = 1000; SCENE_SIZE.h = 800;
   window.__actors = [
     { id: 'PA1', name: 'Aria', user_id: 'P1', is_npc: false },
     { id: 'NPC1', name: 'Goblin', user_id: 'GM', is_npc: true },

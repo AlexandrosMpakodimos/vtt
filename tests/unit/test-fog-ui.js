@@ -37,7 +37,7 @@ window.__check=(name,cond,d='')=>{ if(cond){pass++;console.log('  PASS  '+name);
 window.eval(fs.readFileSync(rootPath('client/js/shared/common.js'), 'utf8'));
 window.eval(fs.readFileSync(rootPath('client/js/game/scene.js'),'utf8') + `
 ;(function(){
-  scene={id:'S',width:1000,height:800,img_url:null}; currentCampaignOwnerId='GM'; me={id:'GM'};
+  scene={id:'S',img_url:null}; SCENE_SIZE.w=1000; SCENE_SIZE.h=800; currentCampaignOwnerId='GM'; me={id:'GM'};
   campaignId='C';
   const stg=document.getElementById('stage'), bg=document.getElementById('stage-bg');
   const layer=document.getElementById('fog-layer');
@@ -102,7 +102,7 @@ window.eval(fs.readFileSync(rootPath('client/js/game/scene.js'),'utf8') + `
   setMode(false);
   __check('fog layer is inert with fog mode off', !layer.classList.contains('editing'));
   __check('no pointer surface rendered with fog mode off', layer.querySelectorAll('.fog-catch').length===0);
-  upsertToken({id:'T1',scene_id:'S',created_by:'GM',name:'A',x:1,y:1,width:1,height:1,rotation:0,hidden:false,locked:false,conditions:[]});
+  upsertToken({id:'T1',scene_id:'S',created_by:'GM',name:'A',x:1,y:1,width:1,height:1,hidden:false,locked:false});
   // [CHANGED 2026-08-10] The token marquee moved to the RIGHT button, because
   // left-drag now pans the map. The rest of this file keeps button 0: fog
   // DRAWING is still a left-button gesture, and a mode owns its button — so
@@ -321,7 +321,7 @@ window.eval(fs.readFileSync(rootPath('client/js/game/scene.js'),'utf8') + `
 
   // ---------- token keys must not leak through fog mode ----------
   fog.clear(); addFog('F1','rect',[{x:0,y:0},{x:4,y:4}],false); renderFog();
-  upsertToken({id:'T9',scene_id:'S',created_by:'GM',name:'Z',x:1,y:1,width:1,height:1,rotation:0,hidden:false,locked:false,conditions:[]});
+  upsertToken({id:'T9',scene_id:'S',created_by:'GM',name:'Z',x:1,y:1,width:1,height:1,hidden:false,locked:false});
   setSelection(['T9']); setFogSelection(['F1']);
   __calls.length=0;
   key('ArrowRight');

@@ -266,10 +266,14 @@ async function makeUser(name) {
     settings: { isAdmin: true }, created_at: '1999-01-01', updated_at: '1999-01-01',
   });
   const maRow = await knex('campaigns').where({ id: r.data.campaign.id }).first();
-  // settings IS a legit column, so injecting it is allowed by design — but created_at should not be overridable.
+  // campaigns.settings was dropped in the 2026-10-05 schema cleanup (it was never
+  // written), so a client-sent `settings` has no column to land in; the create
+  // route's explicit column list already ignored it. created_at must not be
+  // overridable either.
   if (new Date(maRow.created_at).getFullYear() === 1999) vuln('mass assignment: created_at', 'client set created_at');
   else ok('created_at not client-settable', `stored ${new Date(maRow.created_at).getFullYear()}`);
-  info('settings note', `settings is a real column; client-supplied settings=${JSON.stringify(maRow.settings)} is by-design, confirm that is intended`);
+  if ('settings' in maRow || 'settings' in r.data.campaign) vuln('mass assignment: settings', 'a settings field exists again');
+  else ok('settings is neither stored nor returned', 'column dropped');
 
   // patch injecting owner_id / password_hash directly
   const ownCamp = (await gm.req('POST', '/api/campaigns', { name: 'PatchTarget', is_public: true })).data.campaign;

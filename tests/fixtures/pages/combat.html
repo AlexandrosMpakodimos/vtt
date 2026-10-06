@@ -58,7 +58,6 @@
     .bar > i.low { background: #c33; }
 
     .tag { font-size: 10px; padding: 0 4px; border: 1px solid #999; border-radius: 3px; }
-    .tag.prop { border-color: #a40; color: #a40; }
     .tag.hidden { border-color: #808; color: #808; }
 
     .tok { display: flex; align-items: center; gap: 6px; padding: 3px 0;
@@ -146,10 +145,6 @@
         <label for="sceneSel">scene</label>
         <select id="sceneSel"></select>
       </div>
-      <div class="gm-only" style="flex:2">
-        <label for="combatName">encounter name</label>
-        <input id="combatName" placeholder="Ambush at the bridge" />
-      </div>
       <button id="startCombat" class="gm-only">start encounter</button>
       <button id="endCombat" class="gm-only">end</button>
       <button id="deleteCombat" class="gm-only">delete</button>
@@ -176,14 +171,12 @@
     <fieldset style="flex:1">
       <legend>tokens on this scene</legend>
       <p class="muted">
-        A token placed while an encounter is running joins the roster automatically —
-        unless it is a prop. Toggle prop below and watch the strip.
+        A token placed while an encounter is running joins the roster automatically.
       </p>
       <div id="tokens"></div>
       <hr />
       <div class="row gm-only">
         <div style="flex:2"><label for="tokName">quick-place a token</label><input id="tokName" placeholder="Goblin" /></div>
-        <div><label for="tokProp">prop?</label><input id="tokProp" type="checkbox" style="width:auto" /></div>
         <button id="placeToken">place</button>
       </div>
     </fieldset>

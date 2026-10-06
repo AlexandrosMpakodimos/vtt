@@ -11,8 +11,8 @@
 // WHY A MODULE RATHER THAN A PANEL PER PAGE
 // ---------------------------------------------------------------------------
 // The alternative was to copy the library markup into each page that needs it.
-// That would mean the upload conversation — presign, PUT direct to the bucket,
-// confirm — existing in three places, and the three drifting. This project has
+// That would mean the upload flow (validate, upload, refresh the library)
+// existing in three places, and the three drifting. This project has
 // spent several audits on rules that were correct in one place and absent in
 // another; duplicating an upload flow across pages is the same trap with a
 // different subject.

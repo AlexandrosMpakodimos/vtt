@@ -104,6 +104,11 @@ function waitFor(s, event, ms = 1200) {
   check('GM creates scene (201)', sceneRes.status === 201, JSON.stringify(sceneRes.data));
   const sceneId = sceneRes.data.scene && sceneRes.data.scene.id;
   check('scene has campaign_id', sceneRes.data.scene && sceneRes.data.scene.campaign_id === campaignId);
+  // scenes.width/height were dropped (2026-10-05): every scene is the client's
+  // fixed canvas. Sent dimensions are ignored and none come back.
+  check('scene carries no width/height (sent values ignored)',
+    sceneRes.data.scene && !('width' in sceneRes.data.scene) && !('height' in sceneRes.data.scene)
+    && !('folder_id' in sceneRes.data.scene));
 
   // The active-scene rule (M3) pins players to the campaign's active scene, so
   // every player-path assertion below needs this scene to BE the active one.
@@ -122,10 +127,6 @@ function waitFor(s, event, ms = 1200) {
   check('member lists scenes', listMember.status === 200 && listMember.data.scenes.length === 1);
   const listStranger = await stranger.req('GET', `/api/campaigns/${campaignId}/scenes`);
   check('stranger list scenes -> 404', listStranger.status === 404, `got ${listStranger.status}`);
-
-  // scene dimension validation
-  const badDim = await gm.req('POST', `/api/campaigns/${campaignId}/scenes`, { name: 'bad', width: 5 });
-  check('scene width below min rejected', badDim.status === 400, JSON.stringify(badDim.data));
 
   // ---- token placement ----
   // GM places one via HTTP.

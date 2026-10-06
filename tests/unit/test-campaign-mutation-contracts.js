@@ -198,9 +198,12 @@ async function commitContract(action, failCommit) {
 
   const row = { id: CID, owner_id: OWNER, password_hash: 'fixture-hash', settings: { movement: 'custom' },
     archived_at: null, is_open: false, is_public: false, owner_username: 'GM', member_count: '2' };
-  check('campaign projection retains viewer/open/password/settings fields', publicCampaign(row, OWNER).is_gm
+  check('campaign projection retains viewer/open/password fields', publicCampaign(row, OWNER).is_gm
     && publicCampaign(row, PLAYER).is_gm === false && publicCampaign(row, PLAYER).is_open === false
-    && publicCampaign(row, PLAYER).has_password && publicCampaign(row, PLAYER).settings === row.settings);
+    && publicCampaign(row, PLAYER).has_password);
+  // campaigns.settings was dropped (schema cleanup, 2026-10-05): a stray key on a
+  // row must not reappear in the projection.
+  check('campaign projection carries no settings field', !('settings' in publicCampaign(row, OWNER)));
   check('search projection stays narrower and includes private campaigns', !('settings' in searchResult(row))
     && !('password_hash' in searchResult(row)) && searchResult(row).is_public === false && searchResult(row).member_count === 2);
   check('member projection stays allow-listed', !('password_hash' in publicMember({ user_id: PLAYER, password_hash: 'fixture-hash' })));

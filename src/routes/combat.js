@@ -76,7 +76,7 @@ const { loadSceneInCampaign, mayUseScene, validUuid } = require('../services/sce
 const { withAtomicCap } = require('../services/atomicCap');
 const { contentWriteLimiter } = require('../middleware/rateLimit');
 const {
-  validateCombatName, validateHpOverride, validateBool,
+  validateHpOverride, validateBool,
   validateSortOrder, validateTokenIdList, validateInt,
 } = require('../services/validators');
 const { shapeActorFor } = require('./actors');
@@ -124,7 +124,6 @@ function publicCombat(c, { isOwner = true } = {}) {
     id: c.id,
     campaign_id: c.campaign_id,
     scene_id: c.scene_id,
-    name: c.name,
     active: c.active,
     round: c.round,
     created_at: c.created_at,
@@ -331,19 +330,17 @@ async function defaultHpOverride(token) {
 // Enrol one token in the scene's running fight, if there is one and the token is
 // eligible. Called from token placement and paste in routes/scenes.js.
 //
-// PROPS ARE SKIPPED. Auto-add is what makes tokens.is_prop necessary: without
-// it, every tree, door and barricade placed mid-fight joins the roster. is_prop
-// is a real column rather than "actor_id IS NULL" because a GM legitimately
-// drops an unlinked square called "Ogre" when they never made it a sheet, and
-// deriving prop-ness from the link would be true for the common case and false
-// for that one — the M4 V1 shape.
+// EVERY TOKEN IS ELIGIBLE. The tokens.is_prop exception ("scenery never joins")
+// was dropped in the 2026-10-05 schema cleanup: no live control could set it,
+// so in production every token already joined. A tree placed mid-fight is
+// removed from the strip by the GM (DELETE .../combatants/:id).
 //
 // Returns the inserted row, or null if nothing was added. Never throws on the
 // cap: a fight at its ceiling silently does not enrol the token rather than
 // failing the placement, because the placement itself is legitimate and refusing
 // it would make the token cap and the combatant cap interact confusingly.
 async function autoAddCombatant(token) {
-  if (!token || token.is_prop) return null;
+  if (!token) return null;
   const combat = await activeCombatForScene(token.scene_id);
   if (!combat) return null;
 
@@ -393,9 +390,9 @@ async function autoAddCombatant(token) {
 //
 // The GM sees every combat in the campaign. A PLAYER sees at most the one on the
 // active scene, and an empty array otherwise — the same shape GET /scenes takes,
-// and for the same reason: combat.name is GM-authored prose ("Ambush at the
-// bridge") and combat.scene_id names a map. Listing every combat would hand a
-// player the names and scene ids of encounters staged on maps they may not open.
+// and for the same reason: combat.scene_id names a map. Listing every combat
+// would hand a player the scene ids of encounters staged on maps they may not
+// open.
 router.get('/', requireMember, async (req, res, next) => {
   try {
     const q = knex('combat').where({ campaign_id: req.campaign.id });
@@ -412,7 +409,7 @@ router.get('/', requireMember, async (req, res, next) => {
 
 // POST /api/campaigns/:id/combat — GM starts an encounter on a scene.
 //
-// Seeds the roster from the board: every non-prop token already on that scene
+// Seeds the roster from the board: every token already on that scene
 // becomes a combatant, ordered by placement time, with NPC-linked tokens
 // defaulting their hp_override from the actor's maximum.
 router.post('/', requireOwner, async (req, res, next) => {
@@ -424,9 +421,6 @@ router.post('/', requireOwner, async (req, res, next) => {
     // disagree with it.
     const scene = await loadSceneInCampaign(body.scene_id, req.campaign.id);
     if (!scene) return res.status(404).json({ error: 'scene not found' });
-
-    const name = validateCombatName(body.name);
-    if (name.error) return res.status(400).json({ error: name.error });
 
     let combat;
     try {
@@ -440,7 +434,6 @@ router.post('/', requireOwner, async (req, res, next) => {
         insert: {
           campaign_id: req.campaign.id,
           scene_id: scene.id,
-          name: name.value,
           active: true,
         },
       });
@@ -450,9 +443,9 @@ router.post('/', requireOwner, async (req, res, next) => {
       throw err;
     }
 
-    // Seed from the board. Props are excluded, matching auto-add.
+    // Seed from the board, matching auto-add.
     const tokens = await knex('tokens')
-      .where({ scene_id: scene.id, is_prop: false })
+      .where({ scene_id: scene.id })
       .orderBy('created_at', 'asc');
 
     if (tokens.length) {
@@ -507,7 +500,8 @@ router.get('/:combatId', requireMember, async (req, res, next) => {
   }
 });
 
-// PATCH /api/campaigns/:id/combat/:combatId — rename, or end the fight.
+// PATCH /api/campaigns/:id/combat/:combatId — end or reopen the fight, or move
+// the round / turn pointer.
 //
 // Setting active:false is how an encounter ends. The row and its roster are kept
 // so the GM can reopen it; DELETE is the destructive option.
@@ -519,11 +513,6 @@ router.patch('/:combatId', requireOwner, async (req, res, next) => {
     const body = req.body || {};
     const updates = {};
 
-    if (body.name !== undefined) {
-      const name = validateCombatName(body.name);
-      if (name.error) return res.status(400).json({ error: name.error });
-      updates.name = name.value;
-    }
     if (body.active !== undefined) {
       const b = validateBool(body.active, 'active');
       if (b.error) return res.status(400).json({ error: b.error });
@@ -619,8 +608,8 @@ router.delete('/:combatId', requireOwner, async (req, res, next) => {
 // POST /api/campaigns/:id/combat/:combatId/combatants — GM adds a token by hand.
 //
 // Auto-add covers the ordinary case (place a token during a fight and it joins).
-// This exists for the token that was already a prop, or was removed from the
-// roster earlier, or was placed before the fight started.
+// This exists for the token that was removed from the roster earlier, or was
+// placed before the fight started.
 router.post('/:combatId/combatants', requireOwner, async (req, res, next) => {
   try {
     const found = await loadCombatForRequest(req);
@@ -790,16 +779,9 @@ router.post('/:combatId/reorder', requireOwner, async (req, res, next) => {
 
 // DELETE .../combatants/:combatantId — GM removes one row from the roster.
 //
-// THE ROW ONLY. The token stays on the board, untouched. This is the per-fight
-// half of a deliberate pair, and the two are not redundant:
-//
-//   tokens.is_prop  — durable, per token, across every fight.
-//                     "This is never a combatant."
-//   this endpoint   — one-off, per fight.
-//                     "The goblin fled; it is still a creature."
-//
-// Tagging the fleeing goblin a prop would be the wrong tool and would follow it
-// into every future encounter.
+// THE ROW ONLY. The token stays on the board, untouched: "the goblin fled; it
+// is still a creature." This is also how the GM keeps scenery out of a fight
+// (the durable tokens.is_prop flag was dropped on 2026-10-05).
 //
 // Because auto-add fires on PLACEMENT rather than continuously, a removed
 // combatant stays removed: the GM prunes once and it holds.
@@ -860,24 +842,6 @@ async function afterTokensDeleted(req, sceneId) {
   await broadcastRoster(req, combat);
 }
 
-// Called from routes/scenes.js when a token's is_prop flag flips.
-// Tagging something a prop while it stands in the roster must remove it, or the
-// flag is lying.
-async function syncPropFlag(req, token) {
-  const combat = await activeCombatForScene(token.scene_id);
-  if (!combat) return;
-  if (token.is_prop) {
-    const n = await knex('combatants')
-      .where({ combat_id: combat.id, token_id: token.id }).del();
-    if (!n) return;
-    await closeSortOrderGaps(combat.id);
-  } else {
-    const added = await autoAddCombatant(token);
-    if (!added) return;
-  }
-  await broadcastRoster(req, combat);
-}
-
 module.exports = {
   router,
   publicCombat,
@@ -887,7 +851,6 @@ module.exports = {
   activeCombatForScene,
   autoAddCombatant,
   afterTokensDeleted,
-  syncPropFlag,
   broadcastRoster,
   defaultHpOverride,
   MAX_COMBATANTS_PER_COMBAT,

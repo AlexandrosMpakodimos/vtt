@@ -6,7 +6,7 @@ const assert = require('node:assert/strict');
 
 const source = fs.readFileSync(rootPath('src/routes/assets.js'), 'utf8');
 const helperStart = source.indexOf('async function budgetActive()');
-const helperEnd = source.indexOf('// UPLOAD_MODE', helperStart);
+const helperEnd = source.indexOf('// A hard ceiling on any request body', helperStart);
 const routeStart = source.indexOf("router.delete('/:id',");
 const routeEnd = source.indexOf('\nmodule.exports =', routeStart);
 assert(helperStart >= 0 && helperEnd > helperStart && routeStart >= 0 && routeEnd > routeStart);

@@ -20,15 +20,17 @@ window.io = () => ({ on(){}, emit(ev, payload, cb){
   // upserts the returned row) runs exactly as it does in production.
   if (ev === 'token:move') {
     cb({ ok:true, token:{ id: payload.token_id, scene_id: payload.scene_id, created_by:'GM',
-      name:'x', img_url:null, x: payload.x, y: payload.y, width:1, height:1, rotation:0,
-      hidden:false, locked:false, bar1_value:null, bar1_max:null, conditions:[] } });
+      name:'x', img_url:null, x: payload.x, y: payload.y, width:1, height:1,
+      hidden:false, locked:false } });
   } else if (ev === 'token:move-batch') {
     cb({ ok:true, applied: (payload.moves||[]).map(m => ({ id:m.token_id, scene_id:payload.scene_id,
-      created_by:'GM', name:'x', img_url:null, x:m.x, y:m.y, width:1, height:1, rotation:0,
-      hidden:false, locked:false, bar1_value:null, bar1_max:null, conditions:[] })), rejected: [] });
+      created_by:'GM', name:'x', img_url:null, x:m.x, y:m.y, width:1, height:1,
+      hidden:false, locked:false })), rejected: [] });
   } else { cb({ ok:true }); }
 } });
 window.CSS = { escape: s => s };
+// Token art (the linked-copy probe below) schedules work on the next frame.
+window.requestAnimationFrame = (fn) => setTimeout(fn, 0);
 window.PointerEvent = class extends window.MouseEvent { constructor(t,o={}){super(t,o);this.pointerId=o.pointerId||1;} };
 window.Element.prototype.setPointerCapture=function(){}; window.Element.prototype.releasePointerCapture=function(){};
 
@@ -40,11 +42,11 @@ window.eval(fs.readFileSync(rootPath('client/js/shared/common.js'), 'utf8'));
 window.eval(fs.readFileSync(rootPath('client/js/game/scene.js'),'utf8') + `
 ;(function(){
   const calls = window.__calls;
-  campaignId='C'; scene={id:'S',width:1000,height:800,img_url:null};
+  campaignId='C'; scene={id:'S',img_url:null}; SCENE_SIZE.w=1000; SCENE_SIZE.h=800;
   currentCampaignOwnerId='GM'; me={id:'GM'};
-  upsertToken({id:'T1',scene_id:'S',created_by:'GM',name:'A',x:1,y:1,width:1,height:1,rotation:0,hidden:false,locked:false,conditions:[]});
-  upsertToken({id:'T2',scene_id:'S',created_by:'GM',name:'B',x:3,y:3,width:1,height:1,rotation:0,hidden:false,locked:false,conditions:[]});
-  upsertToken({id:'T3',scene_id:'S',created_by:'OTHER',name:'C',x:5,y:5,width:1,height:1,rotation:0,hidden:false,locked:false,conditions:[]});
+  upsertToken({id:'T1',scene_id:'S',created_by:'GM',name:'A',x:1,y:1,width:1,height:1,hidden:false,locked:false});
+  upsertToken({id:'T2',scene_id:'S',created_by:'GM',name:'B',x:3,y:3,width:1,height:1,hidden:false,locked:false});
+  upsertToken({id:'T3',scene_id:'S',created_by:'OTHER',name:'C',x:5,y:5,width:1,height:1,hidden:false,locked:false});
 
   const key = (k, opts={}) => document.dispatchEvent(new window.KeyboardEvent('keydown',
     { key:k, bubbles:true, cancelable:true, ...opts }));
@@ -134,8 +136,8 @@ window.eval(fs.readFileSync(rootPath('client/js/game/scene.js'),'utf8') + `
     pasteAfterCut && pasteAfterCut.body.tokens.length === 2, JSON.stringify(pasteAfterCut && pasteAfterCut.body));
 
   // re-add for the remaining tests
-  upsertToken({id:'T1',scene_id:'S',created_by:'GM',name:'A',x:1,y:1,width:1,height:1,rotation:0,hidden:false,locked:false,conditions:[]});
-  upsertToken({id:'T2',scene_id:'S',created_by:'GM',name:'B',x:3,y:3,width:1,height:1,rotation:0,hidden:false,locked:false,conditions:[]});
+  upsertToken({id:'T1',scene_id:'S',created_by:'GM',name:'A',x:1,y:1,width:1,height:1,hidden:false,locked:false});
+  upsertToken({id:'T2',scene_id:'S',created_by:'GM',name:'B',x:3,y:3,width:1,height:1,hidden:false,locked:false});
 
   // paste must work even with nothing selected (clipboard is the input)
   setSelection([]);
@@ -143,6 +145,34 @@ window.eval(fs.readFileSync(rootPath('client/js/game/scene.js'),'utf8') + `
   key('v', { ctrlKey:true });
   __check('Ctrl+V pastes with an empty selection',
     !!calls.fetch.find(c => c.path.includes('/tokens/copy')));
+
+  // --- copies keep the character link and only OWNED picture/framing ---
+  // [FIXED 2026-10-05] snapshotToken used to drop actor_id and framing and bake
+  // the inherited portrait in as the copy's own picture.
+  upsertToken({id:'L1',scene_id:'S',created_by:'GM',actor_id:'A1',name:'Goblin',x:7,y:1,width:1,height:1,hidden:false,locked:false,
+    img_url:'https://example.com/goblin.png',img_offset_x:0.1,img_offset_y:0.2,img_scale:1.5,img_inherited:true,frame_inherited:true});
+  upsertToken({id:'L2',scene_id:'S',created_by:'GM',actor_id:'A1',name:'Goblin 2',x:8,y:1,width:1,height:1,hidden:false,locked:false,
+    img_url:'https://example.com/goblin.png',img_offset_x:0.3,img_offset_y:-0.4,img_scale:2,img_inherited:true,frame_inherited:false});
+  upsertToken({id:'U1',scene_id:'S',created_by:'GM',actor_id:null,name:'Door',x:9,y:1,width:1,height:1,hidden:true,locked:false,
+    img_url:'https://example.com/door.png',img_offset_x:0,img_offset_y:0.25,img_scale:1.2,img_inherited:false,frame_inherited:false});
+  setSelection(['L1','L2','U1']);
+  calls.fetch.length = 0;
+  key('d', { ctrlKey:true });
+  const linkDup = calls.fetch.find(c => c.path.includes('/tokens/copy'));
+  const specOf = (name) => linkDup && linkDup.body.tokens.find(t => t.name === name);
+  const l1 = specOf('Goblin'), l2 = specOf('Goblin 2'), u1 = specOf('Door');
+  __check('a duplicated linked token keeps its actor_id', l1 && l1.actor_id === 'A1', JSON.stringify(l1));
+  __check('...and sends no picture or framing, so it keeps inheriting both',
+    l1 && !('img_url' in l1) && !('img_scale' in l1) && !('img_offset_x' in l1), JSON.stringify(l1));
+  __check('a linked token with its own framing keeps that framing (picture still inherited)',
+    l2 && l2.actor_id === 'A1' && !('img_url' in l2)
+      && l2.img_offset_x === 0.3 && l2.img_offset_y === -0.4 && l2.img_scale === 2, JSON.stringify(l2));
+  __check('an unlinked token keeps its own picture, framing and hidden flag, with no actor_id',
+    u1 && !('actor_id' in u1) && u1.img_url === 'https://example.com/door.png'
+      && u1.img_offset_y === 0.25 && u1.img_scale === 1.2 && u1.hidden === true, JSON.stringify(u1));
+  __check('no dropped field is sent (rotation / is_prop)',
+    !!linkDup && linkDup.body.tokens.every(t => !('rotation' in t) && !('is_prop' in t)));
+  ['L1','L2','U1'].forEach(removeToken);
 
   // --- delete ---
   setSelection(['T1']);

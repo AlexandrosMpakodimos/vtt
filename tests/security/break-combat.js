@@ -134,7 +134,8 @@ const COMBAT_EVENTS = ['combat:updated', 'combat:deleted', 'message:created'];
   })).data.actor;
 
   // Three tokens on the active board: a visible monster, a HIDDEN ambusher, and
-  // a prop. Plus the player's own token.
+  // a piece of scenery. Plus the player's own token. (tokens.is_prop was dropped
+  // on 2026-10-05; scenery is an ordinary token, so the forged flag is ignored.)
   const visible = (await gm.req('POST', `${S}/tokens`, {
     name: 'Goblin', actor_id: goblin.id, x: 1, y: 1,
   })).data.token;
@@ -148,7 +149,7 @@ const COMBAT_EVENTS = ['combat:updated', 'combat:deleted', 'message:created'];
   // ================= setup sanity — a fixture failure must FAIL, not skip =====
   ok('setup: visible token created', !!visible && visible.hidden === false);
   ok('setup: hidden token created', !!lurker && lurker.hidden === true);
-  ok('setup: prop token created', !!tree && tree.is_prop === true);
+  ok('setup: scenery token created (no is_prop field)', !!tree && !('is_prop' in tree));
 
   // ================= D3 / API5: starting a fight is GM-only =================
   const playerStart = await player.req('POST', C, { scene_id: board.id, name: 'mine' });
@@ -158,7 +159,7 @@ const COMBAT_EVENTS = ['combat:updated', 'combat:deleted', 'message:created'];
   ok('setup: combat started', !!fight && !!fight.combat);
 
   // ================= D1: the roster excludes hidden tokens ==================
-  // The prop must not be enrolled at all; the hidden token must be enrolled for
+  // Every token is enrolled, scenery included; the hidden token is enrolled for
   // the GM and absent for the player.
   const gmRoster = (await gm.req('GET', `${C}/${fight.combat.id}`)).data;
   const plRoster = (await player.req('GET', `${C}/${fight.combat.id}`)).data;
@@ -166,7 +167,7 @@ const COMBAT_EVENTS = ['combat:updated', 'combat:deleted', 'message:created'];
   const gmTokenIds = gmRoster.combatants.map((c) => c.token_id);
   const plTokenIds = plRoster.combatants.map((c) => c.token_id);
 
-  ok('seed: prop is NOT enrolled', !gmTokenIds.includes(tree.id),
+  ok('seed: scenery is enrolled like any token', gmTokenIds.includes(tree.id),
     JSON.stringify(gmTokenIds));
   ok('seed: visible token enrolled', gmTokenIds.includes(visible.id));
   ok('seed: hidden token enrolled for the GM', gmTokenIds.includes(lurker.id));
@@ -268,7 +269,7 @@ const COMBAT_EVENTS = ['combat:updated', 'combat:deleted', 'message:created'];
 
   // ================= API5 BFLA: GM-only functions ===========================
   const bfla = [
-    ['PATCH', `${C}/${fight.combat.id}`, { name: 'renamed' }, 'rename combat'],
+    ['PATCH', `${C}/${fight.combat.id}`, { active: false }, 'end combat'],
     ['DELETE', `${C}/${fight.combat.id}`, undefined, 'delete combat'],
     ['POST', `${C}/${fight.combat.id}/combatants`, { token_id: visible.id }, 'add combatant'],
     ['PATCH', `${C}/${fight.combat.id}/combatants/${visCombatant.id}`, { hp_override: 1 }, 'edit combatant'],
@@ -295,8 +296,8 @@ const COMBAT_EVENTS = ['combat:updated', 'combat:deleted', 'message:created'];
 
   const propForge = await player.req('POST', `${S}/tokens`, { name: 'sneak', is_prop: true, x: 2, y: 3 });
   if (propForge.status === 201) {
-    ok('mass assignment: a player\'s is_prop is silently dropped (matches `hidden`)',
-      propForge.data.token.is_prop === false, JSON.stringify(propForge.data.token));
+    ok('mass assignment: a player\'s is_prop has no column to land in',
+      !('is_prop' in propForge.data.token), JSON.stringify(propForge.data.token));
   } else {
     ok('mass assignment: player token placement blocked before is_prop mattered',
       propForge.status === 409, `got ${propForge.status}`);
@@ -403,7 +404,9 @@ const COMBAT_EVENTS = ['combat:updated', 'combat:deleted', 'message:created'];
   // --- L1/L2: a fight on a prep scene must be socket-silent for a player ---
   let plSeen = recorder(plSock, COMBAT_EVENTS);
   let gmSeen = recorder(gmSock, COMBAT_EVENTS);
-  await gm.req('PATCH', `${C}/${prepFight.combat.id}`, { name: 'Boss room, renamed' });
+  // A round change is the broadcast trigger (combat.name, the rename used
+  // before, was dropped on 2026-10-05).
+  await gm.req('PATCH', `${C}/${prepFight.combat.id}`, { round: 2 });
   await settle();
   ok('L1: player hears NOTHING about a prep-scene combat',
     plSeen.filter((e) => e.ev === 'combat:updated').length === 0,
@@ -413,7 +416,7 @@ const COMBAT_EVENTS = ['combat:updated', 'combat:deleted', 'message:created'];
 
   // --- L3/L4: the active-scene roster reaches the player, minus the lurker ---
   plSeen = recorder(plSock, COMBAT_EVENTS);
-  await gm.req('PATCH', `${C}/${fight.combat.id}`, { name: 'Ambush, round two' });
+  await gm.req('PATCH', `${C}/${fight.combat.id}`, { round: 2 });
   await settle();
   const plUpdates = plSeen.filter((e) => e.ev === 'combat:updated');
   ok('L3 control: player DOES hear the active-scene combat', plUpdates.length > 0);

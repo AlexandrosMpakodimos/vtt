@@ -64,6 +64,14 @@ function mayUseSceneFor({ isOwner, campaign, scene }) {
   return !!scene && !!campaign && campaign.active_scene_id === scene.id;
 }
 
+// The scene canvas, in pixels, and one grid square. Every scene is the same
+// size: scenes.width/height always held these defaults (no UI wrote another
+// value) and were dropped in the 2026-10-05 schema cleanup. They must match
+// SCENE_SIZE and GRID_PX in client/js/game/scene.js.
+const SCENE_WIDTH_PX = 1400;
+const SCENE_HEIGHT_PX = 1050;
+const GRID_PX = 50;
+
 // Express-shaped convenience wrapper, so existing call sites read unchanged.
 // req.isOwner and req.campaign are already on the request from requireMember.
 function mayUseScene(req, scene) {
@@ -75,4 +83,7 @@ module.exports = {
   mayUseScene,
   mayUseSceneFor,
   validUuid,
+  SCENE_WIDTH_PX,
+  SCENE_HEIGHT_PX,
+  GRID_PX,
 };

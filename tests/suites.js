@@ -35,6 +35,8 @@ const DB = [
   'test-items-inventory.js', 'test-combat.js', 'test-speaker-color.js',
   'test-scene-grid.js', 'test-spells.js', 'test-assets.js', 'test-landing-server.js',
   'test-campaign-open.js', 'test-lobby.js', 'test-live-membership.js',
+  // Schema cleanup (Fix 1): catalog facts, database-level refusals, copy/paste.
+  'test-schema-cleanup.js',
   // Storage budget ledger + durable cleanup. DB-backed (real Postgres) but NOT
   // server-backed: they exercise the serialisable accounting directly, which is
   // where the money-safety property lives. Use the isolated wrapper for these

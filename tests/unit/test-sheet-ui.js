@@ -67,7 +67,7 @@ const PLAYER = { id: 'pl-1' };
 
 function baseActor(over = {}) {
   return Object.assign({
-    id: 'a-1', campaign_id: 'c-1', user_id: PLAYER.id, folder_id: null,
+    id: 'a-1', campaign_id: 'c-1', user_id: PLAYER.id,
     name: 'Aria', img_url: null, is_npc: false,
     level: 3, class: 'Rogue', race: 'Elf', size: 'Medium',
     hp_current: 11, hp_max: 18, hp_temp: 0, armor_class: 15, speed: 30,
@@ -431,7 +431,7 @@ async function clickSave(container) {
   // 5. the item editor
   // ======================================================================
   const baseItem = {
-    id: 'i-1', campaign_id: 'c-1', folder_id: null, name: 'Flame Tongue',
+    id: 'i-1', campaign_id: 'c-1', name: 'Flame Tongue',
     img_url: null, type: 'weapon', weight: 3, description: 'Bursts into flame.',
     properties: { damage: '2d6', charges: 3, homebrew: true }, identified: false,
     created_at: 1, updated_at: 1,
