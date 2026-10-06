@@ -153,6 +153,11 @@ async function userIdByEmail(email) {
     const csp = res.headers.get('content-security-policy') || '';
     check(`${file}: 200 with a CSP that limits scripts to 'self'`, res.status === 200 && csp.includes("script-src 'self'"), `${res.status} ${csp || '(no CSP)'}`);
     check(`${file}: frame protection and nosniff`, res.headers.get('x-frame-options') === 'SAMEORIGIN' && res.headers.get('x-content-type-options') === 'nosniff');
+    // [2026-10-06, Fix 2] The browser connects to this origin and its WebSocket
+    // only; the R2 hosts left over from the removed presigned upload are gone.
+    const connect = csp.split(';').map((d) => d.trim()).find((d) => d.startsWith('connect-src ')) || '';
+    check(`${file}: connect-src is exactly 'self' ws: wss: (no object-storage host)`,
+      connect === "connect-src 'self' ws: wss:" && !/r2\.cloudflarestorage\.com/.test(csp), connect || '(none)');
   }
   // [2026-10-01, audit C2] Asset writes are behind the same origin check as
   // the auth and campaign routes.

@@ -33,7 +33,7 @@ const { requireMember, requireOwner } = require('../middleware/campaignAuth');
 const { withAtomicCap } = require('../services/atomicCap');
 const { contentWriteLimiter } = require('../middleware/rateLimit');
 const {
-  validateSpellName, validateSpellLevel, validateLongText, validateJsonBlob,
+  validateSpellName, validateSpellLevel, validateLongText, validateSpellProperties,
   validateInt, validUuid,
 } = require('../services/validators');
 
@@ -102,7 +102,8 @@ function validateSpellBody(body, { partial }) {
     updates.description = d.value;
   }
   if (body.properties !== undefined) {
-    const p = validateJsonBlob(body.properties, 'properties');
+    // Fix 2: allow-listed keys only (SPELL_PROPERTIES_SCHEMA), unknown keys dropped.
+    const p = validateSpellProperties(body.properties);
     if (p.error) return { error: p.error };
     // Stringified explicitly, as M3 learned to do for fog points — node-pg
     // infers correctly, but being explicit removes a class of driver surprise.

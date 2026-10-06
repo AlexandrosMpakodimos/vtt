@@ -11,7 +11,7 @@ const columns = {
   tokens: '"id", "scene_id", "actor_id", "created_by", "name", "img_url", "x", "y", "width", "height", "hidden", "locked", "created_at", "updated_at", "img_offset_x", "img_offset_y", "img_scale"',
   fog_of_war: '"id", "scene_id", "type", "points", "revealed", "created_at", "updated_at"',
   actors: '"id", "campaign_id", "user_id", "name", "img_url", "is_npc", "level", "class", "race", "size", "hp_current", "hp_max", "hp_temp", "armor_class", "speed", "strength", "dexterity", "constitution", "intelligence", "wisdom", "charisma", "death_save_successes", "death_save_failures", "notes", "data", "created_at", "updated_at", "img_offset_x", "img_offset_y", "img_scale", "in_party"',
-  items: '"id", "campaign_id", "name", "img_url", "type", "weight", "description", "properties", "identified", "created_at", "updated_at"',
+  items: '"id", "campaign_id", "name", "img_url", "type", "weight", "description", "properties", "identified", "created_at", "updated_at", "img_offset_x", "img_offset_y", "img_scale"',
   inventory: '"id", "actor_id", "item_id", "quantity", "equipped", "attuned", "created_at", "updated_at"',
   combat: '"id", "campaign_id", "scene_id", "active", "created_at", "updated_at", "round", "turn_index"',
   combatants: '"id", "combat_id", "token_id", "sort_order", "hp_override", "hp_visible", "created_at", "updated_at"',

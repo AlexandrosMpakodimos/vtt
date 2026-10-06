@@ -357,11 +357,14 @@ function validateLongText(v, field, max = 5000) {
   return { value: s || null };
 }
 
-// A JSONB overflow blob (actors.data, items.properties).
+// The size and shape gate for a JSONB document (actors.data, items.properties,
+// spells.properties). Since Fix 2 (2026-10-06) it is the FIRST of two steps:
+// it bounds what is parsed at all, and validateJsonDocument below then keeps
+// only the allow-listed keys. The text that follows is the original M4 reasoning.
 //
-// This is the one input in the project with no natural shape to validate — that
-// is the entire point of an overflow bucket, and it is exactly why it needs
-// bounds instead. actors.data is PLAYER-WRITABLE (it holds their currency, spell
+// It was the one input in the project with no natural shape to validate — that
+// was the point of an overflow bucket, and it is why it needs bounds as well as
+// a schema. actors.data is PLAYER-WRITABLE (it holds their currency, spell
 // slots and proficiencies), so without a cap a player could POST a 40 MB
 // document, or a 10,000-deep nested structure that costs more to parse than to
 // send. The row caps elsewhere in this project bound how MANY rows exist; this
@@ -429,6 +432,171 @@ function validateJsonBlob(v, field) {
   }
   return { value: v };
 }
+
+// ---------------------------------------------------------------------------
+// Fix 2 (2026-10-06) — server-side schemas for the three JSONB documents
+// ---------------------------------------------------------------------------
+// Rule C2 of claude/SCHEMA_RULES.md: a JSONB column is allowed only for a
+// document the server never interprets AND that has a server-side schema —
+// allow-listed keys with types and limits, unknown keys dropped. validateGrid is
+// the model. Before Fix 2 these three documents were bounded only in size,
+// depth and key count, so any key a client invented was stored and sent to every
+// member who could read the row.
+//
+// Each schema is taken from the editor that writes the document, which is the
+// only writer in the live app:
+//   actors.data         FIELDS with path 'data' in client/js/sheets/sheet.js
+//   items.properties    FIELDS with path 'properties' in client/js/sheets/itemsheet.js
+//   spells.properties   DETAIL_KEYS in client/js/sheets/spellsheet.js
+// tests/unit/test-json-schemas.js fails if an editor and its schema disagree, and
+// tests/integration/test-json-schemas.js fails if the database CHECK (the key
+// allow-list) disagrees with these lists.
+//
+// Value types:
+//   text  a string, trimmed, at most `max` characters (the editor's maxLength)
+//   int   a whole number in [min, max] (validateInt: numeric strings accepted)
+//   bool  true; false is not stored (the editors store a flag only when it is
+//         ticked, so absence means false, rule B8: one representation of absent)
+//   enum  one of `values`, matched case-insensitively
+// An empty string or null for a known key means "not on this sheet" and is
+// dropped, never stored. A known key with a value of the wrong type is REFUSED
+// (400) with the key in the message, so the editor can put the error beside the
+// field; only UNKNOWN keys are dropped silently, as in validateGrid.
+//
+// Item image framing is NOT in items.properties any more: Fix 2 moved it to the
+// columns img_offset_x / img_offset_y / img_scale (rule C3), validated with
+// validateImgFrame / validateImgScale like every other framed image.
+
+const text = (max) => ({ type: 'text', max });
+const int = (min, max) => ({ type: 'int', min, max });
+const bool = () => ({ type: 'bool' });
+const oneOfValues = (values) => ({ type: 'enum', values });
+
+const ACTOR_DATA_SCHEMA = (() => {
+  const s = {
+    background: text(60),
+    alignment: text(30),
+    experience_points: int(0, 999999),
+    inspiration: int(0, 99),
+    hit_dice: text(40),
+    passive_perception: int(0, 99),
+    cp: int(0, 9999999),
+    sp: int(0, 9999999),
+    ep: int(0, 9999999),
+    gp: int(0, 9999999),
+    pp: int(0, 9999999),
+    attacks: text(800),
+    proficiencies_languages: text(500),
+    features_traits: text(1000),
+    personality_traits: text(400),
+    ideals: text(300),
+    bonds: text(300),
+    flaws: text(300),
+    appearance: text(400),
+    allies_organisations: text(600),
+    treasure: text(600),
+  };
+  // Saving throws and skills: a typed bonus ("+7") and a proficiency tick.
+  // Recorded only; nothing is computed from them (see sheet.js).
+  const saves = ['sv_str', 'sv_dex', 'sv_con', 'sv_int', 'sv_wis', 'sv_cha'];
+  const skills = ['sk_acrobatics', 'sk_animal', 'sk_arcana', 'sk_athletics',
+    'sk_deception', 'sk_history', 'sk_insight', 'sk_intimidation',
+    'sk_investigation', 'sk_medicine', 'sk_nature', 'sk_perception',
+    'sk_performance', 'sk_persuasion', 'sk_religion', 'sk_sleight',
+    'sk_stealth', 'sk_survival'];
+  for (const k of [...saves, ...skills]) {
+    s[`${k}_p`] = bool();
+    s[k] = text(8);
+  }
+  return Object.freeze(s);
+})();
+
+const ITEM_RARITIES = ['common', 'uncommon', 'rare', 'very rare', 'legendary', 'artifact'];
+const ARMOR_TYPES = ['light', 'medium', 'heavy', 'shield'];
+const ITEM_PROPERTIES_SCHEMA = Object.freeze({
+  rarity: oneOfValues(ITEM_RARITIES),
+  magical: bool(),
+  requires_attunement: bool(),
+  cost: text(30),
+  attunement_note: text(120),
+  damage: text(30),
+  damage_type: text(30),
+  weapon_range: text(30),
+  weapon_properties: text(120),
+  armor_class: text(40),
+  armor_type: oneOfValues(ARMOR_TYPES),
+  strength_req: text(20),
+  stealth_disadvantage: bool(),
+  charges: int(0, 9999),
+  charges_max: int(0, 9999),
+  recharge: text(40),
+  save_dc: text(20),
+  effect: text(2000),
+  source: text(200),
+});
+
+const SPELL_SCHOOLS = ['abjuration', 'conjuration', 'divination', 'enchantment',
+  'evocation', 'illusion', 'necromancy', 'transmutation'];
+const SPELL_PROPERTIES_SCHEMA = Object.freeze({
+  school: oneOfValues(SPELL_SCHOOLS),
+  casting_time: text(120),
+  range: text(120),
+  components: text(120),
+  duration: text(120),
+});
+
+// One value of a document. Returns { value } (undefined = not stored) or { error }.
+function validateDocumentValue(spec, v, field) {
+  if (v === undefined || v === null || v === '') return { value: undefined };
+  switch (spec.type) {
+    case 'text': {
+      if (typeof v !== 'string') return { error: `${field} must be text` };
+      const s = v.trim();
+      if (s.length > spec.max) return { error: `${field} is too long (max ${spec.max} characters)` };
+      return { value: s || undefined };
+    }
+    case 'int':
+      return validateInt(v, { min: spec.min, max: spec.max, field });
+    case 'bool': {
+      const b = validateBool(v, field);
+      if (b.error) return b;
+      return { value: b.value ? true : undefined };
+    }
+    case 'enum': {
+      if (typeof v !== 'string') return { error: `${field} must be text` };
+      const wanted = v.trim().toLowerCase();
+      if (wanted === '') return { value: undefined };
+      if (!spec.values.includes(wanted)) {
+        return { error: `${field} must be one of: ${spec.values.join(', ')}` };
+      }
+      return { value: wanted };
+    }
+    default:
+      return { error: `${field} has no schema` };
+  }
+}
+
+// A whole document. The size/shape gate runs first, on what the client sent, so
+// a hostile body is refused before anything walks it; then only the keys the
+// schema names are read (iterating the schema, never the input, so an unknown
+// key — `__proto__` included — is never touched). The result is in schema order.
+function validateJsonDocument(schema, v, field) {
+  const blob = validateJsonBlob(v, field);
+  if (blob.error) return blob;
+  const src = blob.value;
+  const out = {};
+  for (const [key, spec] of Object.entries(schema)) {
+    if (!Object.prototype.hasOwnProperty.call(src, key)) continue;
+    const r = validateDocumentValue(spec, src[key], `${field}.${key}`);
+    if (r.error) return { error: r.error };
+    if (r.value !== undefined) out[key] = r.value;
+  }
+  return { value: out };
+}
+
+const validateActorData = (v) => validateJsonDocument(ACTOR_DATA_SCHEMA, v, 'data');
+const validateItemProperties = (v) => validateJsonDocument(ITEM_PROPERTIES_SCHEMA, v, 'properties');
+const validateSpellProperties = (v) => validateJsonDocument(SPELL_PROPERTIES_SCHEMA, v, 'properties');
 
 // Item category. A fixed app-logic allow-list (no DB CHECK), per the house
 // convention stated on fog `type`.
@@ -677,6 +845,9 @@ module.exports = {
   validUuid, validateInt, validateActorInt, ACTOR_INT_FIELDS,
   validateShortText, validateLongText, validateActorSize, ACTOR_SIZES,
   validateJsonBlob, MAX_JSON_BYTES, MAX_JSON_DEPTH, MAX_JSON_KEYS,
+  validateJsonDocument, validateActorData, validateItemProperties, validateSpellProperties,
+  ACTOR_DATA_SCHEMA, ITEM_PROPERTIES_SCHEMA, SPELL_PROPERTIES_SCHEMA,
+  ITEM_RARITIES, ARMOR_TYPES, SPELL_SCHOOLS,
   validateItemType, ITEM_TYPES, validateItemWeight,
   validateQuantity, validateSortOrder,
   validateSpellName, validateSpellLevel, validateSpellSource, SPELL_SOURCES,

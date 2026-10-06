@@ -656,21 +656,6 @@ function spellVisible(sp) {
   return true;
 }
 
-// The distinct school values present in the catalogue that are NOT one of the
-// known eight — surfaced as extra filter chips and editor options so a legacy or
-// imported value stays selectable rather than being silently dropped.
-function customSchoolValues() {
-  const SS = window.VTTSpellSheet || {};
-  const known = new Set(SS.SCHOOLS || []);
-  const out = [];
-  const seen = new Set();
-  for (const sp of spells) {
-    const s = spellSchool(sp);
-    if (s && !known.has(s) && !seen.has(s)) { seen.add(s); out.push(s); }
-  }
-  return out;
-}
-
 function wireSpellFilters() {
   if (spellFiltersWired) return;
   const SS = window.VTTSpellSheet || {};
@@ -736,8 +721,8 @@ function wireSpellFilters() {
     const labels = SS.SCHOOL_LABELS || {};
     const colors = SS.SCHOOL_COLOR || {};
     const neutral = SS.NEUTRAL_ACCENT || 'var(--border)';
-    const schoolOpts = SCHOOLS.map((s) => ({ value: s, label: labels[s] || s, color: colors[s] || neutral }))
-      .concat(customSchoolValues().map((s) => ({ value: s, label: s, color: neutral })));
+    // The eight schools only: since Fix 2 the server refuses any other value.
+    const schoolOpts = SCHOOLS.map((s) => ({ value: s, label: labels[s] || s, color: colors[s] || neutral }));
     chipGroup(schoolBox, schoolOpts, 'school');
   }
 
@@ -888,9 +873,6 @@ function renderSpellEditor() {
 
   window.VTTSpellSheet.render(panel, {
     spell,
-    // Seed the school dropdown with any custom values already in the catalogue,
-    // so a legacy value stays selectable.
-    schoolValues: customSchoolValues(),
     onDirtyChange: (d) => { editorDirty = d; },
     requestClose: closeEditor,
     onSave: async (patch, isNew) => {
@@ -1303,9 +1285,10 @@ function renderItems() {
     const art = el('div', { cls: 'item-card-art' });
     if (i.img_url) {
       const im = document.createElement('img'); im.alt = ''; im.src = i.img_url; im.draggable = false;
-      const props = i.properties || {};
-      const ox = Number(props.img_offset_x) || 0, oy = Number(props.img_offset_y) || 0;
-      let sc = Number(props.img_scale) > 0 ? Number(props.img_scale) : 1;
+      // Framing is three columns since Fix 2, sent for identified and
+      // unidentified items alike.
+      const ox = Number(i.img_offset_x) || 0, oy = Number(i.img_offset_y) || 0;
+      let sc = Number(i.img_scale) > 0 ? Number(i.img_scale) : 1;
       if (!known) sc *= 1.25;   // extra cover for the blur edge
       window.VTTImageFrame.apply(im, art, ox, oy, sc);
       im.addEventListener('error', () => { im.remove(); art.appendChild(el('div', { cls: 'item-card-noart', text: '?' })); });
@@ -1370,12 +1353,11 @@ function renderItems() {
 // preview shows the true player-facing view for that item's identified state.
 function previewProjection(i) {
   const known = i.identified === true;
+  const frame = { img_offset_x: i.img_offset_x, img_offset_y: i.img_offset_y, img_scale: i.img_scale };
   if (known) {
-    return { identified: true, name: i.name, img_url: i.img_url, type: i.type, weight: i.weight, description: i.description, properties: i.properties || {} };
+    return { identified: true, name: i.name, img_url: i.img_url, ...frame, type: i.type, weight: i.weight, description: i.description, properties: i.properties || {} };
   }
-  const props = i.properties || {};
-  return { identified: false, type: i.type, img_url: i.img_url,
-    properties: { img_offset_x: props.img_offset_x, img_offset_y: props.img_offset_y, img_scale: props.img_scale } };
+  return { identified: false, type: i.type, img_url: i.img_url, ...frame };
 }
 
 // A compact icon action button for the GM card row.

@@ -46,8 +46,8 @@ const { requireMember, requireOwner } = require('../middleware/campaignAuth');
 const gateway = require('../services/mediaGateway');
 const {
   validUuid, validateImageUrl, validateBool,
-  validateShortText, validateLongText, validateJsonBlob,
-  validateItemType, validateItemWeight,
+  validateShortText, validateLongText, validateItemProperties,
+  validateItemType, validateItemWeight, validateImgFrame, validateImgScale,
 } = require('../services/validators');
 const { withAtomicCap } = require('../services/atomicCap');
 const { contentWriteLimiter } = require('../middleware/rateLimit');
@@ -63,6 +63,17 @@ router.use((req, res, next) => {
 // constraint. A long campaign's item list is dozens, not hundreds.
 const MAX_ITEMS_PER_CAMPAIGN = 500;
 
+// Item art framing (Fix 2: three columns, rule C3, like actors and tokens).
+// Postgres returns DECIMAL as a string; coerced so the client can apply the
+// transform without parsing.
+function itemFrame(i) {
+  return {
+    img_offset_x: Number(i.img_offset_x),
+    img_offset_y: Number(i.img_offset_y),
+    img_scale: Number(i.img_scale),
+  };
+}
+
 function publicItem(i) {
   if (!i) return null;
   return {
@@ -70,6 +81,7 @@ function publicItem(i) {
     campaign_id: i.campaign_id,
     name: i.name,
     img_url: i.img_url,
+    ...itemFrame(i),
     type: i.type,
     // Postgres DECIMAL arrives as a string over the wire; coerce so clients get
     // a number to render, exactly as publicToken does for token coordinates.
@@ -86,23 +98,35 @@ function publicItem(i) {
 // description, no properties.
 function unidentifiedItem(i) {
   if (!i) return null;
-  const props = i.properties || {};
   return {
     id: i.id,
     campaign_id: i.campaign_id,
     type: i.type,
     img_url: i.img_url,
-    // Image FRAMING only (offset/zoom): pure geometry that crops the picture the
+    // Image FRAMING (offset/zoom): pure geometry that crops the picture the
     // player can already see. It reveals nothing about what the item is, so it is
     // safe to send even while name/description/stats stay hidden — and it keeps a
     // deliberately-cropped unidentified image looking the same to everyone.
-    properties: {
-      img_offset_x: props.img_offset_x,
-      img_offset_y: props.img_offset_y,
-      img_scale: props.img_scale,
-    },
+    // Before Fix 2 these three values travelled inside a filtered `properties`;
+    // now they are columns, so `properties` is not sent to this viewer at all.
+    ...itemFrame(i),
     identified: false,
   };
+}
+
+// The three framing inputs, shared by POST and PATCH. Returns { updates } with
+// only the keys the body named, or { error }.
+function validateItemFrame(body) {
+  const updates = {};
+  for (const key of ['img_offset_x', 'img_offset_y']) {
+    const r = validateImgFrame(body[key], key);
+    if (r.error) return { error: r.error };
+    if (r.value !== undefined) updates[key] = r.value;
+  }
+  const s = validateImgScale(body.img_scale);
+  if (s.error) return { error: s.error };
+  if (s.value !== undefined) updates.img_scale = s.value;
+  return { updates };
 }
 
 // The single seam every item payload passes through, on both transports and in
@@ -160,8 +184,12 @@ router.post('/', requireOwner, async (req, res, next) => {
     const description = validateLongText(body.description, 'description', 5000);
     if (description.error) return res.status(400).json({ error: description.error });
 
-    const properties = validateJsonBlob(body.properties, 'properties');
+    const properties = validateItemProperties(body.properties);
     if (properties.error) return res.status(400).json({ error: properties.error });
+
+    // Omitted framing takes the column defaults (0, 0, 1: the identity crop).
+    const frame = validateItemFrame(body);
+    if (frame.error) return res.status(400).json({ error: frame.error });
 
     // Defaults to false — SECRET — when the GM says nothing. That satisfies both
     // the schema's "booleans default false" convention and secure-by-default:
@@ -190,6 +218,7 @@ router.post('/', requireOwner, async (req, res, next) => {
           weight: weight.value,
           description: description.value,
           properties: JSON.stringify(properties.value),
+          ...frame.updates,
           identified,
         },
       });
@@ -272,9 +301,14 @@ router.patch('/:itemId', requireOwner, async (req, res, next) => {
       updates.description = r.value;
     }
     if (body.properties !== undefined) {
-      const r = validateJsonBlob(body.properties, 'properties');
+      const r = validateItemProperties(body.properties);
       if (r.error) return res.status(400).json({ error: r.error });
       updates.properties = JSON.stringify(r.value);
+    }
+    {
+      const r = validateItemFrame(body);
+      if (r.error) return res.status(400).json({ error: r.error });
+      Object.assign(updates, r.updates);
     }
     if (body.identified !== undefined) {
       const r = validateBool(body.identified, 'identified');

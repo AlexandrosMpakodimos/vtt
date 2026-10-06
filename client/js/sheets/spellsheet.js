@@ -13,11 +13,12 @@
 //
 // Data model: name / level / description are real columns. school, casting_time,
 // range, components and duration are OPTIONAL descriptive sub-keys of
-// `properties`. Nothing here is computed or enforced — level is a bound, not a
-// rule; the five detail fields are recorded text, never parsed. Unknown/legacy
-// keys already on a spell's `properties` are seeded into the draft at render and
-// pass through save untouched, so editing a spell never drops data the GM (or a
-// future feature) put there.
+// `properties`, and since Fix 2 (2026-10-06) they are that document's whole
+// schema: the server keeps exactly these keys (SPELL_PROPERTIES_SCHEMA in
+// src/services/validators.js, checked against DETAIL_KEYS by
+// tests/unit/test-json-schemas.js), school must be one of the eight SCHOOLS, and
+// any other key is dropped. Nothing here is computed or enforced — level is a
+// bound, not a rule; the four free-text details are recorded, never parsed.
 
 window.VTTSpellSheet = (function () {
   // Level 0 is the cantrip; 1–9 are spell levels. A bound the server validates
@@ -25,11 +26,10 @@ window.VTTSpellSheet = (function () {
   const LEVELS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
   const levelLabel = (n) => (Number(n) === 0 ? 'Cantrip' : 'Level ' + n);
 
-  // The eight schools, plus an explicit "not specified" (stored as the empty
-  // string / absent key). Accents are tuned toward the item-rarity palette so
-  // the two sections feel like one product; colour is ALWAYS paired with the
-  // readable text label, never load-bearing on its own. An unrecognised or
-  // custom school gets NEUTRAL_ACCENT and is preserved, never rewritten.
+  // The eight schools, plus an explicit "not specified" (stored as the absent
+  // key, which gets NEUTRAL_ACCENT). Accents are tuned toward the item-rarity
+  // palette so the two sections feel like one product; colour is ALWAYS paired
+  // with the readable text label, never load-bearing on its own.
   const SCHOOLS = ['abjuration', 'conjuration', 'divination', 'enchantment',
     'evocation', 'illusion', 'necromancy', 'transmutation'];
   const SCHOOL_LABELS = {
@@ -50,8 +50,7 @@ window.VTTSpellSheet = (function () {
   };
   const NEUTRAL_ACCENT = 'var(--border)';
 
-  // properties sub-keys this editor OWNS a field for. Everything else on
-  // properties is a legacy/unknown key that must survive a round-trip.
+  // The properties sub-keys this editor has a field for: the document's schema.
   const DETAIL_KEYS = ['school', 'casting_time', 'range', 'components', 'duration'];
   const DETAIL_LABELS = {
     casting_time: 'Casting time', range: 'Range', components: 'Components', duration: 'Duration',
@@ -61,15 +60,14 @@ window.VTTSpellSheet = (function () {
   const DESC_MAX = 5000;          // validateLongText('description', 5000)
   const MAX_PROPS_BYTES = 8192;   // validateJsonBlob byte cap (server enforces too)
 
-  // The accent for a school value: a known school's colour, else neutral. Custom
-  // values fall through to neutral rather than being dropped.
+  // The accent for a school value: a known school's colour, else neutral.
   function schoolColor(v) {
     if (!v) return NEUTRAL_ACCENT;
     return SCHOOL_COLOR[v] || NEUTRAL_ACCENT;
   }
   function schoolLabel(v) {
     if (!v) return SCHOOL_LABELS[''];
-    return SCHOOL_LABELS[v] || v;   // custom value shown as-is
+    return SCHOOL_LABELS[v] || v;
   }
 
   function el(tag, opts = {}) {
@@ -90,19 +88,10 @@ window.VTTSpellSheet = (function () {
   }
   function sameJson(a, b) { return JSON.stringify(canonical(a)) === JSON.stringify(canonical(b)); }
 
-  // The set of school OPTIONS to offer in the editor dropdown and the filter:
-  // the eight known schools plus any custom values already present in the
-  // catalogue (so a legacy value stays selectable rather than being silently
-  // replaced the next time the spell is edited). Passed in by the caller, which
-  // knows the whole catalogue; falls back to the known eight.
-  function schoolOptions(customValues) {
-    const seen = new Set(SCHOOLS);
-    const extra = [];
-    (customValues || []).forEach((v) => {
-      if (v && !seen.has(v)) { seen.add(v); extra.push(v); }
-    });
-    // '' (Not specified) first, then the eight, then any customs.
-    return [''].concat(SCHOOLS).concat(extra);
+  // The school OPTIONS for the editor dropdown: '' (Not specified), then the
+  // eight. The server refuses any other value since Fix 2.
+  function schoolOptions() {
+    return [''].concat(SCHOOLS);
   }
 
   function render(container, ctx) {
@@ -111,8 +100,7 @@ window.VTTSpellSheet = (function () {
     const spell = ctx.spell || null;
     const isNew = !spell;
 
-    // The draft: real columns as scalars, properties as a deep copy so unknown
-    // keys ride along untouched.
+    // The draft: real columns as scalars, properties as a deep copy.
     const draft = {
       name: spell && spell.name != null ? String(spell.name) : '',
       level: spell && spell.level != null ? Number(spell.level) : 0,
@@ -193,9 +181,8 @@ window.VTTSpellSheet = (function () {
     const detailsDisc = disclosure('Spell details', 'se-disc-details', false);
     const detailsGrid = el('div', { cls: 'ie-grid' });
 
-    // School: a themed dropdown including the known eight, "Not specified", and
-    // any custom value already in the catalogue (seeded via ctx.schoolValues).
-    const schoolOpts = schoolOptions(ctx.schoolValues);
+    // School: a themed dropdown with "Not specified" and the eight schools.
+    const schoolOpts = schoolOptions();
     const currentSchool = draft.properties.school != null ? String(draft.properties.school) : '';
     const schoolCell = ddSelect(
       'school', 'School',
@@ -213,12 +200,6 @@ window.VTTSpellSheet = (function () {
 
     detailsDisc.body.appendChild(detailsGrid);
     container.appendChild(detailsDisc.root);
-
-    // "Other saved properties": any legacy/unknown key on the spell that this
-    // editor has no field for. Shown so the GM knows they exist and that they
-    // are preserved on save; clearable explicitly.
-    const orphanWrap = el('div', { cls: 'ie-orphan' });
-    detailsDisc.body.appendChild(orphanWrap);
 
     // ── Footer ───────────────────────────────────────────────────────────────
     const footer = el('div', { cls: 'ie-footer' });
@@ -293,25 +274,6 @@ window.VTTSpellSheet = (function () {
       return { root, body, setOpen, isOpen, setSummary: (t) => { summary.textContent = t || ''; } };
     }
 
-    // Legacy/unknown properties = every key not owned by a DETAIL field.
-    function orphanKeys() {
-      return Object.keys(draft.properties).filter((k) => DETAIL_KEYS.indexOf(k) === -1);
-    }
-    function syncOrphans() {
-      const keys = orphanKeys();
-      orphanWrap.textContent = '';
-      if (!keys.length) { orphanWrap.hidden = true; return; }
-      orphanWrap.hidden = false;
-      orphanWrap.appendChild(el('div', { cls: 'ie-lab', text: 'Other saved properties' }));
-      orphanWrap.appendChild(el('div', { cls: 'ie-help', text: 'Kept from earlier edits or an import. They are preserved on save unless you clear them.' }));
-      const list = el('div', { cls: 'ie-orphan-list' });
-      for (const k of keys) list.appendChild(el('span', { cls: 'ie-orphan-chip', text: k + ': ' + draft.properties[k] }));
-      orphanWrap.appendChild(list);
-      const clear = el('button', { cls: 'btn small secondary', text: 'Clear these' }); clear.type = 'button';
-      clear.addEventListener('click', () => { for (const k of keys) delete draft.properties[k]; markDirty(); syncOrphans(); });
-      orphanWrap.appendChild(clear);
-    }
-
     function updateDetailsSummary() {
       const bits = [];
       if (draft.properties.school) bits.push(schoolLabel(String(draft.properties.school)));
@@ -321,8 +283,7 @@ window.VTTSpellSheet = (function () {
       detailsDisc.setSummary(bits.join(' · '));
     }
 
-    // Assemble a clean properties object off the draft: drop empties, keep
-    // everything else (owned fields AND orphans) untouched.
+    // Assemble a clean properties object off the draft: drop empties.
     function assembleProps() {
       const next = {};
       for (const k of Object.keys(draft.properties)) {
@@ -364,7 +325,7 @@ window.VTTSpellSheet = (function () {
     }
 
     function updateSaveState() {
-      updateDetailsSummary(); syncOrphans();
+      updateDetailsSummary();
       if (isNew) { saveBtn.disabled = false; saveBtn.title = ''; return; }
       const patch = currentPatch();
       const nothing = Object.keys(patch).length === 0;
@@ -456,10 +417,9 @@ window.VTTSpellSheet = (function () {
 
     cancelBtn.addEventListener('click', () => { if (ctx.requestClose) ctx.requestClose(); });
 
-    // Open the disclosure if the spell already carries any detail/legacy value,
-    // so nothing hides on edit.
-    if (DETAIL_KEYS.some((k) => draft.properties[k] !== undefined) || orphanKeys().length) detailsDisc.setOpen(true);
-    syncOrphans();
+    // Open the disclosure if the spell already carries any detail value, so
+    // nothing hides on edit.
+    if (DETAIL_KEYS.some((k) => draft.properties[k] !== undefined)) detailsDisc.setOpen(true);
     updateSaveState();
   }
 
@@ -543,5 +503,6 @@ window.VTTSpellSheet = (function () {
     LEVELS, levelLabel,
     SCHOOLS, SCHOOL_LABELS, SCHOOL_COLOR, NEUTRAL_ACCENT,
     schoolColor, schoolLabel, schoolOptions,
+    DETAIL_KEYS, DETAIL_MAX,
   };
 })();

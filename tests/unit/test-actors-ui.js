@@ -731,9 +731,10 @@ for (const id of [
     t('read-only add button hidden', document.getElementById('addToBag').hidden);
     seam.set(false, 'U1', true); seam.renderInventory([entry]);
     t('NPC ownership does not bypass inventory gate', !find('.inv-qty'));
-    seam.set(true, null); seam.renderInventory([{ ...entry, item: { ...entry.item, identified: false, name: 'Secret cloak', properties: { secret: true } } }]);
+    seam.set(true, null); seam.renderInventory([{ ...entry, item: { ...entry.item, identified: false, name: 'Secret cloak', img_offset_x: 0.5, img_scale: 2, properties: { damage: '1d4' } } }]);
     find('.inv-item-name').click();
-    t('unidentified preview preserves secrecy', preview.identified === false && !preview.name && !preview.properties.secret);
+    t('unidentified preview preserves secrecy', preview.identified === false && !preview.name && preview.properties === undefined);
+    t('unidentified preview keeps the framing columns (Fix 2)', preview.img_offset_x === 0.5 && preview.img_scale === 2);
     window.fetch = originalFetch; window.VTTItemSheet.openPreview = originalPreview; window.VTTGame = originalGame;
   }
 

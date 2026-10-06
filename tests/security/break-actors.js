@@ -94,22 +94,18 @@ const STAT_FIELDS = [
   'death_save_successes', 'death_save_failures', 'notes', 'data', 'class', 'race',
 ];
 const SECRET_ITEM_FIELDS = ['name', 'description', 'weight'];
+// [Fix 2, 2026-10-06] Item framing is three columns now, so an unidentified
+// projection carries NO properties at all: any `properties` key is a leak. The
+// framing columns are geometry and permitted, as long as they are plain numbers
+// in range.
 function itemLeaks(item) {
   if (!item || typeof item !== 'object') return ['missing item'];
   const leaks = SECRET_ITEM_FIELDS.filter((field) => field in item);
-  const props = item.properties;
-  if (props === undefined) return leaks;
-  if (!props || typeof props !== 'object' || Array.isArray(props)) {
-    return leaks.concat('invalid properties');
-  }
-  for (const [key, value] of Object.entries(props)) {
-    const offset = key === 'img_offset_x' || key === 'img_offset_y';
-    const scale = key === 'img_scale';
-    if ((!offset && !scale) ||
-        typeof value !== 'number' || !Number.isFinite(value) ||
-        (offset && (value < -2 || value > 2)) ||
-        (scale && (value < 0.1 || value > 5))) {
-      leaks.push('properties.' + key);
+  if ('properties' in item) leaks.push('properties');
+  for (const [key, min, max] of [['img_offset_x', -2, 2], ['img_offset_y', -2, 2], ['img_scale', 0.1, 5]]) {
+    const value = item[key];
+    if (value !== undefined && (typeof value !== 'number' || !Number.isFinite(value) || value < min || value > max)) {
+      leaks.push(key);
     }
   }
   return leaks;
@@ -143,7 +139,8 @@ function itemLeaks(item) {
   await gm.req('PATCH', `${A}/${pc.id}`, { hp_max: 12 });
   const relic = (await gm.req('POST', I, {
     name: 'Staff of the Magi', type: 'weapon', description: 'Absorbs spells.',
-    properties: { charges: 50, img_offset_x: 0.25, img_offset_y: -0.1, img_scale: 1.5 },
+    img_offset_x: 0.25, img_offset_y: -0.1, img_scale: 1.5,
+    properties: { charges: 50 },
   })).data.item;
 
   // ============ API1: BOLA — object level ============
@@ -231,9 +228,9 @@ function itemLeaks(item) {
   const plRelic = (await player.req('GET', `${I}/${relic.id}`)).data.item;
   const itemLeak = itemLeaks(plRelic);
   ok('control: HTTP preserves permitted image framing',
-    plRelic.properties?.img_offset_x === 0.25 &&
-    plRelic.properties?.img_offset_y === -0.1 &&
-    plRelic.properties?.img_scale === 1.5);
+    plRelic.img_offset_x === 0.25 &&
+    plRelic.img_offset_y === -0.1 &&
+    plRelic.img_scale === 1.5, JSON.stringify(plRelic));
   ok('BOPLA: an unidentified item discloses nothing to a player over HTTP', itemLeak.length === 0, `leaked: ${itemLeak.join(', ')}`);
   ok('BOPLA: not even its name', JSON.stringify(plRelic).indexOf('Staff of the Magi') === -1, JSON.stringify(plRelic));
 
@@ -289,15 +286,15 @@ function itemLeaks(item) {
 
   // L4 — the same question for an unidentified item.
   const l4 = recorder(plSock, ['item:updated', 'item:created']);
-  await gm.req('PATCH', `${I}/${relic.id}`, { description: 'Absorbs up to 50 spell levels.', properties: { charges: 50, secret: true, img_offset_x: 0.25, img_offset_y: -0.1, img_scale: 1.5 } });
+  await gm.req('PATCH', `${I}/${relic.id}`, { description: 'Absorbs up to 50 spell levels.', img_offset_x: 0.25, img_offset_y: -0.1, img_scale: 1.5, properties: { charges: 50, save_dc: '17' } });
   await gm.req('POST', I, { name: 'Cursed Idol', type: 'misc', description: 'It watches.' });
   await settle();
   const l4Leak = l4.filter((h) => itemLeaks(h.d).length > 0);
   ok('control: socket preserves permitted image framing',
     l4.some((h) => h.d.id === relic.id &&
-      h.d.properties?.img_offset_x === 0.25 &&
-      h.d.properties?.img_offset_y === -0.1 &&
-      h.d.properties?.img_scale === 1.5));
+      h.d.img_offset_x === 0.25 &&
+      h.d.img_offset_y === -0.1 &&
+      h.d.img_scale === 1.5));
   ok('L4: no unidentified item detail reaches the player over the socket', l4Leak.length === 0, JSON.stringify(l4Leak.map((h) => h.d)));
   ok('L5: not even the item NAME, which is usually the spoiler',
     JSON.stringify(l4).indexOf('Staff of the Magi') === -1 && JSON.stringify(l4).indexOf('Cursed Idol') === -1,

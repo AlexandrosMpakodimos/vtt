@@ -25,6 +25,21 @@ rolled-back transaction), copy/paste link and framing preservation, and the
 socket ping bound. The manual-only `test-stale-asset-atomicity.js` passed
 40 assertions; its confirm-route race scenarios were removed with that route.
 
+JSON document schemas (Fix 2, migration `20261006000000_json_schemas.js`), run
+in the development container against PostgreSQL 16 (the owner's macOS run on
+PostgreSQL 17 is still to be recorded): `test:all` 93 suites (47 unit,
+37 integration, 9 adversarial), 4,725 assertions, 0 failures (unit 2,512 ·
+DB 1,726 · security 487). New suites: `test-json-schemas.js` (each editor's
+field list, the migration's frozen copy and the validator agree key by key; the
+migration cleans a corpus exactly as the validator does; the read-only dry-run
+script), `test-csp.js` (connect-src has no object-storage host even with the R2
+variables set), and `test-json-migration.js` (catalog, database refusals, the
+migration down/up on legacy rows inside a rolled-back transaction, and the HTTP
+behaviour). Separately, on a fresh database at 25 migrations seeded with legacy
+rows: up, down and up again; the schema after `down` is identical to the
+25-migration schema (`pg_dump -s`), and the second `up` gives the same schema as
+the first.
+
 The earlier owner-reported full macOS run, immediately before frontend organization:
 
 | Group | Suites | Assertions |
@@ -43,7 +58,7 @@ Earlier audit results remain [historical evidence](history/authorization-audit.m
 
 The authoritative registration and order are the `UNIT`, `DB`, and `SEC` arrays
 in `tests/suites.js`. They are explicit lists, not automatic discovery, and
-currently register 45 / 36 / 9 suites. The 70-suite record above predates the
+currently register 47 / 37 / 9 suites. The 70-suite record above predates the
 suites added since then. All original suite entries retain their relative order.
 
 Suites live in `tests/unit/`, `tests/integration/`, and `tests/security/`.

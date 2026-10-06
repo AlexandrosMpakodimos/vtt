@@ -18,6 +18,8 @@ const UNIT = [
   'test-dice.js', 'test-dice3d.js',
   'test-combat-ui.js', 'test-encounter-scene.js', 'test-member-refresh.js', 'test-authgate.js', 'test-audit-fixes.js', 'test-align-ui.js', 'test-landing-ui.js', 'test-dashboard-ui.js', 'test-actors-ui.js', 'test-game-ui.js',
   'test-storage.js', 'test-asset-delete.js', 'test-campaign-create-retry.js', 'test-atomic-cap-retry.js', 'test-imagepicker.js', 'test-events.js', 'test-closednotice.js', 'test-frametool.js',
+  // Fix 2: JSON document schemas (editors vs server vs migration) and the CSP.
+  'test-json-schemas.js', 'test-csp.js',
 ];
 
 // Functional. Real Postgres, server on npm run dev:test.
@@ -37,6 +39,8 @@ const DB = [
   'test-campaign-open.js', 'test-lobby.js', 'test-live-membership.js',
   // Schema cleanup (Fix 1): catalog facts, database-level refusals, copy/paste.
   'test-schema-cleanup.js',
+  // JSON schemas (Fix 2): catalog, database refusals, the migration rolled back, HTTP.
+  'test-json-migration.js',
   // Storage budget ledger + durable cleanup. DB-backed (real Postgres) but NOT
   // server-backed: they exercise the serialisable accounting directly, which is
   // where the money-safety property lives. Use the isolated wrapper for these

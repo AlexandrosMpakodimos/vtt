@@ -85,11 +85,9 @@ function recorder(socket, events) {
 const settle = (ms = 500) => new Promise((r) => setTimeout(r, ms));
 
 // Everything an unidentified item must not disclose. `name` is on this list on
-// purpose: it is usually the biggest spoiler an item has.
-const SECRET_FIELDS = ['name', 'description', 'weight'];
-// Content keys that must never appear inside an unidentified item's properties
-// (framing geometry is allowed; these are not).
-const SECRET_PROP_KEYS = ['damage', 'effect', 'rarity', 'armor_class', 'cost', 'charges'];
+// purpose: it is usually the biggest spoiler an item has. Since Fix 2 the image
+// framing is three columns, so `properties` is withheld entirely.
+const SECRET_FIELDS = ['name', 'description', 'weight', 'properties'];
 
 (async () => {
   const gm = await makeUser('gm');
@@ -151,10 +149,9 @@ const SECRET_PROP_KEYS = ['damage', 'effect', 'rarity', 'armor_class', 'cost', '
   check('a player still sees THAT the item exists', !!plBlade);
   check('and its category, so the client can label it', plBlade.type === 'weapon');
   const leaked = SECRET_FIELDS.filter((f) => f in plBlade);
-  check('but not its name, description or weight', leaked.length === 0, `leaked: ${leaked.join(', ')}`);
-  // properties may be present but must hold framing ONLY — never secret content.
-  const propLeak = plBlade.properties ? SECRET_PROP_KEYS.filter((k) => k in plBlade.properties) : [];
-  check('its properties expose no secret content keys (framing only)', propLeak.length === 0, `leaked props: ${propLeak.join(', ')}`);
+  check('but not its name, description, weight or properties', leaked.length === 0, `leaked: ${leaked.join(', ')}`);
+  check('nor its properties (framing travels as columns since Fix 2)',
+    !('properties' in plBlade) && plBlade.img_scale === 1 && plBlade.img_offset_x === 0, JSON.stringify(plBlade));
   const plRope = plCat.data.items.find((i) => i.id === rope.data.item.id);
   check('an identified item is fully readable by a player', plRope.name === 'Hempen Rope' && plRope.weight === 10);
 
@@ -172,8 +169,7 @@ const SECRET_PROP_KEYS = ['damage', 'effect', 'rarity', 'armor_class', 'cost', '
   await gm.req('PATCH', `${I}/${blade.data.item.id}`, { description: 'Bursts into flame. +2d6 fire.' });
   await settle();
   const secretLeak = heardSecret.filter((h) =>
-    SECRET_FIELDS.some((f) => f in h.d)
-    || (h.d.properties && SECRET_PROP_KEYS.some((k) => k in h.d.properties)));
+    SECRET_FIELDS.some((f) => f in h.d));
   check('editing an unidentified item leaks nothing over the socket either',
     secretLeak.length === 0, JSON.stringify(secretLeak.map((h) => h.d)));
   check('though the player IS told something changed', heardSecret.length >= 1, `heard ${heardSecret.length}`);
