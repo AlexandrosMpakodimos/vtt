@@ -204,8 +204,9 @@ function evalApp(window, beforeBoot) {
     'pfEmailBtn', 'pfEmailEdit', 'emNew', 'emPassword', 'emStatus',
     'pfPasswordBtn', 'pfPasswordEdit', 'pwCurrent', 'pwNew', 'pwStatus',
     'pfAvatarBtn', 'pfAvatarInput', 'pfSaveBtn', 'pfStatus', 'pfLogout',
-    'pfDeleteBtn', 'pfDeleteEdit', 'delPassword', 'delStatus', 'delOwned', 'delConfirmBtn',
-    'confirmDialog', 'cfTitle', 'cfBody', 'cfCancel', 'cfThird', 'cfOk'];
+    'pfDeleteBtn',
+    'confirmDialog', 'cfTitle', 'cfBody', 'cfList', 'cfCancel', 'cfThird', 'cfOk',
+    'delAccountDialog', 'daTitle', 'daHelp', 'delPassword', 'delStatus', 'delOwned', 'delCancel', 'delConfirmBtn'];
   {
     const dom = makeDom();
     const { document } = dom.window;
@@ -1449,19 +1450,21 @@ function evalApp(window, beforeBoot) {
     t('Discard collapses the card', card.getAttribute('data-expanded') === 'false');
   }
 
-  // ── Delete account (Fix 4): own section, own confirmation, 409 list, 204 ───
+  // ── Delete account (Fix 4; entry point Fix 5): bin → confirm → password ────
   {
     const dom = makeDom();
     const { window, window: { document } } = dom;
     installFakeIo(window);
     const calls = stubApi(window);
-    // The delete route is answered from a queue of canned replies.
+    // The delete route is answered from a queue of canned replies; a reply
+    // with `hold` waits for that promise first (a request still in flight).
     const replies = [];
     const base = window.fetch;
     window.fetch = async (path, o = {}) => {
       if (/\/api\/auth\/delete-account$/.test(path)) {
         calls.push({ path, method: o.method, body: o.body ? JSON.parse(o.body) : null });
         const r = replies.shift();
+        if (r.hold) await r.hold;
         return { status: r.status, json: async () => { if (r.data === undefined) throw new Error('no body'); return r.data; } };
       }
       return base(path, o);
@@ -1471,67 +1474,175 @@ function evalApp(window, beforeBoot) {
     await wait(20);
     const $ = (id) => document.getElementById(id);
     const click = (el) => el.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    const enter = (el) => el.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+    const esc = (dlg) => dlg.dispatchEvent(new window.Event('cancel', { cancelable: true }));
     const deletes = () => calls.filter((c) => /delete-account$/.test(c.path));
+    const bin = $('pfDeleteBtn');
+    const confirmDlg = $('confirmDialog');
+    const pwDlg = $('delAccountDialog');
+
+    // Markup: the old row is gone; the bin sits on the Log out row, at the right.
+    t('delete account: the old Account row and its inline editor are gone',
+      !$('pfDeleteEdit') && !/Delete this account/.test($('profileDialog').textContent));
+    const actionsRow = document.querySelector('#profileDialog .idcard-actions');
+    t('delete account: Log out is the first control of the Log out row', actionsRow && actionsRow.firstElementChild === $('pfLogout'));
+    const endGroup = actionsRow && actionsRow.querySelector('.idcard-actions-end');
+    t('delete account: the bin is on the same row, last in the right-hand group',
+      endGroup && endGroup.parentElement === actionsRow && endGroup.lastElementChild === bin);
+    t('delete account: Save changes sits just left of the bin',
+      endGroup && bin.previousElementSibling === $('pfSaveBtn'));
+    t('delete account: the right-hand group is pushed right by margin-left:auto (Log out never moves)',
+      /\.idcard-actions-end \{[^}]*margin-left: auto/.test(fs.readFileSync(rootPath('client/css/dashboard.css'), 'utf8')));
+    t('delete account: the bin has an accessible name and a tooltip',
+      bin.getAttribute('aria-label') === 'Delete account' && bin.getAttribute('title') === 'Delete account' && bin.type === 'button');
+    t('delete account: the bin is an icon, not a red button',
+      bin.classList.contains('icon') && !bin.classList.contains('danger') && bin.textContent.trim() === '');
+    {
+      const svg = bin.querySelector('svg');
+      const paths = svg ? Array.from(svg.querySelectorAll('path')).map((p) => p.getAttribute('d')).join('') : '';
+      const actorsSrc = fs.readFileSync(rootPath('client/js/game/actors.js'), 'utf8');
+      const m = actorsSrc.match(/delete: '((?:<path d="[^"]+"\/>)+)'/);
+      const gameTrash = m ? Array.from(m[1].matchAll(/d="([^"]+)"/g)).map((x) => x[1]).join('') : null;
+      t('delete account: the bin uses the game page\'s direct-trash glyph', gameTrash && paths === gameTrash, paths);
+      t('...and its svg is hidden from assistive tech', svg && svg.getAttribute('aria-hidden') === 'true');
+    }
+    t('delete account: both dialogs have the same narrow class',
+      confirmDlg.className === 'dialog-narrow' && pwDlg.className === 'dialog-narrow');
+
     click($('profileBtn'));
     await wait(15);
-    t('delete account: the section starts collapsed', $('pfDeleteEdit').hasAttribute('hidden'));
-    t('delete account: its button reads Delete…', $('pfDeleteBtn').textContent === 'Delete…');
-    click($('pfDeleteBtn'));
+    { const ff = formFieldProblems(document); t('delete account: account card form fields clean', ff.length === 0, ff.join(' | ')); }
+
+    // Save changes appears just left of the bin; Log out stays first.
+    $('pfNameInput').value = 'selene2';
+    $('pfNameInput').dispatchEvent(new window.Event('input', { bubbles: true }));
+    t('delete account: with Save visible, order is Log out … Save changes, bin',
+      !$('pfSaveBtn').hasAttribute('hidden') && actionsRow.firstElementChild === $('pfLogout') && $('pfSaveBtn').nextElementSibling === bin);
+    $('pfNameInput').value = USER.username;
+    $('pfNameInput').dispatchEvent(new window.Event('input', { bubbles: true }));
+    t('...and Save hides again when the change is undone', $('pfSaveBtn').hasAttribute('hidden'));
+
+    // Step 1: the bin opens the confirm with the warning; nothing is sent.
+    click(bin);
     await wait(10);
-    t('delete account: Delete… reveals the section', !$('pfDeleteEdit').hasAttribute('hidden'));
-    t('delete account: the toggle becomes Cancel', $('pfDeleteBtn').textContent === 'Cancel');
-    t('delete account: the password field takes focus', document.activeElement === $('delPassword'));
-    t('delete account: the password field is a current-password field',
-      $('delPassword').type === 'password' && $('delPassword').getAttribute('autocomplete') === 'current-password');
-    const kept = $('delKeptHelp').textContent;
-    t('delete account: the text says what is kept (chat lines under the old name, characters unassigned, tokens and images)',
-      /chat lines/.test(kept) && /name you used/.test(kept) && /unassigned/.test(kept) && /tokens and images/.test(kept), kept);
-    t('delete account: the password field is described by both texts',
-      $('delPassword').getAttribute('aria-describedby') === 'delWhatHelp delKeptHelp');
-    { const ff = formFieldProblems(document); t('delete account: every form field has an id or name, an accessible name, and no broken label', ff.length === 0, ff.join(' | ')); }
+    t('delete account: the bin opens the confirm', confirmDlg.open === true && $('cfTitle').textContent === 'Delete your account?');
+    t('...not yet the password dialog', pwDlg.open !== true);
+    t('...saying it cannot be undone', /cannot be undone/.test($('cfBody').textContent));
+    const points = Array.from($('cfList').querySelectorAll('li')).map((li) => li.textContent);
+    t('...with its three points shown', !$('cfList').hasAttribute('hidden') && points.length === 3, JSON.stringify(points));
+    t('...what is removed: sign-in, memberships, avatar, games in Recently deleted',
+      /sign-in/.test(points[0]) && /memberships/.test(points[0]) && /avatar/.test(points[0]) && /Recently deleted/.test(points[0]), points[0]);
+    t('...what stays: chat lines under the old name, characters unassigned, tokens and images',
+      /chat lines/.test(points[1]) && /name you used/.test(points[1]) && /unassigned/.test(points[1]) && /tokens and images/.test(points[1]), points[1]);
+    t('...that owned games must be transferred or deleted first',
+      /transfer it to another player or delete it first/.test(points[2]), points[2]);
+    t('...with a danger Continue button', $('cfOk').classList.contains('danger') && $('cfOk').textContent === 'Continue');
+    t('...and the focus on Cancel', document.activeElement === $('cfCancel'));
+    t('...and nothing sent', deletes().length === 0);
+
+    // Cancel at step 1: no change, focus back on the bin.
+    click($('cfCancel'));
+    await wait(10);
+    t('delete account: Cancel at the confirm closes it', confirmDlg.open === false && pwDlg.open !== true);
+    t('...sends nothing and keeps the account card open', deletes().length === 0 && $('profileDialog').open === true && navHref === null);
+    t('...and returns focus to the bin', document.activeElement === bin);
+
+    // Esc at step 1: same.
+    click(bin);
+    await wait(10);
+    esc(confirmDlg);
+    await wait(10);
+    t('delete account: Esc at the confirm closes it, sends nothing, focus to the bin',
+      confirmDlg.open === false && pwDlg.open !== true && deletes().length === 0 && document.activeElement === bin);
+
+    // Other confirms are unchanged: no points, OK labels as before.
+    $('pfNameInput').value = 'selene2';
+    $('pfNameInput').dispatchEvent(new window.Event('input', { bubbles: true }));
+    click($('profileDialog').querySelector('[data-close]'));
+    await wait(10);
+    t('delete account: another confirm afterwards shows no leftover points',
+      confirmDlg.open === true && $('cfTitle').textContent === 'Unsaved changes' && $('cfList').hasAttribute('hidden') && !$('cfList').firstChild
+      && $('cfOk').textContent === 'Save' && !$('cfOk').classList.contains('danger'));
+    click($('cfCancel'));   // Keep editing
+    await wait(10);
+    $('pfNameInput').value = USER.username;
+    $('pfNameInput').dispatchEvent(new window.Event('input', { bubbles: true }));
+
+    // Step 2: Continue opens the password dialog.
+    click(bin);
+    await wait(10);
+    click($('cfOk'));
+    await wait(10);
+    t('delete account: Continue closes the confirm and opens the password dialog', confirmDlg.open === false && pwDlg.open === true);
+    t('...nothing sent yet', deletes().length === 0);
+    t('...the password field takes focus', document.activeElement === $('delPassword'));
+    t('...it is a current-password field with a visible label',
+      $('delPassword').type === 'password' && $('delPassword').getAttribute('autocomplete') === 'current-password'
+      && document.querySelector('label[for="delPassword"]') && /Current password/.test(document.querySelector('label[for="delPassword"]').textContent));
+    t('...starts empty, with an empty status and no list',
+      $('delPassword').value === '' && $('delStatus').textContent === '' && $('delOwned').hasAttribute('hidden'));
+    t('...has Cancel and a danger Delete my account',
+      $('delCancel').textContent === 'Cancel' && $('delConfirmBtn').textContent === 'Delete my account' && $('delConfirmBtn').classList.contains('danger'));
+    { const ff = formFieldProblems(document); t('delete account: password dialog form fields clean', ff.length === 0, ff.join(' | ')); }
     $('delPassword').value = 'something';
     $('delPassword').dispatchEvent(new window.Event('input', { bubbles: true }));
     t('delete account: typing the password does not make the card dirty (no Save)', $('pfSaveBtn').hasAttribute('hidden'));
 
-    // Empty password: a local message, no request, no confirmation.
-    $('delPassword').value = '';
+    // Cancel at step 2: closes, clears, sends nothing, focus to the bin.
+    click($('delCancel'));
+    await wait(10);
+    t('delete account: Cancel at the password dialog closes it', pwDlg.open === false && $('profileDialog').open === true);
+    t('...clears the password field', $('delPassword').value === '');
+    t('...sends nothing', deletes().length === 0 && navHref === null);
+    t('...and returns focus to the bin', document.activeElement === bin);
+
+    // Esc at step 2: same.
+    click(bin); await wait(5); click($('cfOk')); await wait(5);
+    $('delPassword').value = 'typed';
+    esc(pwDlg);
+    await wait(10);
+    t('delete account: Esc at the password dialog closes it, clears the field, focus to the bin',
+      pwDlg.open === false && $('delPassword').value === '' && deletes().length === 0 && document.activeElement === bin);
+
+    // Empty password (button and Enter): a local message, no request.
+    click(bin); await wait(5); click($('cfOk')); await wait(5);
     click($('delConfirmBtn'));
     await wait(10);
     t('delete account: an empty password asks for it locally', /current password/.test($('delStatus').textContent));
+    $('delStatus').textContent = '';
+    enter($('delPassword'));
+    await wait(10);
+    t('...also on Enter', /current password/.test($('delStatus').textContent));
     t('...and sends nothing', deletes().length === 0);
-    t('...and opens no confirmation', $('confirmDialog').open !== true);
 
-    // Cancel at the confirmation sends nothing.
+    // Wrong password: 400 shown as the server message; the dialog stays.
     $('delPassword').value = 'pw-one';
-    click($('delConfirmBtn'));
-    await wait(10);
-    t('delete account: a confirmation opens first', $('confirmDialog').open === true && /Delete your account/.test($('cfTitle').textContent));
-    t('...with a danger OK button', $('cfOk').classList.contains('danger'));
-    click($('cfCancel'));
-    await wait(10);
-    t('delete account: Cancel at the confirmation sends nothing', deletes().length === 0);
-
-    // Wrong password: 400 shown as the server message.
     replies.push({ status: 400, data: { error: 'current password is incorrect' } });
     click($('delConfirmBtn'));
-    await wait(10);
-    click($('cfOk'));
     await wait(30);
-    t('delete account: OK sends the password as currentPassword',
+    t('delete account: Delete my account sends the password as currentPassword',
       deletes().length === 1 && deletes()[0].method === 'POST' && deletes()[0].body.currentPassword === 'pw-one');
     t('delete account: a wrong password is reported', $('delStatus').textContent === 'current password is incorrect');
-    t('delete account: nothing navigates on a refusal', navHref === null);
+    t('...the dialog stays open and nothing navigates', pwDlg.open === true && navHref === null);
 
-    // 409 while owning games: the list, rendered as text only, with Manage buttons.
+    // Enter submits; a second Enter while the request is in flight sends nothing more.
+    let release;
+    const hold = new Promise((r) => { release = r; });
     const hostile = '<img src=x onerror="window.__pwned=1">Lair';
-    replies.push({ status: 409, data: {
+    replies.push({ status: 409, hold, data: {
       error: 'You own games that are not deleted. Transfer each one to another player or delete it first.',
       code: 'owns_campaigns', campaigns: [{ id: OWNED.id, name: hostile }, { id: 'c-elsewhere', name: 'Second Game' }],
     } });
-    click($('delConfirmBtn'));
-    await wait(10);
-    click($('cfOk'));
+    enter($('delPassword'));
+    await wait(5);
+    enter($('delPassword'));
+    await wait(5);
+    t('delete account: Enter in the password field submits', deletes().length === 2 && deletes()[1].body.currentPassword === 'pw-one');
+    t('...and a second Enter while it is pending sends nothing more', deletes().length === 2);
+    release();
     await wait(30);
+
+    // 409 while owning games: the list, rendered as text only, with Manage buttons.
     const items = $('delOwned').querySelectorAll('li');
     t('delete account: 409 shows the server message', /Transfer each one/.test($('delStatus').textContent));
     t('delete account: 409 lists every owned game', !$('delOwned').hasAttribute('hidden') && items.length === 2);
@@ -1540,41 +1651,47 @@ function evalApp(window, beforeBoot) {
     const manage = items[0].querySelector('button');
     t('delete account: each game has a Manage button naming it',
       manage && manage.textContent === 'Manage' && manage.getAttribute('aria-label') === 'Manage ' + hostile);
+    t('delete account: nothing navigates on a 409', navHref === null);
     { const ff = formFieldProblems(document); t('delete account with the 409 list: form fields still clean', ff.length === 0, ff.join(' | ')); }
     click(manage);
     await wait(40);
-    t('delete account: Manage closes the account card', $('profileDialog').open === false);
+    t('delete account: Manage closes the password dialog and the account card', pwDlg.open === false && $('profileDialog').open === false);
+    t('...clearing the password and the list', $('delPassword').value === '' && $('delOwned').hasAttribute('hidden') && !$('delOwned').firstChild);
     const card = document.querySelector('[data-id="' + OWNED.id + '"]');
     t('delete account: ...and opens that game’s panel (Make owner / Delete live there)',
       card && card.getAttribute('data-expanded') === 'true');
 
-    // Re-open: the section is collapsed and cleared.
+    // Success: 204 (no body) goes to the landing page.
     document.getElementById('cardOverlayScrim').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
     await wait(20);
     click($('profileBtn'));
     await wait(15);
-    t('delete account: re-opening the card starts collapsed and cleared',
-      $('pfDeleteEdit').hasAttribute('hidden') && $('delPassword').value === '' && $('delStatus').textContent === ''
-      && $('delOwned').hasAttribute('hidden') && !$('delOwned').firstChild && $('pfDeleteBtn').textContent === 'Delete…');
-
-    // Opening another editor collapses this one (accordion) and clears it.
-    click($('pfDeleteBtn'));
-    $('delPassword').value = 'typed';
-    click($('pfPasswordBtn'));
-    await wait(10);
-    t('delete account: opening Password collapses and clears Delete',
-      $('pfDeleteEdit').hasAttribute('hidden') && $('delPassword').value === '' && $('pfDeleteBtn').textContent === 'Delete…');
-    click($('pfPasswordBtn'));
-
-    // Success: 204 (no body) goes to the landing page.
-    click($('pfDeleteBtn'));
+    click(bin); await wait(5); click($('cfOk')); await wait(5);
+    t('delete account: re-opened, step 2 starts cleared', $('delPassword').value === '' && $('delStatus').textContent === '' && $('delOwned').hasAttribute('hidden'));
     $('delPassword').value = 'pw-two';
     replies.push({ status: 204 });
     click($('delConfirmBtn'));
-    await wait(10);
-    click($('cfOk'));
     await wait(30);
     t('delete account: 204 navigates to /', navHref === '/', String(navHref));
+    t('...with exactly one more request, carrying the password', deletes().length === 3 && deletes()[2].body.currentPassword === 'pw-two');
+  }
+
+  // ── Empty dashboard (Fix 5): the text only, no duplicate buttons ──────────
+  {
+    const dom = makeDom();
+    const { window, window: { document } } = dom;
+    installFakeIo(window);
+    stubApi(window, { campaigns: [] });
+    evalApp(window);
+    await wait(30);
+    const empty = document.getElementById('emptyState');
+    t('empty dashboard: the empty state shows', empty && !empty.hasAttribute('hidden'));
+    t('empty dashboard: it says No games yet.', empty && empty.textContent.trim() === 'No games yet.', empty && empty.textContent);
+    t('empty dashboard: it has no buttons or links', empty && !empty.querySelector('button, a, [role="button"]'));
+    t('empty dashboard: the header still has Create and Find',
+      document.getElementById('btnCreate') && document.getElementById('btnFind'));
+    const src = fs.readFileSync(rootPath('client/dashboard.html'), 'utf8') + fs.readFileSync(rootPath('client/js/pages/dashboard.js'), 'utf8');
+    t('empty dashboard: no data-empty-create / data-empty-find wiring is left', !/data-empty-(create|find)/.test(src));
   }
 
   console.log(`\n${pass} passed, ${fail} failed`);
