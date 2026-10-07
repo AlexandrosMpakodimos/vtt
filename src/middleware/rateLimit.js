@@ -72,6 +72,20 @@ const changeEmailLimiter = limiter('changeEmailLimiter', {
   standardHeaders: true, legacyHeaders: false, handler: tooMany,
 });
 
+// Deleting an account verifies the current password, so it is a guessing
+// surface for whoever holds a session (a shared or stolen browser). Mounted
+// after requireAuth and keyed by the ACCOUNT, not the IP: the guesses that
+// matter are against one account, and an IP key would let one address spread
+// them across sessions. Unauthenticated requests never reach it. Fixed limits,
+// no environment override (Fix 4 adds no .env key); the isolated test server
+// therefore runs the real limit, and each test user has its own allowance.
+const deleteAccountLimiter = limiter('deleteAccountLimiter', {
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  keyGenerator: (req) => 'user:' + req.user.id,
+  standardHeaders: true, legacyHeaders: false, handler: tooMany,
+});
+
 // Joining a private campaign verifies a room password, so this endpoint is a
 // password-guessing surface exactly like login is — and it is limited like one.
 const campaignJoinLimiter = limiter('campaignJoinLimiter', {
@@ -113,6 +127,7 @@ module.exports = {
   configureBackend, stop,
   loginLimiter, registerLimiter, resendLimiter,
   forgotPasswordLimiter, resetPasswordLimiter, changeEmailLimiter,
+  deleteAccountLimiter,
   campaignJoinLimiter, campaignSearchLimiter, campaignCreateLimiter,
   contentWriteLimiter,
 };
