@@ -1016,10 +1016,6 @@
     on('btnCreate', 'click', function () { openCreate(this); });
     on('btnFind', 'click', function () { openFind(this, false); });
     on('showArchived', 'change', loadList);
-    var ec = document.querySelector('[data-empty-create]');
-    if (ec) ec.addEventListener('click', function () { openCreate(this); });
-    var ef = document.querySelector('[data-empty-find]');
-    if (ef) ef.addEventListener('click', function () { openFind(this, false); });
     on('deletedToggle', 'click', function () {
       var list = $('deletedList');
       var expanded = this.getAttribute('aria-expanded') === 'true';
@@ -1511,10 +1507,9 @@
     // Email / password: Change toggles the revealed inputs.
     wireRevealToggle('pfEmailBtn', 'pfEmailEdit', 'emNew');
     wireRevealToggle('pfPasswordBtn', 'pfPasswordEdit', 'pwCurrent');
-    // Delete account: same reveal, but its own button and confirmation; it
-    // never marks the card dirty and never goes through Save.
-    wireRevealToggle('pfDeleteBtn', 'pfDeleteEdit', 'delPassword');
-    on('delConfirmBtn', 'click', function () { requestDeleteAccount(); });
+    // Delete account: the bin beside Log out opens the confirm, then the
+    // password dialog. It never marks the card dirty and never goes through Save.
+    initDeleteAccount();
 
     // Photo: click the framed image to open the image picker directly. The
     // chosen URL is written to the hidden avatar input, which marks the card
@@ -1628,8 +1623,7 @@
   var PF_EDITORS = {
     name: { edit: null, btn: 'pfUsernameBtn' },     // in-place
     email: { edit: 'pfEmailEdit', btn: 'pfEmailBtn' },
-    password: { edit: 'pfPasswordEdit', btn: 'pfPasswordBtn' },
-    del: { edit: 'pfDeleteEdit', btn: 'pfDeleteBtn', label: 'Delete…' }
+    password: { edit: 'pfPasswordEdit', btn: 'pfPasswordBtn' }
   };
   function editorFor(editId) {
     var keys = Object.keys(PF_EDITORS);
@@ -1650,11 +1644,10 @@
     } else {
       var ed = $(PF_EDITORS[which].edit), b = $(PF_EDITORS[which].btn);
       if (ed) ed.setAttribute('hidden', '');
-      if (b) { b.classList.remove('active'); b.textContent = PF_EDITORS[which].label || 'Change'; }
+      if (b) { b.classList.remove('active'); b.textContent = 'Change'; }
       // Clear the abandoned fields + any per-editor status.
       if (which === 'email') { ['emNew', 'emPassword'].forEach(function (id) { var e = $(id); if (e) e.value = ''; }); setText('emStatus', ''); }
       if (which === 'password') { ['pwCurrent', 'pwNew'].forEach(function (id) { var e = $(id); if (e) e.value = ''; }); setText('pwStatus', ''); }
-      if (which === 'del') clearDeleteAccount();
     }
   }
   function closeOtherEditors(keep) {
@@ -1735,12 +1728,11 @@
     if (ni) ni.setAttribute('hidden', ''); if (nt) nt.removeAttribute('hidden');
     if (nh) nh.setAttribute('hidden', ''); if (nb) { nb.classList.remove('active'); nb.textContent = 'Change'; }
     // Email / password / avatar: collapse reveals + reset their Change buttons.
-    [['pfEmailEdit', 'pfEmailBtn'], ['pfPasswordEdit', 'pfPasswordBtn'], ['pfDeleteEdit', 'pfDeleteBtn']].forEach(function (pair) {
+    [['pfEmailEdit', 'pfEmailBtn'], ['pfPasswordEdit', 'pfPasswordBtn']].forEach(function (pair) {
       var e = $(pair[0]), b = $(pair[1]);
       if (e) e.setAttribute('hidden', '');
-      if (b) { b.classList.remove('active'); b.textContent = PF_EDITORS[editorFor(pair[0])].label || 'Change'; }
+      if (b) { b.classList.remove('active'); b.textContent = 'Change'; }
     });
-    clearDeleteAccount();
     // Avatar: revert the hidden input + portrait + framing to the saved value.
     if ($('pfAvatarInput')) $('pfAvatarInput').value = (me && me.avatar_url) || '';
     pfFrame = {
@@ -1826,11 +1818,53 @@
     });
   }
 
-  // ── Delete account (Fix 4) ─────────────────────────────────────────────────
+  // ── Delete account (Fix 4, entry point Fix 5) ──────────────────────────────
+  // The bin beside Log out → the shared confirm (what is removed, what stays,
+  // own games first) → #delAccountDialog (password, status, 409 list).
   // POST /api/auth/delete-account with the current password. 204: the account
   // and every session are gone, so leave for the landing page. 409 with
   // code owns_campaigns: list the games still owned, each with a button to its
   // Manage panel (Make owner / Delete live there). Everything via textContent.
+  // Both dialogs return focus to the bin; closing the password dialog by any
+  // path (Cancel, Esc, Manage) clears its field, status and list.
+  var DELETE_ACCOUNT_POINTS = [
+    'Removed: your sign-in, your memberships, your avatar and your games in Recently deleted.',
+    'Kept in other people’s games: your chat lines, still under the name you used; your characters, left unassigned; and the tokens and images you added.',
+    'If you still own a game, transfer it to another player or delete it first.'
+  ];
+  var deleteConfirmHeight = 0;   // the confirm card's height, given to step 2
+
+  function initDeleteAccount() {
+    on('pfDeleteBtn', 'click', function () { openDeleteAccount(this); });
+    on('delConfirmBtn', 'click', function () { requestDeleteAccount(); });
+    on('delCancel', 'click', function () { C.closeDialog($('delAccountDialog')); });
+    var pw = $('delPassword');
+    if (pw) pw.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); requestDeleteAccount(); }
+    });
+    var dlg = $('delAccountDialog');
+    if (dlg) dlg.addEventListener('close', clearDeleteAccount);
+  }
+
+  function openDeleteAccount(bin) {
+    confirmThen('Delete your account?', 'This cannot be undone.', true,
+      function () { openDeletePassword(bin); },
+      { okLabel: 'Continue', list: DELETE_ACCOUNT_POINTS, invoker: bin });
+    // Measured while the confirm is on screen, so step 2 can take the same box.
+    var card = $('confirmDialog') && $('confirmDialog').querySelector('.card-inner');
+    deleteConfirmHeight = card && card.getBoundingClientRect ? card.getBoundingClientRect().height : 0;
+  }
+
+  function openDeletePassword(bin) {
+    var dlg = $('delAccountDialog');
+    if (!dlg) return;
+    clearDeleteAccount();
+    var card = dlg.querySelector('.card-inner');
+    // Exactly the confirm's box: a fixed height; the 409 list scrolls inside it.
+    if (card) card.style.height = deleteConfirmHeight > 0 ? deleteConfirmHeight + 'px' : '';
+    C.openDialog(dlg, { invoker: bin, focus: $('delPassword') });
+  }
+
   function clearDeleteAccount() {
     var pw = $('delPassword'); if (pw) pw.value = '';
     setText('delStatus', '');
@@ -1854,8 +1888,10 @@
       go.textContent = 'Manage';
       go.setAttribute('aria-label', 'Manage ' + name.textContent);
       go.addEventListener('click', function () {
-        // Close the account card (through the unsaved-changes guard), then open
-        // that game's panel if its card is on screen.
+        // Close the password dialog, then the account card (through the
+        // unsaved-changes guard), then open that game's panel if its card is
+        // on screen.
+        C.closeDialog($('delAccountDialog'));
         requestCloseProfile(function () {
           C.closeDialog($('profileDialog'));
           expandCardById(c.id);
@@ -1868,28 +1904,23 @@
   }
 
   function requestDeleteAccount() {
+    var btn = $('delConfirmBtn');
+    if (btn && btn.disabled) return;               // a request is already on its way (Enter twice)
     var pwEl = $('delPassword');
     var pw = pwEl ? pwEl.value : '';
     var list = $('delOwned');
     if (list) { while (list.firstChild) list.removeChild(list.firstChild); list.setAttribute('hidden', ''); }
     if (!pw) { setText('delStatus', 'Please enter your current password to delete your account.'); return; }
     setText('delStatus', '');
-    confirmThen(
-      'Delete your account?',
-      'This cannot be undone. Your sign-in, memberships and avatar are removed. Your chat lines, characters, tokens and images in other people’s games stay, no longer linked to you.',
-      true,
-      function () {
-        withPending($('delConfirmBtn'), function () {
-          return api('POST', '/api/auth/delete-account', { currentPassword: pw }).then(function (r) {
-            if (r.status === 204) { C.navigate('/'); return; }
-            setText('delStatus', serverError(r));
-            if (r.status === 409 && r.data && r.data.code === 'owns_campaigns' && Array.isArray(r.data.campaigns)) {
-              renderOwnedGames(r.data.campaigns);
-            }
-          }).catch(function () { setText('delStatus', NETWORK_ERROR); });
-        });
-      }
-    );
+    withPending(btn, function () {
+      return api('POST', '/api/auth/delete-account', { currentPassword: pw }).then(function (r) {
+        if (r.status === 204) { C.navigate('/'); return; }
+        setText('delStatus', serverError(r));
+        if (r.status === 409 && r.data && r.data.code === 'owns_campaigns' && Array.isArray(r.data.campaigns)) {
+          renderOwnedGames(r.data.campaigns);
+        }
+      }).catch(function () { setText('delStatus', NETWORK_ERROR); });
+    });
   }
 
   // Guard the profile dialog's close paths (Esc / backdrop / ✕) when dirty.
@@ -1920,16 +1951,30 @@
       if (cb) cb();
     });
   }
-  function confirmThen(title, body, danger, cb) {
+  // opts (optional): okLabel (default 'OK'); list, an array of strings shown
+  // as points under the body; invoker, the element focus returns to (default:
+  // whatever has focus now).
+  function confirmThen(title, body, danger, cb, opts) {
+    opts = opts || {};
     setText('cfTitle', title);
     setText('cfBody', body);
+    setConfirmList(opts.list);
     var ok = $('cfOk');
-    if (ok) { ok.classList.remove('danger', 'primary'); ok.classList.add(danger ? 'danger' : 'primary'); ok.textContent = 'OK'; }
+    if (ok) { ok.classList.remove('danger', 'primary'); ok.classList.add(danger ? 'danger' : 'primary'); ok.textContent = opts.okLabel || 'OK'; }
     var third = $('cfThird');
     if (third) third.setAttribute('hidden', '');   // 2-way: hide the third button
     var cancel = $('cfCancel'); if (cancel) cancel.textContent = 'Cancel';
     confirmCb = cb; confirmThirdCb = null;
-    C.openDialog($('confirmDialog'), { invoker: document.activeElement, focus: $('cfCancel') });
+    C.openDialog($('confirmDialog'), { invoker: opts.invoker || document.activeElement, focus: $('cfCancel') });
+  }
+  function setConfirmList(items) {
+    var list = $('cfList');
+    if (!list) return;
+    while (list.firstChild) list.removeChild(list.firstChild);
+    (Array.isArray(items) ? items : []).forEach(function (s) {
+      var li = document.createElement('li'); li.textContent = String(s); list.appendChild(li);
+    });
+    if (list.firstChild) list.removeAttribute('hidden'); else list.setAttribute('hidden', '');
   }
   // Three choices: primary (okLabel→onOk), secondary (thirdLabel→onThird), and
   // Cancel (cancelLabel→dismiss). Used for the unsaved-edits guard
@@ -1937,6 +1982,7 @@
   function confirmThreeWay(title, body, okLabel, thirdLabel, cancelLabel, onOk, onThird) {
     setText('cfTitle', title);
     setText('cfBody', body);
+    setConfirmList(null);
     var ok = $('cfOk');
     if (ok) { ok.classList.remove('danger'); ok.classList.add('primary'); ok.textContent = okLabel || 'OK'; }
     var third = $('cfThird');

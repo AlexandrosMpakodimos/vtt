@@ -62,12 +62,9 @@
       <div id="campaignPanel" role="tabpanel" aria-labelledby="tabAll" tabindex="0">
         <p id="listStatus" role="status" aria-live="polite"></p>
         <div class="cards" id="cardsGrid"></div>
+        <!-- Text only: the header's Create a game / Find a game do the job. -->
         <div id="emptyState" hidden>
           <p>No games yet.</p>
-          <div class="actions">
-            <button class="btn primary" type="button" data-empty-create>Create a game</button>
-            <button class="btn secondary" type="button" data-empty-find>Find a game</button>
-          </div>
         </div>
       </div>
 
@@ -393,33 +390,23 @@
             </div>
           </div>
 
-          <!-- Delete account (Fix 4). Not part of Save: it has its own button
-               and its own confirmation, and nothing here marks the card dirty. -->
-          <div class="idcard-row">
-            <span class="idcard-label">Account</span>
-            <div class="idcard-line">
-              <span class="idcard-value-text">Delete this account</span>
-              <button class="idcard-change" id="pfDeleteBtn" type="button">Delete&hellip;</button>
-            </div>
-            <div class="idcard-edit" id="pfDeleteEdit" hidden>
-              <span class="help" id="delWhatHelp">Deleting your account cannot be undone. It removes your sign-in, your memberships, your avatar and any of your own games waiting in Recently deleted. If you still own a game, transfer it to another player or delete it first.</span>
-              <span class="help" id="delKeptHelp">What stays in other people&rsquo;s games: your chat lines, still under the name you used; your characters, left unassigned; and the tokens and images you added.</span>
-              <input id="delPassword" type="password" autocomplete="current-password" placeholder="Current password" aria-label="Current password to confirm account deletion" aria-describedby="delWhatHelp delKeptHelp">
-              <p class="status" id="delStatus" role="status" aria-live="polite"></p>
-              <ul class="del-owned" id="delOwned" aria-label="Games you still own" hidden></ul>
-              <div class="del-actions">
-                <button class="btn danger small" id="delConfirmBtn" type="button">Delete my account</button>
-              </div>
-            </div>
-          </div>
-
         </div>
       </div>
 
       <p class="status idcard-status" id="pfStatus" role="status" aria-live="polite"></p>
+      <!-- Log out at the left; Save changes (when shown) and the delete-account
+           bin at the right. The bin opens the confirm, then #delAccountDialog.
+           Its trash glyph is the one the game page uses for direct trash. -->
       <div class="idcard-actions">
         <button id="pfLogout" class="btn secondary small" type="button">Log out</button>
-        <button id="pfSaveBtn" class="btn primary small" type="button" hidden>Save changes</button>
+        <div class="idcard-actions-end">
+          <button id="pfSaveBtn" class="btn primary small" type="button" hidden>Save changes</button>
+          <button id="pfDeleteBtn" class="btn icon idcard-bin" type="button" aria-label="Delete account" title="Delete account" aria-haspopup="dialog">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 7h16"></path><path d="M9 7V4h6v3"></path><path d="M6 7l1 13h10l1-13"></path>
+            </svg>
+          </button>
+        </div>
       </div>
     </div>
   </dialog>
@@ -438,10 +425,34 @@
       <h2 id="cfTitle">Are you sure?</h2>
       <span class="rule"></span>
       <p id="cfBody" style="margin:0 0 1.2rem;"></p>
+      <!-- Optional points under the body (used by the delete-account warning);
+           filled with textContent, hidden and emptied for every other confirm. -->
+      <ul id="cfList" class="cf-list" hidden></ul>
       <div class="field-inline" style="justify-content:flex-end;">
         <button id="cfCancel" class="btn secondary small" type="button">Cancel</button>
         <button id="cfThird" class="btn secondary small" type="button" hidden></button>
         <button id="cfOk" class="btn primary small" type="button">OK</button>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- Delete account, step 2 (after the confirm): the password, the status
+       line and, on a 409, the games still owned. Same class and box as
+       #confirmDialog; dashboard.js gives it the confirm's height on open. -->
+  <dialog id="delAccountDialog" class="dialog-narrow" aria-labelledby="daTitle" aria-describedby="daHelp">
+    <div class="card-inner del-card">
+      <h2 id="daTitle">Delete your account</h2>
+      <span class="rule"></span>
+      <div class="field del-field">
+        <label for="delPassword">Current password</label>
+        <input id="delPassword" type="password" autocomplete="current-password">
+        <span class="help" id="daHelp">Enter your password to confirm. This cannot be undone.</span>
+      </div>
+      <p class="status" id="delStatus" role="status" aria-live="polite"></p>
+      <ul class="del-owned" id="delOwned" aria-label="Games you still own" hidden></ul>
+      <div class="field-inline del-actions">
+        <button id="delCancel" class="btn secondary small" type="button">Cancel</button>
+        <button id="delConfirmBtn" class="btn danger small" type="button">Delete my account</button>
       </div>
     </div>
   </dialog>

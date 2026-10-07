@@ -314,7 +314,6 @@
     }
 
     #emptyState { padding: 2rem 0; color: var(--text-muted); }
-    #emptyState .actions { display: flex; gap: 0.5rem; margin-top: 1rem; flex-wrap: wrap; }
 
     /* Recently deleted disclosure. */
     .deleted-wrap { margin-top: 1.5rem; border-top: 1px solid var(--border); padding-top: 1rem; }
@@ -447,16 +446,32 @@
     }
     .idcard-edit input:focus-visible { border-color: var(--accent); outline: 2px solid var(--focus); outline-offset: 1px; }
     .idcard-edit .help { font-size: 0.78rem; color: var(--text-muted); }
-    /* Delete account (Fix 4): the games still owned, each with a way to its
-       Manage panel, where Make owner and Delete live. */
-    .del-owned { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.35rem; }
-    .del-owned li { display: flex; align-items: center; gap: 0.6rem; }
+    /* Delete account, step 2 (#delAccountDialog): same .dialog-narrow box as
+       the confirm; dashboard.js gives the card the confirm's exact height, and
+       the buttons sit at the bottom. The games still owned (409) each have a
+       way to their Manage panel; the list takes the room left and scrolls
+       (at least one row stays visible; the card itself scrolls only if a very
+       short viewport leaves less than that). */
+    .del-card { display: flex; flex-direction: column; box-sizing: border-box; overflow-y: auto; }
+    .del-card .del-field { margin-bottom: 0.2rem; }
+    .del-owned { list-style: none; margin: 0 0 1rem; padding: 0; display: flex; flex-direction: column; gap: 0.35rem; flex: 0 1 auto; min-height: 2.6rem; overflow-y: auto; }
+    .del-owned li { display: flex; align-items: center; gap: 0.6rem; flex: none; }
     .del-owned .del-owned-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .del-actions { display: flex; justify-content: flex-end; }
+    .del-actions { display: flex; justify-content: flex-end; margin-top: auto; }
+    /* Optional points under a confirm's body (the delete-account warning). */
+    .cf-list { margin: -0.6rem 0 1.2rem; padding-left: 1.2rem; display: flex; flex-direction: column; gap: 0.45rem; }
 
     .idcard-status { margin: 1rem 0 0; min-height: 1.2rem; font-size: 0.88rem; }
     .idcard-status:empty { margin: 0; min-height: 0; }
     .idcard-actions { display: flex; justify-content: space-between; align-items: center; gap: 0.6rem; margin-top: 1.1rem; }
+    /* Right group: Save changes (when shown) just left of the bin. Log out is
+       the row's first child, so nothing here can move it. */
+    .idcard-actions-end { display: flex; align-items: center; gap: 0.6rem; margin-left: auto; }
+    /* Delete account: a quiet icon, not a red button; the danger colour only
+       on hover/focus. */
+    .btn.icon.idcard-bin { min-height: 36px; min-width: 36px; padding: 0.4rem; color: var(--text-muted); }
+    .btn.icon.idcard-bin svg { width: 18px; height: 18px; display: block; }
+    .btn.icon.idcard-bin:hover, .btn.icon.idcard-bin:focus-visible { color: var(--danger); }
 
     @media (max-width: 520px) {
       .idcard-body { flex-direction: column; align-items: center; }
