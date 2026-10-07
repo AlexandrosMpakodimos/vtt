@@ -136,7 +136,7 @@ async function userIdByEmail(email) {
 
   // [2026-10-01] Pages are revalidated on every visit, so a release is picked
   // up at once instead of a browser reusing an older cached page.
-  for (const page of ['/', '/dashboard.html', '/game.html']) {
+  for (const page of ['/', '/dashboard.html', '/game.html', '/privacy.html']) {
     const res = await fetch(BASE + page);
     check(`${page} is served with Cache-Control: no-cache`, res.headers.get('cache-control') === 'no-cache', res.headers.get('cache-control') || '(none)');
     check(`${page} carries a validator (ETag) so revisits are cheap`, !!res.headers.get('etag'));
@@ -148,7 +148,7 @@ async function userIdByEmail(email) {
   // security headers. In production, LiteSpeed/Passenger served files from
   // <app root>/public itself, and those responses had none of them; the browser
   // files therefore live in client/, and no public/ may exist at the app root.
-  for (const file of ['/dashboard.html', '/game.html', '/index.html', '/js/shared/authgate.js', '/css/tokens.css']) {
+  for (const file of ['/dashboard.html', '/game.html', '/index.html', '/privacy.html', '/css/privacy.css', '/js/shared/authgate.js', '/css/tokens.css']) {
     const res = await fetch(BASE + file);
     const csp = res.headers.get('content-security-policy') || '';
     check(`${file}: 200 with a CSP that limits scripts to 'self'`, res.status === 200 && csp.includes("script-src 'self'"), `${res.status} ${csp || '(no CSP)'}`);

@@ -1,0 +1,60 @@
+/* client/css/privacy.css — the static privacy notice (client/privacy.html).
+ * Colour comes only from tokens.css; type and wordmark follow the landing.
+ * One reading column, no motion. */
+
+:root {
+  --maxw: 44rem;
+  --pad: clamp(1rem, 4vw, 3rem);
+  --font-body: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --d20: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 3 L27 9.5 L27 22.5 L16 29 L5 22.5 L5 9.5 Z M16 3 L16 29 M5 9.5 L27 22.5 M27 9.5 L5 22.5' fill='none' stroke='black' stroke-width='1.6'/%3E%3C/svg%3E");
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--font-body);
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+a { color: var(--link); text-decoration: underline; text-underline-offset: 3px; }
+a:hover { color: var(--text); }
+
+.skip {
+  position: absolute; left: 12px; top: -56px; z-index: 100;
+  background: var(--surface-raised); color: var(--text);
+  padding: 10px 16px; border: 1px solid var(--rule); border-radius: 2px;
+}
+.skip:focus { top: 12px; }
+
+.site-header {
+  display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+  min-height: 64px; padding: 0 var(--pad);
+  border-bottom: 1px solid var(--border);
+}
+.wordmark {
+  font-weight: 800; font-size: 0.95rem; letter-spacing: 0.22em; text-transform: uppercase;
+  color: var(--accent); text-decoration: none;
+  display: inline-flex; align-items: center; gap: 0.55rem; min-height: 44px;
+}
+.wordmark::before {
+  content: ""; width: 22px; height: 22px; flex: none; background: var(--accent);
+  -webkit-mask: var(--d20) center / contain no-repeat; mask: var(--d20) center / contain no-repeat;
+}
+.header-link { font-size: 0.875rem; display: inline-flex; align-items: center; min-height: 44px; }
+
+main { max-width: var(--maxw); margin: 0 auto; padding: 2.5rem var(--pad) 3rem; }
+
+h1, h2 { line-height: 1.2; color: var(--accent); text-transform: uppercase; }
+h1 { font-size: clamp(1.5rem, 3.6vw, 2.2rem); letter-spacing: 0.06em; margin: 0 0 0.3rem; }
+h2 { font-size: 1.05rem; letter-spacing: 0.05em; margin: 2rem 0 0.5rem; }
+ul { padding-left: 1.2rem; }
+li { margin: 0.3rem 0; }
+.meta { color: var(--text-muted); font-size: 0.875rem; margin: 0; }
+code { font-size: 0.9em; background: var(--surface-raised); border: 1px solid var(--border); border-radius: 2px; padding: 0 0.25em; }
+
+footer { border-top: 1px solid var(--border); }
+footer .foot { max-width: var(--maxw); margin: 0 auto; padding: 1.5rem var(--pad); color: var(--text-muted); font-size: 0.85rem; }

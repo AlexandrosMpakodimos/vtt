@@ -527,6 +527,8 @@ function evalApp(window, beforeBoot) {
     document.getElementById('profileBtn').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
     await wait(15);
     t('account modal opens', document.getElementById('profileDialog').open === true);
+    t('the account dialog links the privacy notice (what is kept, how deletion works)',
+      !!document.querySelector('#profileDialog a[href="/privacy.html"]'));
     // #2: nothing pre-selected — no input is the active element on open.
     t('opens with no field focused', !document.activeElement || document.activeElement.tagName !== 'INPUT');
     // Focus lands on the (focusable) heading, never the close ✕ — otherwise
