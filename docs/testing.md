@@ -57,6 +57,26 @@ again on the test database; the schema after `down` matches the 26-migration
 schema (`pg_dump -s`) except that the four re-created columns come last in their
 tables, as any re-added column does.
 
+Account deletion (Fix 4, `POST /api/auth/delete-account`, no migration), run
+in the development container against PostgreSQL 16 (the owner's macOS run on
+PostgreSQL 17 is still to be recorded): `test:all` 95 suites (47 unit,
+39 integration, 9 adversarial), 4,890 assertions, 0 failures (unit 2,540 ·
+DB 1,863 · security 487). New suite `test-account-deletion.js` (84): the
+refusals (not signed in, cross-origin, missing/non-string/wrong/over-length
+password), the per-account rate limit (5 per 15 minutes, 429 even with the
+right password, another account unaffected), the owner of a live campaign
+refused with the list and nothing changed, then a full deletion (user, every
+session, memberships, e-mail and reset tokens gone; chat line, character, token
+and image in another GM's campaign kept with the link NULL and the old speaker
+name; two open sockets cut off and unable to reconnect; the GM's room told), the
+avatar and the soft-deleted campaign's image queued with their verified bytes
+moved to cleanup debt and then released by the worker, no response carrying
+`password_hash`, and two real 40001 conflicts retried by the shared backoff (a
+campaign transferred to the user mid-deletion is refused on the retry; a
+concurrent ledger write is retried and the bytes move once). It saves and
+restores the `storage_budget` row and leaves no stored assets or cleanup rows.
+`test-dashboard-ui.js` gains 29 checks for the Delete account section.
+
 The earlier owner-reported full macOS run, immediately before frontend organization:
 
 | Group | Suites | Assertions |
@@ -75,7 +95,7 @@ Earlier audit results remain [historical evidence](history/authorization-audit.m
 
 The authoritative registration and order are the `UNIT`, `DB`, and `SEC` arrays
 in `tests/suites.js`. They are explicit lists, not automatic discovery, and
-currently register 47 / 38 / 9 suites. The 70-suite record above predates the
+currently register 47 / 39 / 9 suites. The 70-suite record above predates the
 suites added since then. All original suite entries retain their relative order.
 
 Suites live in `tests/unit/`, `tests/integration/`, and `tests/security/`.

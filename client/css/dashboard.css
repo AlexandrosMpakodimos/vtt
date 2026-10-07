@@ -447,6 +447,12 @@
     }
     .idcard-edit input:focus-visible { border-color: var(--accent); outline: 2px solid var(--focus); outline-offset: 1px; }
     .idcard-edit .help { font-size: 0.78rem; color: var(--text-muted); }
+    /* Delete account (Fix 4): the games still owned, each with a way to its
+       Manage panel, where Make owner and Delete live. */
+    .del-owned { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.35rem; }
+    .del-owned li { display: flex; align-items: center; gap: 0.6rem; }
+    .del-owned .del-owned-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .del-actions { display: flex; justify-content: flex-end; }
 
     .idcard-status { margin: 1rem 0 0; min-height: 1.2rem; font-size: 0.88rem; }
     .idcard-status:empty { margin: 0; min-height: 0; }

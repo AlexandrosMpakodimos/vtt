@@ -9,6 +9,8 @@ const { isPasswordBreached } = require('../services/breachedPassword');
 const { sendVerificationEmail, sendPasswordResetEmail, sendEmailChangeEmail } = require('../services/mailer');
 const { requireAuth } = require('../middleware/auth');
 const { membershipChanged } = require('../socket/notify');
+const { deleteAccountLimiter } = require('../middleware/rateLimit');
+const { deleteAccount } = require('../services/accountDeletion');
 
 const router = express.Router();
 
@@ -434,6 +436,66 @@ router.post('/change-password', requireAuth, async (req, res, next) => {
     req.app.get('campaignSockets')?.disconnectSessions(revoked.map(session => session.sid));
 
     return res.json({ ok: true, message: 'Password changed. Other sessions have been logged out.' });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// POST /api/auth/delete-account — permanently delete the signed-in account.
+// [ADDED 2026-10-07, Fix 4] Plan "Account deletion: DECIDED 2026-10-05".
+// verifyOrigin covers it through the /api/auth mount in server.js; the limiter
+// runs after requireAuth because it is keyed by account. The body is the
+// current password, re-verified exactly as /change-password does (400 and the
+// same message when it is wrong or missing). The work itself, and what is kept,
+// is described in src/services/accountDeletion.js.
+router.post('/delete-account', requireAuth, deleteAccountLimiter, async (req, res, next) => {
+  try {
+    const { currentPassword } = req.body || {};
+    if (typeof currentPassword !== 'string' || currentPassword === '') {
+      return res.status(400).json({ error: 'currentPassword is required' });
+    }
+    const row = await knex('users').where({ id: req.user.id }).first('id', 'password_hash');
+    // No real password is longer than 64 characters (validatePassword), so a
+    // longer one is wrong without spending an Argon2id verification on it.
+    const ok = row && currentPassword.length <= 64
+      && (await verifyPassword(row.password_hash, currentPassword));
+    if (!ok) return res.status(400).json({ error: 'current password is incorrect' });
+
+    const result = await deleteAccount({
+      userId: req.user.id, expectedHash: row.password_hash, destroySessions: destroyUserSessions,
+    });
+    if (result.outcome === 'changed') {
+      return res.status(409).json({ error: 'Your password changed during this request. Please sign in again.' });
+    }
+    if (result.outcome === 'owns_campaigns') {
+      return res.status(409).json({
+        error: 'You own games that are not deleted. Transfer each one to another player or delete it first.',
+        code: 'owns_campaigns',
+        campaigns: result.campaigns.map((c) => ({ id: c.id, name: c.name })),
+      });
+    }
+    if (result.outcome === 'upload_in_progress') {
+      return res.status(409).json({
+        error: 'An image upload is still in progress. Try again in a few minutes.',
+        code: 'upload_in_progress',
+      });
+    }
+
+    // Committed. Cut off every open socket of this account now (each would
+    // also fail its next session check, as its session row is gone), and tell
+    // the rooms and dashboards whose rosters lost a member.
+    req.app.get('campaignSockets')?.disconnectSessions(result.sessionIds);
+    for (const campaignId of result.memberOf) membershipChanged(req, campaignId, req.user.id);
+
+    // This request's session row was deleted with the others; destroying the
+    // in-memory session stops express-session from saving it again.
+    return new Promise((resolve) => {
+      req.session.destroy(() => {
+        res.clearCookie('connect.sid');
+        res.status(204).end();
+        resolve();
+      });
+    });
   } catch (err) {
     return next(err);
   }

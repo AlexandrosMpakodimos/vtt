@@ -35,11 +35,71 @@
 // a database transaction is slow and cannot be rolled back. The queue is the
 // mechanism that already guarantees "deleted, then released, exactly once".
 //
-// Personal images (avatars: campaign_id IS NULL) are never touched.
+// Personal images (avatars: campaign_id IS NULL) are never touched by the
+// hourly purge. Steps 2-5 can also be run for explicit campaign ids
+// (purgeCampaignsIn); account deletion uses that, and queueDeletedAssetsIn for
+// the deleting user's avatars (Fix 4, 2026-10-07).
 
 const knex = require('../db');
 const budget = require('./storageBudget');
 const { SOFT_DELETE_DAYS } = require('./campaigns/constants');
+
+// The columns a deleted asset row must hand back so its object can be queued.
+const QUEUE_COLUMNS = ['id', 'storage_key', 'bytes', 'bytes_verified', 'reserved_bytes'];
+
+// Steps 3-4 for asset rows the caller has just deleted (RETURNING
+// QUEUE_COLUMNS), inside the caller's SERIALIZABLE transaction. Shared with
+// account deletion (src/services/accountDeletion.js), which hands the same
+// rows over for a user's avatars. Returns how many objects were queued.
+async function queueDeletedAssetsIn(trx, assets, reason) {
+  if (assets.length === 0) return 0;
+  const ledger = await trx('storage_budget').where({ id: true }).first();
+  const ledgerActive = !!ledger && budget.isInitialised(ledger);
+
+  let queued = 0;
+  for (const asset of assets) {
+    // A pending upload's reservation (bigint: node-pg returns a string).
+    const reserved = Number(asset.reserved_bytes);
+    if (ledgerActive && reserved > 0) {
+      // eslint-disable-next-line no-await-in-loop
+      await budget.releaseReservedBytesIn(trx, reserved);
+    }
+    if (!asset.storage_key) continue;   // an external link: nothing stored
+
+    // The same rule as the single-image DELETE: only verified sizes are
+    // committed bytes. Anything else is queued with an unknown size.
+    let queuedBytes = null;
+    const committed = (asset.bytes_verified && Number.isInteger(asset.bytes) && asset.bytes > 0)
+      ? asset.bytes : null;
+    if (ledgerActive && committed) {
+      // eslint-disable-next-line no-await-in-loop
+      const { movedToDebt } = await budget.moveToCleanupDebtIn(trx, committed);
+      queuedBytes = movedToDebt > 0 ? movedToDebt : null;
+    }
+    // eslint-disable-next-line no-await-in-loop
+    await trx('storage_cleanup').insert({
+      storage_key: asset.storage_key,
+      bytes: queuedBytes,
+      reason,
+    });
+    queued += 1;
+  }
+  return queued;
+}
+
+// Steps 2-5 for explicit campaign ids, inside the caller's SERIALIZABLE
+// transaction. The hourly purge passes the expired campaigns; account deletion
+// passes the deleting user's soft-deleted campaigns (whatever their age).
+async function purgeCampaignsIn(trx, ids) {
+  if (ids.length === 0) return { campaigns: 0, assets: 0, queued: 0 };
+  const assets = await trx('assets')
+    .whereIn('campaign_id', ids)
+    .del()
+    .returning(QUEUE_COLUMNS);
+  const queued = await queueDeletedAssetsIn(trx, assets, 'campaign_purged');
+  const campaigns = await trx('campaigns').whereIn('id', ids).del();
+  return { campaigns, assets: assets.length, queued };
+}
 
 async function purgeExpiredCampaigns() {
   return budget.inSerializable(async (trx) => {
@@ -47,49 +107,8 @@ async function purgeExpiredCampaigns() {
       .whereNotNull('deleted_at')
       .whereRaw(`deleted_at < now() - interval '${SOFT_DELETE_DAYS} days'`)
       .select('id');
-    if (expired.length === 0) return { campaigns: 0, assets: 0, queued: 0 };
-    const ids = expired.map((c) => c.id);
-
-    const assets = await trx('assets')
-      .whereIn('campaign_id', ids)
-      .del()
-      .returning(['id', 'storage_key', 'bytes', 'bytes_verified', 'reserved_bytes']);
-
-    const ledger = await trx('storage_budget').where({ id: true }).first();
-    const ledgerActive = !!ledger && budget.isInitialised(ledger);
-
-    let queued = 0;
-    for (const asset of assets) {
-      // A pending upload's reservation (bigint: node-pg returns a string).
-      const reserved = Number(asset.reserved_bytes);
-      if (ledgerActive && reserved > 0) {
-        // eslint-disable-next-line no-await-in-loop
-        await budget.releaseReservedBytesIn(trx, reserved);
-      }
-      if (!asset.storage_key) continue;   // an external link: nothing stored
-
-      // The same rule as the single-image DELETE: only verified sizes are
-      // committed bytes. Anything else is queued with an unknown size.
-      let queuedBytes = null;
-      const committed = (asset.bytes_verified && Number.isInteger(asset.bytes) && asset.bytes > 0)
-        ? asset.bytes : null;
-      if (ledgerActive && committed) {
-        // eslint-disable-next-line no-await-in-loop
-        const { movedToDebt } = await budget.moveToCleanupDebtIn(trx, committed);
-        queuedBytes = movedToDebt > 0 ? movedToDebt : null;
-      }
-      // eslint-disable-next-line no-await-in-loop
-      await trx('storage_cleanup').insert({
-        storage_key: asset.storage_key,
-        bytes: queuedBytes,
-        reason: 'campaign_purged',
-      });
-      queued += 1;
-    }
-
-    const campaigns = await trx('campaigns').whereIn('id', ids).del();
-    return { campaigns, assets: assets.length, queued };
+    return purgeCampaignsIn(trx, expired.map((c) => c.id));
   });
 }
 
-module.exports = { purgeExpiredCampaigns };
+module.exports = { purgeExpiredCampaigns, purgeCampaignsIn, queueDeletedAssetsIn, QUEUE_COLUMNS };

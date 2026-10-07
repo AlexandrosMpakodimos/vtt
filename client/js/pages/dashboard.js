@@ -1511,6 +1511,10 @@
     // Email / password: Change toggles the revealed inputs.
     wireRevealToggle('pfEmailBtn', 'pfEmailEdit', 'emNew');
     wireRevealToggle('pfPasswordBtn', 'pfPasswordEdit', 'pwCurrent');
+    // Delete account: same reveal, but its own button and confirmation; it
+    // never marks the card dirty and never goes through Save.
+    wireRevealToggle('pfDeleteBtn', 'pfDeleteEdit', 'delPassword');
+    on('delConfirmBtn', 'click', function () { requestDeleteAccount(); });
 
     // Photo: click the framed image to open the image picker directly. The
     // chosen URL is written to the hidden avatar input, which marks the card
@@ -1576,7 +1580,7 @@
       var ed = $(editId), btn = $(btnId);
       if (!ed) return;
       var open = !ed.hasAttribute('hidden');
-      var which = (editId === 'pfEmailEdit') ? 'email' : 'password';
+      var which = editorFor(editId);
       C.animateResize(pfCard(), function () {
         if (open) {
           // Closing without saving: clear this editor's fields.
@@ -1624,8 +1628,14 @@
   var PF_EDITORS = {
     name: { edit: null, btn: 'pfUsernameBtn' },     // in-place
     email: { edit: 'pfEmailEdit', btn: 'pfEmailBtn' },
-    password: { edit: 'pfPasswordEdit', btn: 'pfPasswordBtn' }
+    password: { edit: 'pfPasswordEdit', btn: 'pfPasswordBtn' },
+    del: { edit: 'pfDeleteEdit', btn: 'pfDeleteBtn', label: 'Delete…' }
   };
+  function editorFor(editId) {
+    var keys = Object.keys(PF_EDITORS);
+    for (var i = 0; i < keys.length; i++) if (PF_EDITORS[keys[i]].edit === editId) return keys[i];
+    return null;
+  }
   function pfEditorOpen(which) {
     if (which === 'name') return $('pfNameInput') && !$('pfNameInput').hasAttribute('hidden');
     var e = $(PF_EDITORS[which].edit); return e && !e.hasAttribute('hidden');
@@ -1640,10 +1650,11 @@
     } else {
       var ed = $(PF_EDITORS[which].edit), b = $(PF_EDITORS[which].btn);
       if (ed) ed.setAttribute('hidden', '');
-      if (b) { b.classList.remove('active'); b.textContent = 'Change'; }
+      if (b) { b.classList.remove('active'); b.textContent = PF_EDITORS[which].label || 'Change'; }
       // Clear the abandoned fields + any per-editor status.
       if (which === 'email') { ['emNew', 'emPassword'].forEach(function (id) { var e = $(id); if (e) e.value = ''; }); setText('emStatus', ''); }
       if (which === 'password') { ['pwCurrent', 'pwNew'].forEach(function (id) { var e = $(id); if (e) e.value = ''; }); setText('pwStatus', ''); }
+      if (which === 'del') clearDeleteAccount();
     }
   }
   function closeOtherEditors(keep) {
@@ -1724,11 +1735,12 @@
     if (ni) ni.setAttribute('hidden', ''); if (nt) nt.removeAttribute('hidden');
     if (nh) nh.setAttribute('hidden', ''); if (nb) { nb.classList.remove('active'); nb.textContent = 'Change'; }
     // Email / password / avatar: collapse reveals + reset their Change buttons.
-    [['pfEmailEdit', 'pfEmailBtn'], ['pfPasswordEdit', 'pfPasswordBtn']].forEach(function (pair) {
+    [['pfEmailEdit', 'pfEmailBtn'], ['pfPasswordEdit', 'pfPasswordBtn'], ['pfDeleteEdit', 'pfDeleteBtn']].forEach(function (pair) {
       var e = $(pair[0]), b = $(pair[1]);
       if (e) e.setAttribute('hidden', '');
-      if (b) { b.classList.remove('active'); b.textContent = 'Change'; }
+      if (b) { b.classList.remove('active'); b.textContent = PF_EDITORS[editorFor(pair[0])].label || 'Change'; }
     });
+    clearDeleteAccount();
     // Avatar: revert the hidden input + portrait + framing to the saved value.
     if ($('pfAvatarInput')) $('pfAvatarInput').value = (me && me.avatar_url) || '';
     pfFrame = {
@@ -1812,6 +1824,72 @@
         if (done) done(!anyErr);
       });
     });
+  }
+
+  // ── Delete account (Fix 4) ─────────────────────────────────────────────────
+  // POST /api/auth/delete-account with the current password. 204: the account
+  // and every session are gone, so leave for the landing page. 409 with
+  // code owns_campaigns: list the games still owned, each with a button to its
+  // Manage panel (Make owner / Delete live there). Everything via textContent.
+  function clearDeleteAccount() {
+    var pw = $('delPassword'); if (pw) pw.value = '';
+    setText('delStatus', '');
+    var list = $('delOwned');
+    if (list) { while (list.firstChild) list.removeChild(list.firstChild); list.setAttribute('hidden', ''); }
+  }
+
+  function renderOwnedGames(campaigns) {
+    var list = $('delOwned');
+    if (!list) return;
+    while (list.firstChild) list.removeChild(list.firstChild);
+    campaigns.forEach(function (c) {
+      if (!c || typeof c.id !== 'string') return;
+      var li = document.createElement('li');
+      var name = document.createElement('span');
+      name.className = 'del-owned-name';
+      name.textContent = typeof c.name === 'string' ? c.name : '';
+      var go = document.createElement('button');
+      go.type = 'button';
+      go.className = 'btn secondary small';
+      go.textContent = 'Manage';
+      go.setAttribute('aria-label', 'Manage ' + name.textContent);
+      go.addEventListener('click', function () {
+        // Close the account card (through the unsaved-changes guard), then open
+        // that game's panel if its card is on screen.
+        requestCloseProfile(function () {
+          C.closeDialog($('profileDialog'));
+          expandCardById(c.id);
+        });
+      });
+      li.appendChild(name); li.appendChild(go);
+      list.appendChild(li);
+    });
+    if (list.firstChild) list.removeAttribute('hidden'); else list.setAttribute('hidden', '');
+  }
+
+  function requestDeleteAccount() {
+    var pwEl = $('delPassword');
+    var pw = pwEl ? pwEl.value : '';
+    var list = $('delOwned');
+    if (list) { while (list.firstChild) list.removeChild(list.firstChild); list.setAttribute('hidden', ''); }
+    if (!pw) { setText('delStatus', 'Please enter your current password to delete your account.'); return; }
+    setText('delStatus', '');
+    confirmThen(
+      'Delete your account?',
+      'This cannot be undone. Your sign-in, memberships and avatar are removed. Your chat lines, characters, tokens and images in other people’s games stay, no longer linked to you.',
+      true,
+      function () {
+        withPending($('delConfirmBtn'), function () {
+          return api('POST', '/api/auth/delete-account', { currentPassword: pw }).then(function (r) {
+            if (r.status === 204) { C.navigate('/'); return; }
+            setText('delStatus', serverError(r));
+            if (r.status === 409 && r.data && r.data.code === 'owns_campaigns' && Array.isArray(r.data.campaigns)) {
+              renderOwnedGames(r.data.campaigns);
+            }
+          }).catch(function () { setText('delStatus', NETWORK_ERROR); });
+        });
+      }
+    );
   }
 
   // Guard the profile dialog's close paths (Esc / backdrop / ✕) when dirty.

@@ -393,6 +393,26 @@
             </div>
           </div>
 
+          <!-- Delete account (Fix 4). Not part of Save: it has its own button
+               and its own confirmation, and nothing here marks the card dirty. -->
+          <div class="idcard-row">
+            <span class="idcard-label">Account</span>
+            <div class="idcard-line">
+              <span class="idcard-value-text">Delete this account</span>
+              <button class="idcard-change" id="pfDeleteBtn" type="button">Delete&hellip;</button>
+            </div>
+            <div class="idcard-edit" id="pfDeleteEdit" hidden>
+              <span class="help" id="delWhatHelp">Deleting your account cannot be undone. It removes your sign-in, your memberships, your avatar and any of your own games waiting in Recently deleted. If you still own a game, transfer it to another player or delete it first.</span>
+              <span class="help" id="delKeptHelp">What stays in other people&rsquo;s games: your chat lines, still under the name you used; your characters, left unassigned; and the tokens and images you added.</span>
+              <input id="delPassword" type="password" autocomplete="current-password" placeholder="Current password" aria-label="Current password to confirm account deletion" aria-describedby="delWhatHelp delKeptHelp">
+              <p class="status" id="delStatus" role="status" aria-live="polite"></p>
+              <ul class="del-owned" id="delOwned" aria-label="Games you still own" hidden></ul>
+              <div class="del-actions">
+                <button class="btn danger small" id="delConfirmBtn" type="button">Delete my account</button>
+              </div>
+            </div>
+          </div>
+
         </div>
       </div>
 
