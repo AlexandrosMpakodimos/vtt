@@ -368,7 +368,6 @@
     .feature-list li { border-left: 2px solid var(--rule); padding: 0.2rem 0 0.2rem 1.1rem; }
     .feature-list h3 { margin: 0 0 0.4rem; font-size: 1.05rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text); }
     .feature-list p { margin: 0; color: var(--text-muted); }
-    .todo { color: var(--text-muted); font-style: italic; }
 
     footer { border-top: 1px solid var(--border); background: var(--surface); }
     footer .foot { max-width: var(--maxw); margin: 0 auto; padding: 2rem var(--pad); color: var(--text-muted); font-size: 0.85rem; }
@@ -418,6 +417,10 @@
       100% { opacity: 1; transform: none; }
     }
     @media (prefers-reduced-motion: reduce) { .status.flash { animation: none; } }
+    /* Text for screen readers only (e.g. "opens in a new tab"). */
+    .visually-hidden { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+    .card-note { margin: 0 0 0.6rem; font-size: 0.875rem; color: var(--text-muted); }
+    .card-note a { text-decoration: underline; text-underline-offset: 2px; }
     .card-footer { margin-top: 0.6rem; font-size: 0.88rem; color: var(--text-muted); }
     .switch-face {
       font: inherit; background: none; border: none; color: var(--link);

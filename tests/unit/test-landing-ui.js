@@ -350,6 +350,44 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     !/<script(?![^>]*\ssrc=)[^>]*>/.test(htmlSrc));
   t('index.html has no on<event>= handler attribute', !/\son[a-z]+=/.test(htmlSrc));
 
+  // ── Privacy notice (GDPR Art. 13), 2026-10-07 ─────────────────────────────
+  {
+    const pv = fs.readFileSync(rootPath('client/privacy.html'), 'utf8');
+    const d = new JSDOM(htmlSrc).window.document;
+    t('privacy: the landing footer links the notice', !!d.querySelector('footer a[href="/privacy.html"]'));
+    t('privacy: the sign-up form links the notice (point of collection)', !!d.querySelector('#formSignup a[href="/privacy.html"]'));
+    t('privacy: no [TODO] placeholder is shipped on the landing', !/\[TODO/i.test(htmlSrc));
+    t('privacy: the notice has no [TODO], no inline script, no on<event>=',
+      !/\[TODO/i.test(pv) && !/<script(?![^>]*\ssrc=)[^>]*>/.test(pv) && !/\son[a-z]+=/.test(pv));
+    const pd = new JSDOM(pv).window.document;
+    t('privacy: lang, one h1, a main landmark and the contact address',
+      pd.documentElement.lang === 'en' && pd.querySelectorAll('h1').length === 1 && !!pd.querySelector('main')
+      && !!pd.querySelector('a[href="mailto:support@trucksart.com"]'));
+    // Retention stated in the notice = the values in the code.
+    const serverSrc = fs.readFileSync(rootPath('src/server.js'), 'utf8');
+    const authSrc = fs.readFileSync(rootPath('src/routes/auth.js'), 'utf8');
+    const constSrc = fs.readFileSync(rootPath('src/services/campaigns/constants.js'), 'utf8');
+    t('privacy: the 7-day sign-in matches the session cookie maxAge',
+      /maxAge: 1000 \* 60 \* 60 \* 24 \* 7\b/.test(serverSrc) && /Sign-in: 7 days/.test(pv) && /keeps you signed in for 7 days/.test(pv));
+    t('privacy: 24-hour verification and 1-hour reset/e-mail-change links match the code',
+      /interval '24 hours'/.test(authSrc) && /interval '1 hour'/.test(authSrc)
+      && /verification 24 hours/.test(pv) && /e-mail change 1 hour/.test(pv));
+    t('privacy: the 30-day Recently deleted window matches SOFT_DELETE_DAYS',
+      /SOFT_DELETE_DAYS\s*=\s*30\b/.test(constSrc) && /30 days in Recently deleted/.test(pv));
+    // Every local-storage key the browser code uses is one the notice describes.
+    const jsFiles = [];
+    (function walk(dir) {
+      for (const e of fs.readdirSync(rootPath(dir), { withFileTypes: true })) {
+        if (e.isDirectory()) walk(dir + '/' + e.name); else if (e.name.endsWith('.js')) jsFiles.push(dir + '/' + e.name);
+      }
+    })('client/js');
+    const keys = new Set();
+    for (const f of jsFiles) for (const m of fs.readFileSync(rootPath(f), 'utf8').matchAll(/['`](vtt\.[a-zA-Z]+)/g)) keys.add(m[1]);
+    t('privacy: the browser stores only the keys the notice describes (theme, dice colours, speaking as)',
+      [...keys].every((k) => ['vtt.theme', 'vtt.dice', 'vtt.speakAs'].includes(k)) && /theme, dice colours and last "speaking as"/.test(pv),
+      [...keys].join(', '));
+  }
+
   // Theme-aware hero art with crossfade. Two overlays (night on ::before, day on
   // ::after) so transparent mid/front layers don't leak the other theme through
   // clear pixels — but WITHOUT will-change on them (that promotion caused Chrome's
