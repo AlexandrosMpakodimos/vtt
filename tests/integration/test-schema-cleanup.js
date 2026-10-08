@@ -310,10 +310,11 @@ function probe(name, expected, build) {
     after2 && after2.img_url.endsWith('/goblin-wounded.png') && after2.img_scale === 2, JSON.stringify(after2));
 
   // ------------------------------------------------- 4. ping bound (socket)
-  // scene:ping bounds x/y to the scene. It used to read scenes.width/height;
-  // with those dropped it must use the server constants, or the bound would
-  // silently become NaN and accept any coordinate.
-  console.log('\n--- scene:ping is still bounded to the 1400x1050 canvas ---');
+  // scene:ping is bounded. It used to read scenes.width/height; with those
+  // dropped, a NaN bound would silently accept any coordinate. Since
+  // 2026-10-08 the bound is the token/fog one (-10000..10000 squares), so a
+  // ping reaches every part of a map picture larger than the scene box.
+  console.log('\n--- scene:ping is bounded like tokens and fog (-10000..10000) ---');
   const sock = io(BASE, { extraHeaders: { Cookie: gm.cookie }, transports: ['websocket'], forceNew: true });
   await new Promise((res, rej) => {
     sock.on('connect', res); sock.on('connect_error', rej);
@@ -324,14 +325,20 @@ function probe(name, expected, build) {
   });
   await emitAck('campaign:join', { campaign_id: camp.id });
   const ping = (x, y) => emitAck('scene:ping', { campaign_id: camp.id, scene_id: scene.id, x, y });
-  // 1400/50 = 28 columns, 1050/50 = 21 rows; one square of slack either side.
   const inside = await ping(28, 21);
-  t('a ping on the far corner square is accepted', inside && inside.ok === true, JSON.stringify(inside));
-  const outX = await ping(30, 1);
-  t('a ping past the right edge is refused', outX && outX.ok === false && /outside/.test(outX.error), JSON.stringify(outX));
-  const outY = await ping(1, 23);
-  t('a ping past the bottom edge is refused', outY && outY.ok === false && /outside/.test(outY.error), JSON.stringify(outY));
-  const far = await ping(5000, 5000);
+  t('a ping on the scene box corner square is accepted', inside && inside.ok === true, JSON.stringify(inside));
+  // Past the old 28x21 box: the grid pad and a large map picture.
+  const pastX = await ping(45, 1);
+  t('a ping past the scene box (on a larger map) is accepted', pastX && pastX.ok === true, JSON.stringify(pastX));
+  const pad = await ping(-20, 40);
+  t('a ping on the grid pad is accepted', pad && pad.ok === true, JSON.stringify(pad));
+  const edge = await ping(10000, -10000);
+  t('a ping on the bound itself is accepted', edge && edge.ok === true, JSON.stringify(edge));
+  const outX = await ping(10001, 1);
+  t('a ping past the bound is refused', outX && outX.ok === false && /outside/.test(outX.error), JSON.stringify(outX));
+  const outY = await ping(1, -10001);
+  t('a ping past the negative bound is refused', outY && outY.ok === false && /outside/.test(outY.error), JSON.stringify(outY));
+  const far = await ping(1e9, 1e9);
   t('a far-away ping is refused (the bound is not NaN)', far && far.ok === false, JSON.stringify(far));
   sock.close();
 

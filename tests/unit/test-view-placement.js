@@ -204,12 +204,20 @@ window.eval(fs.readFileSync(rootPath('client/js/shared/common.js'), 'utf8') + '\
   }
   __check('a focus ping lands its point exactly at the viewport centre — middle, edges, corners — at every zoom',
     off.length === 0, off.join(' | '));
-  // The server accepts pings up to one square outside the scene; at FOCUS_ZOOM
-  // those centre exactly too.
+  // A ping one square outside the scene centres exactly at FOCUS_ZOOM too.
   setV(0, 0, 1);
   showPing({ scene_id: 'S', x: -1, y: -1, color: '#fff', focus: true, zoom: FOCUS_ZOOM });
   __check('...including a ping one square outside the scene at FOCUS_ZOOM',
     near(view.x - 1 * GRID_PX * 2, 300) && near(view.y - 1 * GRID_PX * 2, 200), view.x + ',' + view.y);
+  // [2026-10-08] The server's ping bound is now the token/fog one (±10000
+  // squares). A focus ping at its corner must still leave the map on screen:
+  // the clamp, not the server bound, is what keeps every view on the map.
+  for (const [fx, fy] of [[10000, 10000], [-10000, -10000], [10000, -10000]]) {
+    setV(0, 0, 1);
+    showPing({ scene_id: 'S', x: fx, y: fy, color: '#fff', focus: true, zoom: FOCUS_ZOOM });
+    __check('a focus ping at the bound (' + fx + ',' + fy + ') still leaves 15% of the map on screen',
+      overlapX() >= 0.15 * VW - 1e-6 && overlapY() >= 0.15 * VH - 1e-6, overlapX() + ' x ' + overlapY());
+  }
   // The GM's own ping still carries max(own zoom, FOCUS_ZOOM).
   setV(0, 0, 1); window.__emits.length = 0;
   sendPing(3, 4, true);

@@ -334,7 +334,7 @@ router.post('/', requireOwner, async (req, res, next) => {
         table: 'scenes',
         where: { campaign_id: req.campaign.id },
         max: MAX_SCENES_PER_CAMPAIGN,
-        capMessage: `a campaign may hold at most ${MAX_SCENES_PER_CAMPAIGN} scenes`,
+        capMessage: `A campaign may hold at most ${MAX_SCENES_PER_CAMPAIGN} scenes`,
         insert: {
           campaign_id: req.campaign.id,
           name: n.value,
@@ -815,7 +815,7 @@ router.post('/:sceneId/tokens', requireMember, async (req, res, next) => {
           table: 'tokens',
           where: { scene_id: scene.id },
           max: MAX_TOKENS_PER_SCENE,
-          capMessage: `a scene may hold at most ${MAX_TOKENS_PER_SCENE} tokens`,
+          capMessage: `A scene may hold at most ${MAX_TOKENS_PER_SCENE} tokens`,
           insert: insertRow,
         });
         token = rows[0];
@@ -1295,7 +1295,7 @@ router.post('/:sceneId/tokens/copy', requireOwner, async (req, res, next) => {
         table: 'tokens',
         where: { scene_id: scene.id },
         max: MAX_TOKENS_PER_SCENE,
-        capMessage: `a scene may hold at most ${MAX_TOKENS_PER_SCENE} tokens`,
+        capMessage: `A scene may hold at most ${MAX_TOKENS_PER_SCENE} tokens`,
         insert: rows,
       });
     } catch (err) {
@@ -1392,7 +1392,7 @@ router.post('/:sceneId/fog', requireOwner, async (req, res, next) => {
         table: 'fog_of_war',
         where: { scene_id: scene.id },
         max: MAX_FOG_REGIONS_PER_SCENE,
-        capMessage: `a scene may hold at most ${MAX_FOG_REGIONS_PER_SCENE} fog regions`,
+        capMessage: `A scene may hold at most ${MAX_FOG_REGIONS_PER_SCENE} fog regions`,
         insert: {
           scene_id: scene.id,
           type: type.value,
@@ -1593,7 +1593,7 @@ router.post('/:sceneId/fog/copy', requireOwner, async (req, res, next) => {
         table: 'fog_of_war',
         where: { scene_id: scene.id },
         max: MAX_FOG_REGIONS_PER_SCENE,
-        capMessage: `a scene may hold at most ${MAX_FOG_REGIONS_PER_SCENE} fog regions`,
+        capMessage: `A scene may hold at most ${MAX_FOG_REGIONS_PER_SCENE} fog regions`,
         insert: rows,
       });
     } catch (err) {

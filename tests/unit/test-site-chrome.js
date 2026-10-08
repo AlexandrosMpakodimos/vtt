@@ -4,8 +4,8 @@ const { formFieldProblems } = require('../helpers/formfields');
 //   node tests/unit/test-site-chrome.js
 //
 // 1. The privacy page header: the landing's theme toggle, and account buttons
-//    that follow the session (signed out: Sign up + Log in; signed in: Your
-//    games), driven by the REAL privacy.html + theme.js + common.js + privacy.js.
+//    that follow the session (signed out: Sign up + Log in; signed in:
+//    Dashboard), driven by the REAL privacy.html + theme.js + common.js + privacy.js.
 // 2. The landing's deep links /#signup and /#login open the matching form for a
 //    signed-out visitor only (REAL index.html + landing.js).
 // 3. The account dialog's bin uses the app's standard delete-button style.
@@ -13,6 +13,8 @@ const { formFieldProblems } = require('../helpers/formfields');
 //    tokens only, the focus ring untouched, and every top-right control on the
 //    four pages is one the rule selects.
 // 5. The theme toggle has no colour transition (the Safari fix).
+// 6. Follow-ups: one toggle icon on all four pages, the privacy page's theme
+//    crossfade, and the wordmark light-up on every linked wordmark.
 
 const { JSDOM } = require('jsdom');
 const fs = require('fs');
@@ -92,12 +94,12 @@ const visible = (el) => !!el && !el.hasAttribute('hidden');
     const $ = (id) => document.getElementById(id);
     const actions = document.querySelector('header.site-header > .header-actions');
     t('privacy: the header has a .header-actions group (as the landing)', !!actions);
-    t('privacy: the toggle, Sign up, Log in and Your games sit in that group, in the landing\'s order',
+    t('privacy: the toggle, Sign up, Log in and Dashboard sit in that group, in the landing\'s order',
       actions && ['themeToggle', 'headerSignup', 'headerLogin', 'headerDash'].every((id, i) => actions.children[i] && actions.children[i].id === id));
     t('privacy: the session is checked with GET /api/auth/me (as the landing)',
       calls.some((c) => c.path === '/api/auth/me' && c.method === 'GET'));
     t('privacy signed out: Sign up and Log in are shown', visible($('headerSignup')) && visible($('headerLogin')));
-    t('privacy signed out: Your games is hidden', !visible($('headerDash')));
+    t('privacy signed out: Dashboard is hidden', !visible($('headerDash')));
     t('privacy: Sign up opens the landing\'s sign-up form (/#signup)', $('headerSignup').getAttribute('href') === '/#signup' && $('headerSignup').textContent.trim() === 'Sign up');
     t('privacy: Log in opens the landing\'s log-in form (/#login)', $('headerLogin').getAttribute('href') === '/#login' && $('headerLogin').textContent.trim() === 'Log in');
     t('privacy: the account controls use the landing\'s button classes (btn secondary)',
@@ -123,8 +125,9 @@ const visible = (el) => !!el && !el.hasAttribute('hidden');
   {
     const { document } = await loadPrivacy('in');
     const $ = (id) => document.getElementById(id);
-    t('privacy signed in: Your games is shown and goes to the dashboard',
-      visible($('headerDash')) && $('headerDash').getAttribute('href') === '/dashboard.html' && $('headerDash').textContent.trim() === 'Your games');
+    t('privacy signed in: Dashboard is shown and goes to the dashboard (same label as the landing)',
+      visible($('headerDash')) && $('headerDash').getAttribute('href') === '/dashboard.html' && $('headerDash').textContent.trim() === 'Dashboard'
+      && new JSDOM(landingHtml).window.document.getElementById('headerDash').textContent.trim() === 'Dashboard');
     t('privacy signed in: Sign up and Log in are hidden', !visible($('headerSignup')) && !visible($('headerLogin')));
   }
   {
@@ -137,7 +140,7 @@ const visible = (el) => !!el && !el.hasAttribute('hidden');
     // With no script at all, the page still offers working links (signed-out
     // markup is the default, as on the landing).
     const d = new JSDOM(pvSrc).window.document;
-    t('privacy: the markup defaults to the signed-out buttons (Your games hidden)',
+    t('privacy: the markup defaults to the signed-out buttons (Dashboard hidden)',
       !d.getElementById('headerSignup').hasAttribute('hidden') && !d.getElementById('headerLogin').hasAttribute('hidden')
       && d.getElementById('headerDash').hasAttribute('hidden'));
     const scripts = [...d.querySelectorAll('script')];
@@ -272,6 +275,73 @@ const visible = (el) => !!el && !el.hasAttribute('hidden');
     }
     t('toggle: game.css keeps the .theme-ready .fx crossfade',
       /\.theme-ready \.fx\s*\{\s*transition: background-color 0\.5s ease, color 0\.5s ease, border-color 0\.5s ease;/.test(read('client/css/game.css')));
+  }
+
+  // ── 6. Follow-ups (2026-10-08) ─────────────────────────────────────────────
+  {
+    // The theme toggle draws the same sun on every page (the landing's): the
+    // dashboard and game drew a smaller one (r 4.5, rays 2..22, thinner stroke).
+    const svgOf = (file) => {
+      const s = new JSDOM(read(file)).window.document.querySelector('#themeToggle svg');
+      return s ? s.outerHTML.replace(/>\s+</g, '><').replace(/\s+/g, ' ') : '';
+    };
+    const ref = svgOf('client/index.html');
+    for (const f of ['client/privacy.html', 'client/dashboard.html', 'client/game.html']) {
+      t(`toggle icon: ${f} draws the landing's sun`, ref && svgOf(f) === ref, svgOf(f));
+    }
+    // All four pages size it with the same recipe: 20 px icon, 0.55rem padding,
+    // 44 px minimum (measured 44 x 44 in Chromium on all four).
+    for (const f of ['client/css/landing.css', 'client/css/privacy.css', 'client/css/dashboard.css']) {
+      const css = read(f);
+      t(`toggle size: ${f} has .btn.icon 0.55rem padding and a 20 px icon`,
+        /\.btn\.icon\s*\{\s*padding:\s*0\.55rem;\s*\}/.test(css) && /\.btn\.icon svg\s*\{\s*width:\s*20px;\s*height:\s*20px;\s*\}/.test(css));
+    }
+  }
+  {
+    // The privacy page crossfades the theme like the landing: same rule, and the
+    // class is added only after the first paint (two frames in).
+    const pvCss = stripComments(read('client/css/privacy.css'));
+    t('privacy crossfade: privacy.css has the landing\'s .theme-ready * rule',
+      /\.theme-ready \*\s*\{\s*transition: background-color 0\.7s ease, color 0\.7s ease, border-color 0\.7s ease;/.test(pvCss));
+    const dom = new JSDOM(read('client/privacy.html'), { runScripts: 'outside-only', url: 'http://localhost:3000/privacy.html' });
+    const w = dom.window;
+    stubMatchMedia(w);
+    const frames = [];
+    w.requestAnimationFrame = (cb) => { frames.push(cb); return frames.length; };
+    stubFetch(w, 'out');
+    w.eval(read('client/js/shared/theme.js'));
+    w.eval(read('client/js/shared/common.js'));
+    w.eval(read('client/js/pages/privacy.js'));
+    await wait(30);
+    const html = w.document.documentElement;
+    t('privacy crossfade: off for the first paint (the stored theme applies at once)', !html.classList.contains('theme-ready'));
+    frames.shift()();
+    t('privacy crossfade: still off after one frame', !html.classList.contains('theme-ready'));
+    frames.shift()();
+    t('privacy crossfade: on from the second frame, so a toggle animates', html.classList.contains('theme-ready'));
+    t('privacy crossfade: the toggle itself keeps no colour transition (the Safari rule covers .site-header)',
+      /:is\(\.site-header, #topBar\) #themeToggle svg \*\s*\{\s*transition:\s*none;/.test(tk));
+  }
+  {
+    // Every wordmark that is a link lights up like the privacy page's: --accent
+    // at rest, --text at once on hover and focus, via text-fill (not `color`,
+    // which carries the crossfade). The landing's wordmark is not a link.
+    const rest = tk.match(/a\.wordmark\s*\{([^}]*)\}/);
+    const lit = tk.match(/a\.wordmark:is\(:hover, :focus-visible\)\s*\{([^}]*)\}/);
+    t('wordmark: shared rule in tokens.css, --accent at rest', !!rest && /color:\s*var\(--accent\)/.test(rest[1]));
+    t('wordmark: hover and keyboard focus show --text through text-fill, with no transition',
+      !!lit && /-webkit-text-fill-color:\s*var\(--text\)/.test(lit[1]) && /color:\s*var\(--accent\)/.test(lit[1]) && !/transition/.test(lit[1]));
+    const links = {
+      'client/privacy.html': ['.site-header > a.wordmark', '/'],
+      'client/dashboard.html': ['.site-header > a.wordmark', '/'],
+      'client/game.html': ['#topBar a.wordmark#barBack', '/dashboard.html'],
+    };
+    for (const [f, [sel, href]] of Object.entries(links)) {
+      const el = new JSDOM(read(f)).window.document.querySelector(sel);
+      t(`wordmark: ${f}'s top-left title is an a.wordmark (selected by the rule)`, !!el && el.getAttribute('href') === href, sel);
+    }
+    t('wordmark: the landing\'s wordmark is plain text (nothing to hover)',
+      new JSDOM(landingHtml).window.document.querySelector('.site-header > .wordmark').tagName === 'SPAN');
   }
 
   console.log(`\n${pass} passed, ${fail} failed`);

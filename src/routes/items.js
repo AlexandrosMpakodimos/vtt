@@ -209,7 +209,7 @@ router.post('/', requireOwner, async (req, res, next) => {
         table: 'items',
         where: { campaign_id: req.campaign.id },
         max: MAX_ITEMS_PER_CAMPAIGN,
-        capMessage: `a campaign may hold at most ${MAX_ITEMS_PER_CAMPAIGN} items`,
+        capMessage: `A campaign may hold at most ${MAX_ITEMS_PER_CAMPAIGN} items`,
         insert: {
           campaign_id: req.campaign.id,
           name: name.value,
