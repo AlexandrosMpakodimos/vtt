@@ -121,7 +121,7 @@ async function whoami() {
   const r = await api('GET', '/api/auth/me');
   me = r.status === 200 ? r.data.user : null;
   document.getElementById('whoami').textContent = me
-    ? `logged in as ${me.username}`
+    ? `Logged in as ${me.username}`
     : 'NOT logged in';
 }
 
@@ -140,10 +140,10 @@ function hpLine(c, token) {
   // A player NEVER sees the purple case: hp_visible false means the key is
   // simply absent from their payload, so `hp_override === undefined` here.
   if (c.hp_override === undefined) {
-    return { text: 'hp —', cls: 'none', frac: null };
+    return { text: 'HP —', cls: 'none', frac: null };
   }
   if (c.hp_override === null) {
-    return { text: 'hp: sheet', cls: 'none', frac: null };
+    return { text: 'HP: sheet', cls: 'none', frac: null };
   }
   const actor = token && token.actor_id ? actorsById.get(token.actor_id) : null;
   // max comes from the SHARED actor: five goblin tokens have five different
@@ -240,7 +240,7 @@ function renderStrip() {
       input.className = 'hp-cur';
       input.value = (c.hp_override === null || c.hp_override === undefined) ? '' : String(c.hp_override);
       input.placeholder = '—';
-      input.title = 'Current HP (this fight) — type to change';
+      input.title = 'Current HP (this fight). Type to change';
       input.setAttribute('aria-label', 'Current HP');
       // Don't start a card drag from inside the input, and don't let clicks
       // bubble to the card's select handler.
@@ -519,7 +519,7 @@ function renderTokens() {
   const box = document.getElementById('tokens');
   box.textContent = '';
   if (!tokens.length) {
-    box.appendChild(el('p', { cls: 'muted', text: 'no tokens on this scene' }));
+    box.appendChild(el('p', { cls: 'muted', text: 'No tokens on this scene' }));
     return;
   }
   const inFight = new Set(combatants.map((c) => c.token_id));
@@ -537,8 +537,8 @@ function renderTokens() {
     }
     const nm = el('span', { cls: 'grow', text: t.name || '(unnamed)' });
     row.appendChild(nm);
-    if (t.hidden) row.appendChild(el('span', { cls: 'tag hidden', text: 'hidden' }));
-    row.appendChild(el('span', { cls: 'muted', text: inFight.has(t.id) ? 'in fight' : '—' }));
+    if (t.hidden) row.appendChild(el('span', { cls: 'tag hidden', text: 'Hidden' }));
+    row.appendChild(el('span', { cls: 'muted', text: inFight.has(t.id) ? 'In fight' : '—' }));
 
     if (isGm) {
       if (combat && combat.active && !inFight.has(t.id)) {
@@ -634,14 +634,14 @@ async function loadCampaign(idArg, reconnect = false) {
   const r = await api('GET', `/api/campaigns/${id}`);
   show('GET campaign', r);
   if (r.status !== 200) {
-    document.getElementById('campaignInfo').textContent = 'could not load that campaign';
+    document.getElementById('campaignInfo').textContent = 'Could not load that campaign';
     return;
   }
   campaign = r.data.campaign;
   isGm = campaign.is_gm === true;
   document.body.classList.toggle('is-gm', isGm);
   document.getElementById('campaignInfo').textContent =
-    `${campaign.name} — you are ${isGm ? 'the GM' : 'a player'}`;
+    `${campaign.name}: you are ${isGm ? 'the GM' : 'a player'}`;
 
   const s = await api('GET', `/api/campaigns/${campaign.id}/scenes`);
   scenes = s.status === 200 ? (s.data.scenes || []) : [];
@@ -761,7 +761,7 @@ function renderWhisperTargets() {
     picker.classList.toggle('is-private', selected.length > 0);
   };
   choices.textContent = '';
-  const reset = el('button', { cls: 'btn small secondary', text: 'Everyone — clear whispers' });
+  const reset = el('button', { cls: 'btn small secondary', text: 'Everyone (clear whispers)' });
   reset.type = 'button';
   reset.addEventListener('click', () => {
     for (const o of sel.options) o.selected = false;
@@ -872,7 +872,7 @@ function renderPalette() {
     const b = document.createElement('button');
     b.style.background = colorForTheme(hex);   // show the variant that will render on this theme
     b.className = (owner && !mine ? 'taken' : '') + (mine ? ' mine' : '');
-    b.title = owner ? (mine ? 'yours' : 'taken') : 'claim this colour';
+    b.title = owner ? (mine ? 'Yours' : 'Taken') : 'Claim this colour';
     if (owner && !mine) {
       b.disabled = true;
     } else {
@@ -967,13 +967,13 @@ function renderPresence() {
     const isOn = onlineUsers.has(m.id);
     const row = el('div', { cls: 'presence-row' + (isOn ? '' : ' offline') });
     row.setAttribute('role', 'listitem');
-    row.setAttribute('aria-label', `${m.name}, ${isOn ? 'connected' : 'offline'}`);
+    row.setAttribute('aria-label', `${m.name}, ${isOn ? 'Connected' : 'Offline'}`);
     const dot = el('span', { cls: 'presence-color' });
     dot.style.background = colorForTheme(m.color);
     row.appendChild(dot);
     row.appendChild(el('span', { cls: 'presence-name', text: m.name + (m.is_gm ? ' (GM)' : '') }));
     const status = el('span', { cls: 'presence-status' + (isOn ? ' on' : '') });
-    status.title = isOn ? 'connected' : 'offline';
+    status.title = isOn ? 'Connected' : 'Offline';
     row.appendChild(status);
     list.appendChild(row);
   }
@@ -1057,7 +1057,7 @@ async function loadScene() {
     // is 404 rather than 403 on purpose — no map enumeration.
     tokens = []; actorsById = new Map(); renderTokens();
     document.getElementById('combatInfo').textContent =
-      `scene not readable (${r.status}) — players only reach the active scene`;
+      `Scene not readable (${r.status}). Players only reach the active scene`;
     return;
   }
   tokens = r.data.tokens || [];
@@ -1083,7 +1083,7 @@ async function loadCombat() {
     }
   }
   document.getElementById('combatInfo').textContent = combat
-    ? `${combat.active ? 'RUNNING' : 'ended'} — ${combatants.length} combatant(s)`
+    ? `${combat.active ? 'RUNNING' : 'Ended'}, ${combatants.length} combatant(s)`
     : `no encounter on this scene${all.length && isGm ? ` (${all.length} elsewhere in this campaign)` : ''}`;
   renderStrip();
   renderTokens();
@@ -1474,7 +1474,7 @@ function removeOneDie(sides) {
 }
 
 for (const b of document.querySelectorAll('.quick')) {
-  b.title = `Add d${b.dataset.sides}; right-click to remove one`;
+  b.title = `Add d${b.dataset.sides}, right-click to remove one`;
   b.addEventListener('contextmenu', (e) => {
     e.preventDefault();
     removeOneDie(Number(b.dataset.sides));
@@ -1511,7 +1511,7 @@ document.getElementById('trayMod').addEventListener('input', renderPool);
   const modEl = document.getElementById('trayMod');
   if (modEl) {
     modEl.addEventListener('focus', () => { modEl.placeholder = ''; });
-    modEl.addEventListener('blur', () => { if (modEl.value === '') modEl.placeholder = 'mod'; });
+    modEl.addEventListener('blur', () => { if (modEl.value === '') modEl.placeholder = 'Mod'; });
   }
 }
 

@@ -264,7 +264,7 @@
         imageUrl: url,
         offsetX: f.offsetX || 0, offsetY: f.offsetY || 0, scale: f.scale > 0 ? f.scale : 1,
         title: st.frameTitle || 'Frame the image',
-        note: st.frameNote || 'Drag to move · scroll to zoom. This is the crop that will be used.',
+        note: st.frameNote || 'Drag to move, scroll to zoom. This is the crop that will be used.',
         onSave: (vals) => {
           const cb = st.onChoose;
           hide();
@@ -300,7 +300,7 @@
     const { grid } = root;
     grid.textContent = '';
     if (!assets.length) {
-      grid.appendChild(el('p', { cls: 'muted', text: 'no images yet — upload one or paste a URL' }));
+      grid.appendChild(el('p', { cls: 'muted', text: 'No images yet. Upload one or paste a URL' }));
       return;
     }
     for (const a of assets) {
@@ -355,7 +355,7 @@
   // middle step does not involve the application at all.
   async function doUpload(fileInput, msg) {
     const f = fileInput.files && fileInput.files[0];
-    if (!f) { msg.textContent = 'choose a file first'; return; }
+    if (!f) { msg.textContent = 'Choose a file first'; return; }
 
     // The controlled upload: the bytes go THROUGH the server, which validates,
     // meters and writes them to storage exactly once — there is no presigned
@@ -365,13 +365,13 @@
     // asset instead of creating a second one.
     const params = new URLSearchParams({ kind: state.kind, mime: f.type });
     if (state.kind !== 'avatar') {
-      if (!state.campaignId) { msg.textContent = 'no campaign loaded'; return; }
+      if (!state.campaignId) { msg.textContent = 'No campaign loaded'; return; }
       params.set('campaign_id', state.campaignId);
     }
     // A stable key for THIS file selection, reused across retries in this call.
     const idem = `${Date.now()}-${Math.random().toString(16).slice(2)}-${f.size}`;
 
-    msg.textContent = 'uploading…';
+    msg.textContent = 'Uploading…';
     let res; let data;
     try {
       res = await fetch(`/api/assets/upload?${params.toString()}`, {
@@ -382,20 +382,20 @@
       });
       data = await res.json().catch(() => ({}));
     } catch (err) {
-      msg.textContent = `upload failed (${err.message})`;
+      msg.textContent = `Upload failed (${err.message})`;
       return;
     }
 
     if (res.status === 503) {
-      msg.textContent = 'image storage is not configured on this server — paste a link instead';
+      msg.textContent = 'Image storage is not configured on this server. Paste a link instead';
       return;
     }
     if (res.status === 507) {
-      msg.textContent = (data && data.message) || 'the storage budget is full; uploads are paused';
+      msg.textContent = (data && data.message) || 'The storage budget is full, uploads are paused';
       return;
     }
     if (res.status !== 201 && res.status !== 200) {
-      msg.textContent = (data && data.error) || `upload was refused (${res.status})`;
+      msg.textContent = (data && data.error) || `Upload was refused (${res.status})`;
       return;
     }
 
@@ -408,16 +408,16 @@
 
   async function doLink(linkInput, msg) {
     const url = linkInput.value.trim();
-    if (!url) { msg.textContent = 'paste a link first'; return; }
+    if (!url) { msg.textContent = 'Paste a link first'; return; }
 
     const body = { kind: state.kind, url };
     if (state.kind !== 'avatar') {
-      if (!state.campaignId) { msg.textContent = 'no campaign loaded'; return; }
+      if (!state.campaignId) { msg.textContent = 'No campaign loaded'; return; }
       body.campaign_id = state.campaignId;
     }
     const r = await api('POST', '/api/assets/external', body);
     if (r.status !== 201) {
-      msg.textContent = (r.data && r.data.error) || 'that link was not accepted';
+      msg.textContent = (r.data && r.data.error) || 'That link was not accepted';
       return;
     }
     linkInput.value = '';
@@ -470,7 +470,7 @@
 
     const btn = document.createElement('button');
     btn.type = 'button';
-    btn.textContent = 'choose…';
+    btn.textContent = 'Choose…';
     btn.className = 'vttpick-open';
     // [ADDED 2026-09-26] `<id>Btn`, the convention the page's other custom
     // controls follow, so a <label for="…Btn"> reaches this button. The token

@@ -34,10 +34,10 @@ const router = express.Router();
 router.get('/api/media/:id/token', requireAuth, async (req, res, next) => {
   try {
     if (gateway.onMediaHost(req)) {
-      return res.status(400).json({ error: 'token is minted on the application origin' });
+      return res.status(400).json({ error: 'Token is minted on the application origin' });
     }
     const asset = await gateway.resolveVisible(req.params.id, req.user.id);
-    if (!asset) return res.status(404).json({ error: 'not found' });
+    if (!asset) return res.status(404).json({ error: 'Not found' });
     const token = gateway.mintMediaToken({ assetId: asset.id, viewerId: req.user.id });
     return res.json({
       id: asset.id,

@@ -49,7 +49,7 @@
     // textContent, never innerHTML: this string comes from the server, and a
     // banner is not a reason to relax the rule the rest of the client follows.
     node.appendChild(document.createTextNode(
-      message || 'The GM has not opened it yet. You will be able to play when they do.',
+      message || 'The GM has not opened this game yet. You will be able to play when they do.',
     ));
     const x = document.createElement('span');
     x.className = 'x';

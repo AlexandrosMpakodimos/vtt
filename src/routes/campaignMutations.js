@@ -69,7 +69,7 @@ function createCampaignMutationHandlers({ operations, gateway }) {
       const result = await operations.remove({ campaignId: req.campaign.id, userId: req.user.id });
       if (result.status) return sendFailure(res, result);
       req.app.get('campaignSockets')?.evictCampaign(req.campaign.id);
-      return res.json({ ok: true, message: `campaign deleted — recoverable for ${SOFT_DELETE_DAYS} days` });
+      return res.json({ ok: true, message: `Campaign deleted. Recoverable for ${SOFT_DELETE_DAYS} days` });
     } catch (err) { return next(err); }
   }
 

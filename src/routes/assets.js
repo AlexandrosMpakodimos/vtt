@@ -77,7 +77,7 @@ router.use((req, res, next) => {
 // not reproducible.
 function requireStorage(req, res, next) {
   if (!storage.isConfigured()) {
-    return res.status(503).json({ error: 'image storage is not configured on this server' });
+    return res.status(503).json({ error: 'Image storage is not configured on this server' });
   }
   return next();
 }
@@ -190,13 +190,13 @@ router.post('/upload',
       const campaignId = req.query.campaign_id === undefined || req.query.campaign_id === ''
         ? null : req.query.campaign_id;
       if (campaignId !== null && !validUuid(campaignId)) {
-        return res.status(404).json({ error: 'campaign not found' });
+        return res.status(404).json({ error: 'Campaign not found' });
       }
 
       const perm = await mayCreate({ userId: req.user.id, kind, campaignId });
       if (!perm.ok) {
-        if (perm.forbidden) return res.status(403).json({ error: `only the GM may upload a ${kind}` });
-        return res.status(404).json({ error: 'campaign not found' });
+        if (perm.forbidden) return res.status(403).json({ error: `Only the GM may upload a ${kind}` });
+        return res.status(404).json({ error: 'Campaign not found' });
       }
 
       const mime = typeof req.query.mime === 'string' ? req.query.mime.trim().toLowerCase() : '';
@@ -210,18 +210,18 @@ router.post('/upload',
       // buffer.
       const bytes = Buffer.isBuffer(req.body) ? req.body : null;
       if (!bytes || bytes.length === 0) {
-        return res.status(400).json({ error: 'request body must contain the image bytes' });
+        return res.status(400).json({ error: 'Request body must contain the image bytes' });
       }
       const limit = storage.limitFor(kind);
       if (bytes.length > limit) {
-        return res.status(400).json({ error: `a ${kind} may be at most ${limit} bytes` });
+        return res.status(400).json({ error: `A ${kind} may be at most ${limit} bytes` });
       }
 
       // Verify the bytes ARE the declared type BEFORE writing anything. The bytes
       // are in hand, so a liar never reaches R2 at all — no wasted write, no
       // object to clean up.
       if (!storage.magicMatches(mime, bytes)) {
-        return res.status(400).json({ error: 'that file is not the image type it claims to be' });
+        return res.status(400).json({ error: 'That file is not the image type it claims to be' });
       }
 
       // Idempotency: a repeat with the same key returns the existing asset.
@@ -239,7 +239,7 @@ router.post('/upload',
             await gateway.rewriteObject(shaped, ['url'], req.user.id);
             return res.status(200).json({ asset: shaped });
           }
-          return res.status(409).json({ error: 'an upload with this key is already in progress' });
+          return res.status(409).json({ error: 'An upload with this key is already in progress' });
         }
       }
 
@@ -256,7 +256,7 @@ router.post('/upload',
           reservedBytes = bytes.length;
         } catch (err) {
           if (err.budgetExceeded) {
-            return res.status(507).json({ error: 'storage_budget_reached', message: 'the application has reached its storage budget; new uploads are paused' });
+            return res.status(507).json({ error: 'storage_budget_reached', message: 'The application has reached its storage budget. New uploads are paused' });
           }
           throw err;
         }
@@ -297,7 +297,7 @@ router.post('/upload',
         // won the race; treat it as in-progress rather than an error.
         if (err.code === '23505') {
           if (reservedBytes) { await budget.releaseReservedBytes(reservedBytes).catch(() => {}); reservedBytes = 0; }
-          return res.status(409).json({ error: 'an upload with this key is already in progress' });
+          return res.status(409).json({ error: 'An upload with this key is already in progress' });
         }
         throw err;
       }
@@ -329,7 +329,7 @@ router.post('/upload',
                   updated_at: knex.fn.now(),
                 });
               }
-              return res.status(507).json({ error: 'operation_budget_reached', message: 'the application has reached its operation budget; try again next period' });
+              return res.status(507).json({ error: 'operation_budget_reached', message: 'The application has reached its operation budget. Try again next period' });
             }
             throw err;
           }
@@ -354,7 +354,7 @@ router.post('/upload',
         reservedBytes = 0;
         return res.status(502).json({
           error: 'upload_failed',
-          message: 'the object could not be stored; the attempt was recorded and will be reconciled',
+          message: 'The image could not be stored. The attempt was recorded and will be reconciled',
           detail: lastErr ? lastErr.name : undefined,
         });
       }
@@ -458,18 +458,18 @@ router.post('/external', async (req, res, next) => {
     const campaignId = body.campaign_id === undefined || body.campaign_id === null
       ? null : body.campaign_id;
     if (campaignId !== null && !validUuid(campaignId)) {
-      return res.status(404).json({ error: 'campaign not found' });
+      return res.status(404).json({ error: 'Campaign not found' });
     }
 
     const perm = await mayCreate({ userId: req.user.id, kind, campaignId });
     if (!perm.ok) {
-      if (perm.forbidden) return res.status(403).json({ error: `only the GM may set a ${kind}` });
-      return res.status(404).json({ error: 'campaign not found' });
+      if (perm.forbidden) return res.status(403).json({ error: `Only the GM may set a ${kind}` });
+      return res.status(404).json({ error: 'Campaign not found' });
     }
 
     const url = validateImageUrl(body.url, 'url');
     if (url.error) return res.status(400).json({ error: url.error });
-    if (!url.value) return res.status(400).json({ error: 'url is required' });
+    if (!url.value) return res.status(400).json({ error: 'Url is required' });
 
     const scope = campaignId ? { campaign_id: campaignId } : { user_id: req.user.id, campaign_id: null };
     let row;
@@ -517,9 +517,9 @@ router.get('/', async (req, res, next) => {
   try {
     const campaignId = req.query.campaign_id;
     if (campaignId !== undefined) {
-      if (!validUuid(campaignId)) return res.status(404).json({ error: 'campaign not found' });
+      if (!validUuid(campaignId)) return res.status(404).json({ error: 'Campaign not found' });
       const perm = await mayCreate({ userId: req.user.id, kind: 'portrait', campaignId });
-      if (!perm.ok) return res.status(404).json({ error: 'campaign not found' });
+      if (!perm.ok) return res.status(404).json({ error: 'Campaign not found' });
 
       const rows = await knex('assets')
         .where({ campaign_id: campaignId, status: 'ready' })
@@ -550,10 +550,10 @@ router.get('/', async (req, res, next) => {
 // image rather than silently substituting something else.
 router.delete('/:id', async (req, res, next) => {
   try {
-    if (!validUuid(req.params.id)) return res.status(404).json({ error: 'asset not found' });
+    if (!validUuid(req.params.id)) return res.status(404).json({ error: 'Asset not found' });
 
     const asset = await knex('assets').where({ id: req.params.id }).first();
-    if (!asset) return res.status(404).json({ error: 'asset not found' });
+    if (!asset) return res.status(404).json({ error: 'Asset not found' });
 
     // The uploader, or the GM of the campaign it belongs to. A GM curates their
     // campaign's library; nobody else touches somebody's personal images.
@@ -563,7 +563,7 @@ router.delete('/:id', async (req, res, next) => {
         .where({ id: asset.campaign_id }).whereNull('deleted_at').first();
       allowed = !!campaign && campaign.owner_id === req.user.id;
     }
-    if (!allowed) return res.status(404).json({ error: 'asset not found' });
+    if (!allowed) return res.status(404).json({ error: 'Asset not found' });
 
     // Remove the object, then the row. The two are ordered so a crash between
     // them leaves an orphaned OBJECT (which the reconciler finds) rather than an

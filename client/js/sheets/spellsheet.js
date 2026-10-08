@@ -171,7 +171,7 @@ window.VTTSpellSheet = (function () {
       ta.setAttribute('aria-describedby', errNode.id);
       ta.addEventListener('input', () => { draft.description = ta.value; markDirty(); });
       cell.appendChild(lab); cell.appendChild(ta);
-      cell.appendChild(el('div', { cls: 'ie-help', text: 'What the spell does. Resolved by the GM — nothing here is rolled.' }));
+      cell.appendChild(el('div', { cls: 'ie-help', text: 'What the spell does. Resolved by the GM. Nothing here is rolled.' }));
       cell.appendChild(errNode);
       container.appendChild(cell);
       inputs.set('description', { node: ta, errNode, get: () => ta.value });
@@ -382,7 +382,7 @@ window.VTTSpellSheet = (function () {
       const bytes = new TextEncoder().encode(JSON.stringify(nextProps)).length;
       if (bytes > MAX_PROPS_BYTES) {
         errSummary.hidden = false;
-        errSummary.textContent = 'This spell stores ' + bytes.toLocaleString() + ' bytes of details; the limit is ' + MAX_PROPS_BYTES.toLocaleString() + '. Shorten the detail fields.';
+        errSummary.textContent = 'This spell stores ' + bytes.toLocaleString() + ' bytes of details. The limit is ' + MAX_PROPS_BYTES.toLocaleString() + '. Shorten the detail fields.';
         firstBad = firstBad || 'name';
         detailsDisc.setOpen(true);
       }
@@ -409,7 +409,7 @@ window.VTTSpellSheet = (function () {
         showServerError(r && r.data && r.data.error);
         status.textContent = 'Not saved';
       } catch (err) {
-        errSummary.hidden = false; errSummary.textContent = 'Network error — your edits are kept. Try again.';
+        errSummary.hidden = false; errSummary.textContent = 'Network error, your edits are kept. Try again.';
         status.textContent = 'Not saved';
       }
       saving = false; saveBtn.disabled = false; saveBtn.textContent = prevLabel;

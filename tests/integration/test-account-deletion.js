@@ -209,7 +209,7 @@ async function scenarios() {
   check('a non-string password: 400', typed.status === 400, typed.text);
   const wrong = await r.client.req('POST', '/api/auth/delete-account', { currentPassword: PASSWORD + 'x' });
   check('a wrong password: 400 current password is incorrect (as /change-password)',
-    wrong.status === 400 && wrong.data?.error === 'current password is incorrect', wrong.text);
+    wrong.status === 400 && wrong.data?.error === 'Current password is incorrect', wrong.text);
   check('after those refusals the account is intact',
     !!(await knex('users').where({ id: r.id }).first('id')) && (await r.client.req('GET', '/api/auth/me')).status === 200);
 
@@ -219,7 +219,7 @@ async function scenarios() {
   // never reach the limiter).
   const fourth = await r.client.req('POST', '/api/auth/delete-account', { currentPassword: 'x'.repeat(65) });
   check('the 4th attempt is answered (an over-length password: 400, no hashing)',
-    fourth.status === 400 && fourth.data?.error === 'current password is incorrect', fourth.text);
+    fourth.status === 400 && fourth.data?.error === 'Current password is incorrect', fourth.text);
   const fifth = await r.client.req('POST', '/api/auth/delete-account', { currentPassword: 'another-wrong-one' });
   check('the 5th attempt is still answered (400)', fifth.status === 400, fifth.text);
   const sixth = await r.client.req('POST', '/api/auth/delete-account', { currentPassword: PASSWORD });

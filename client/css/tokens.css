@@ -71,6 +71,45 @@ html[data-theme="light"] {
   outline-offset: 2px;
 }
 
+/* Header navigation light-up. Every top-right navigation control (landing,
+ * privacy and dashboard: .site-header .header-actions; game: #topBar
+ * .bar-right) lights up like the privacy page's wordmark: --accent at rest,
+ * --text on hover and on keyboard focus, at once (the wordmark has no
+ * transition). The focus ring is the :focus-visible rule above, unchanged.
+ *
+ * Why the text light-up does not use `color`: on the landing and dashboard
+ * `color` carries the 0.7 s theme crossfade (.theme-ready *), and one property
+ * cannot change at once on hover and over 0.7 s on a theme change. So `color`
+ * keeps the crossfade, and the light-up is drawn with properties no crossfade
+ * transitions: -webkit-text-fill-color for text, background-color for the
+ * sidebar toggle's bars. The hover also drops the pages' gold fill and glow,
+ * which would put --text on gold. */
+:is(.site-header .header-actions, #topBar .bar-right) > .btn { color: var(--accent); }
+:is(.site-header .header-actions, #topBar .bar-right) > .btn:is(:hover, :focus-visible) {
+  color: var(--accent); background-color: transparent; box-shadow: none;
+  -webkit-text-fill-color: var(--text);
+}
+#sidebarToggle:is(:hover, :focus-visible) .bars,
+#sidebarToggle:is(:hover, :focus-visible) .bars::before,
+#sidebarToggle:is(:hover, :focus-visible) .bars::after { background-color: var(--text); }
+
+/* Theme toggle: no colour transition, in itself or its icon, so it lights up
+ * through `color` and changes colour at once with the theme.
+ * Safari fix (seen in Safari: after a press the icon vanished for seconds,
+ * then faded back in slowly). Before, the toggle inherited --text and the
+ * global .theme-ready * rule gave the button, svg, circle and path a 0.7 s
+ * colour transition each. Measured in Chromium: during a theme crossfade a
+ * colour transition can be restarted on each style update, from wherever it
+ * has got to, for another full 0.7 s (the wordmark and Sign up restart 12-15
+ * times in 1.2 s), so the colour creeps toward its target for seconds. Safari
+ * showing that creep on the toggle fits the report: the icon keeps the old
+ * theme's colour on the new background, then crawls in. With no colour
+ * transition in the toggle there is nothing to restart in any engine. */
+:is(.site-header, #topBar) #themeToggle:is(:hover, :focus-visible) { color: var(--text); }
+:is(.site-header, #topBar) #themeToggle,
+:is(.site-header, #topBar) #themeToggle svg,
+:is(.site-header, #topBar) #themeToggle svg * { transition: none; }
+
 /* Scrollbars — themed to the signature gold so every scrollable region (page,
  * dialogs, the floating card body, chat, sheets) matches the rest of the UI
  * instead of the browser default. Applied globally via tokens.css so all pages

@@ -93,11 +93,11 @@ router.post('/register', async (req, res, next) => {
     if (errors.length) return res.status(400).json({ error: errors[0], errors });
 
     if (await isPasswordBreached(p.value)) {
-      return res.status(400).json({ error: 'password is too common or has appeared in a data breach' });
+      return res.status(400).json({ error: 'Password is too common or has appeared in a data breach' });
     }
 
     const existing = await knex('users').where({ email: e.value }).orWhere({ username: u.value }).first();
-    if (existing) return res.status(409).json({ error: 'email or username already taken' });
+    if (existing) return res.status(409).json({ error: 'Email or username already taken' });
 
     const password_hash = await hashPassword(p.value);
     const [user] = await knex('users')
@@ -112,7 +112,7 @@ router.post('/register', async (req, res, next) => {
       user: publicUser(user),
     });
   } catch (err) {
-    if (err.code === '23505') return res.status(409).json({ error: 'email or username already taken' });
+    if (err.code === '23505') return res.status(409).json({ error: 'Email or username already taken' });
     return next(err);
   }
 });
@@ -179,7 +179,7 @@ router.post('/login', (req, res, next) => {
 router.post('/resend-verification', async (req, res, next) => {
   try {
     const email = normalizeEmail(req.body && req.body.email);
-    if (!email) return res.status(400).json({ error: 'email is required' });
+    if (!email) return res.status(400).json({ error: 'Email is required' });
     const generic = { ok: true, message: 'If that account exists and is unverified, a new verification email has been sent.' };
 
     // Respond FIRST, identically, then do any work -- as forgot-password does.
@@ -203,7 +203,7 @@ router.post('/resend-verification', async (req, res, next) => {
 router.post('/forgot-password', async (req, res, next) => {
   try {
     const email = normalizeEmail(req.body && req.body.email);
-    if (!email) return res.status(400).json({ error: 'email is required' });
+    if (!email) return res.status(400).json({ error: 'Email is required' });
     const generic = { ok: true, message: 'If an account with that email exists, a password reset link has been sent.' };
 
     // Respond FIRST, identically, then do any work — so response time does not
@@ -285,12 +285,12 @@ router.get('/reset-password', async (req, res, next) => {
 router.post('/reset-password', async (req, res, next) => {
   try {
     const { token, password } = req.body || {};
-    if (!token) return res.status(400).json({ error: 'token is required' });
+    if (!token) return res.status(400).json({ error: 'Token is required' });
 
     const p = validatePassword(password);
     if (p.error) return res.status(400).json({ error: p.error });
     if (await isPasswordBreached(p.value)) {
-      return res.status(400).json({ error: 'password is too common or has appeared in a data breach' });
+      return res.status(400).json({ error: 'Password is too common or has appeared in a data breach' });
     }
 
     const row = await knex('password_reset_tokens').where({ token_hash: sha256(String(token)) }).first();
@@ -377,7 +377,7 @@ router.patch('/me', requireAuth, async (req, res, next) => {
     }
 
     if (Object.keys(updates).length === 0) {
-      return res.status(400).json({ error: 'nothing to update (send username and/or avatar_url)' });
+      return res.status(400).json({ error: 'Nothing to update (send username and/or avatar_url)' });
     }
 
     const [user] = await knex('users').where({ id: req.user.id }).update(updates).returning(SAFE_COLUMNS);
@@ -395,7 +395,7 @@ router.patch('/me', requireAuth, async (req, res, next) => {
     for (const campaignId of campaignIds) membershipChanged(req, campaignId, req.user.id);
     return gateway.sendJson(req, res, { user: publicUser(user) });
   } catch (err) {
-    if (err.code === '23505') return res.status(409).json({ error: 'username already taken' });
+    if (err.code === '23505') return res.status(409).json({ error: 'Username already taken' });
     return next(err);
   }
 });
@@ -409,15 +409,15 @@ router.post('/change-password', requireAuth, async (req, res, next) => {
     // Re-authenticate: req.user has no hash (SAFE_COLUMNS), so fetch it.
     const row = await knex('users').where({ id: req.user.id }).first();
     const ok = row && (await verifyPassword(row.password_hash, currentPassword));
-    if (!ok) return res.status(400).json({ error: 'current password is incorrect' });
+    if (!ok) return res.status(400).json({ error: 'Current password is incorrect' });
 
     const p = validatePassword(newPassword);
     if (p.error) return res.status(400).json({ error: p.error });
     if (await verifyPassword(row.password_hash, p.value)) {
-      return res.status(400).json({ error: 'new password must be different from the current one' });
+      return res.status(400).json({ error: 'New password must be different from the current one' });
     }
     if (await isPasswordBreached(p.value)) {
-      return res.status(400).json({ error: 'password is too common or has appeared in a data breach' });
+      return res.status(400).json({ error: 'Password is too common or has appeared in a data breach' });
     }
 
     const password_hash = await hashPassword(p.value);
@@ -459,7 +459,7 @@ router.post('/delete-account', requireAuth, deleteAccountLimiter, async (req, re
     // longer one is wrong without spending an Argon2id verification on it.
     const ok = row && currentPassword.length <= 64
       && (await verifyPassword(row.password_hash, currentPassword));
-    if (!ok) return res.status(400).json({ error: 'current password is incorrect' });
+    if (!ok) return res.status(400).json({ error: 'Current password is incorrect' });
 
     const result = await deleteAccount({
       userId: req.user.id, expectedHash: row.password_hash, destroySessions: destroyUserSessions,
@@ -536,14 +536,14 @@ router.post('/change-email', requireAuth, async (req, res, next) => {
     // Re-authenticate: sensitive action, and req.user has no hash.
     const row = await knex('users').where({ id: req.user.id }).first();
     const ok = row && (await verifyPassword(row.password_hash, currentPassword));
-    if (!ok) return res.status(400).json({ error: 'current password is incorrect' });
+    if (!ok) return res.status(400).json({ error: 'Current password is incorrect' });
 
     const e = validateEmail(newEmail);
     if (e.error) return res.status(400).json({ error: e.error });
-    if (e.value === row.email) return res.status(400).json({ error: 'that is already your email address' });
+    if (e.value === row.email) return res.status(400).json({ error: 'That is already your email address' });
 
     const taken = await knex('users').where({ email: e.value }).first();
-    if (taken) return res.status(409).json({ error: 'email is already in use' });
+    if (taken) return res.status(409).json({ error: 'Email is already in use' });
 
     if (!(await issueEmailChangeEmail(row, e.value))) {
       return res.status(409).json({ error: 'Your account changed during this request. Please try again.' });
@@ -551,7 +551,7 @@ router.post('/change-email', requireAuth, async (req, res, next) => {
 
     return res.json({ ok: true, message: 'Check your new email address to confirm the change.' });
   } catch (err) {
-    if (err.code === '23505') return res.status(409).json({ error: 'email is already in use' });
+    if (err.code === '23505') return res.status(409).json({ error: 'Email is already in use' });
     return next(err);
   }
 });

@@ -148,6 +148,16 @@
     }
     #stage-wrap.panning { cursor: grabbing; }
 
+    /* ── Token placement in progress (Fix 8) ─────────────────────────────────
+       After Place, the token(s) follow the pointer as ghosts until a click
+       places them. The "copy" cursor (arrow with a plus) marks the mode over
+       the map and over existing tokens alike; a drag still shows grabbing,
+       because it still pans. Ghosts never take a pointer event, so a click
+       always reaches the canvas beneath them. */
+    #stage-wrap.placing, #stage-wrap.placing .token { cursor: copy; }
+    #stage-wrap.placing.panning, #stage-wrap.placing.panning .token { cursor: grabbing; }
+    .token.ghost { opacity: 0.5; pointer-events: none; z-index: 9; }
+
     /* ── Token-picking mode (Stage D) ────────────────────────────────────────
        While picking, #pick-dim (inside #stage, sized inset:0 so it matches the
        map image's exact size and position — it pans and zooms with the map)

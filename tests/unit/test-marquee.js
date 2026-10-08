@@ -143,14 +143,22 @@ window.eval(fs.readFileSync(rootPath('client/js/game/scene.js'),'utf8') + `
 
   // Zoom is multiplicative and clamped. The HUD is the only observable, which
   // is enough: it is rendered from the same value the transform uses.
+  // [CHANGED 2026-10-07] Wheel steps that arrive before the next display frame
+  // are folded into one (Fix 8, Safari zoom lag). These probes dispatch faster
+  // than any frame, so they settle the folded step before reading; the folding
+  // itself is probed in test-view-placement.js.
   wrap.dispatchEvent(new WheelEvent('wheel',{bubbles:true,cancelable:true,deltaY:-100,clientX:100,clientY:100}));
+  settleWheelZoom();
   __check('wheel up zooms IN', parseInt(hud.textContent,10) > 100, hud.textContent);
   const zoomedIn = parseInt(hud.textContent,10);
   wrap.dispatchEvent(new WheelEvent('wheel',{bubbles:true,cancelable:true,deltaY:100,clientX:100,clientY:100}));
+  settleWheelZoom();
   __check('wheel down zooms OUT', parseInt(hud.textContent,10) < zoomedIn, hud.textContent);
   for (let i=0;i<40;i++) wrap.dispatchEvent(new WheelEvent('wheel',{bubbles:true,cancelable:true,deltaY:-100,clientX:100,clientY:100}));
+  settleWheelZoom();
   __check('zoom is clamped at the maximum', parseInt(hud.textContent,10) === 400, hud.textContent);
   for (let i=0;i<80;i++) wrap.dispatchEvent(new WheelEvent('wheel',{bubbles:true,cancelable:true,deltaY:100,clientX:100,clientY:100}));
+  settleWheelZoom();
   __check('...and at the minimum', parseInt(hud.textContent,10) === 25, hud.textContent);
   resetView();
   __check('reset returns to 100% at the origin',
@@ -354,9 +362,9 @@ window.eval(fs.readFileSync(rootPath('client/js/game/scene.js'),'utf8') + `
   __check('the menu opens on empty space, for ping',
     ctxEl2.style.display === 'block', ctxEl2.style.display);
   __check('...with no map label, leading straight with the actions',
-    ctxEl2.textContent.indexOf('map') === -1 && ctxEl2.textContent.indexOf('ping here') === 0,
+    ctxEl2.textContent.indexOf('map') === -1 && ctxEl2.textContent.indexOf('Ping here') === 0,
     ctxEl2.textContent.slice(0, 40));
-  __check('...offering ping', ctxEl2.textContent.indexOf('ping here') >= 0, ctxEl2.textContent.slice(0,80));
+  __check('...offering ping', ctxEl2.textContent.indexOf('Ping here') >= 0, ctxEl2.textContent.slice(0,80));
 
   // isGm() compares the current user against the campaign owner, so being the
   // GM has to be established through BOTH — setting the user alone leaves the
@@ -375,7 +383,7 @@ window.eval(fs.readFileSync(rootPath('client/js/game/scene.js'),'utf8') + `
   me = {id:'P1'};
   hideCtxMenu();
   fire(bg,'pointerdown',400,400); fire(stg,'pointerup',400,400);
-  __check('a player is offered ping', ctxEl2.textContent.indexOf('ping here') >= 0, ctxEl2.textContent.slice(0,80));
+  __check('a player is offered ping', ctxEl2.textContent.indexOf('Ping here') >= 0, ctxEl2.textContent.slice(0,80));
   __check('...but NOT focus', !ctxEl2.textContent.indexOf('focus') >= 0, ctxEl2.textContent.slice(0,80));
   me = {id:'GM'};
   hideCtxMenu();
@@ -489,26 +497,31 @@ window.eval(fs.readFileSync(rootPath('client/js/game/scene.js'),'utf8') + `
   // across the seam.
   __check('the pad is a whole number of squares', PAD % 50 === 0, String(PAD));
 
-  // Dragging right stops when the GRID's left edge reaches the viewport's —
-  // not the image's, which is PAD further in.
-  fireW('pointerdown',100,100); fireW('pointermove',2000,2000); fireW('pointerup',2000,2000);
-  __check('the map can be dragged out to the pad, and no further',
-    tx().x === PAD, JSON.stringify(tx()));
-  __check('...in both axes', tx().y === PAD, JSON.stringify(tx()));
+  // [CHANGED 2026-10-07] Fix 8: the clamp no longer stops at the grid's edge.
+  // The map may be dragged past its edges until only 15% of the viewport (per
+  // axis) still shows the map PICTURE — here the 1000x800 scene box, as this
+  // scene has no image. With the 600x400 viewport that is 90px / 60px of map.
+  // The old bounds (grid edge at the viewport edge) were the rule being
+  // replaced; the new rule's own probes, at every zoom, are in
+  // test-view-placement.js.
+  const KEEPX = 0.15 * 600, KEEPY = 0.15 * 400;
+  fireW('pointerdown',100,100); fireW('pointermove',4000,4000); fireW('pointerup',4000,4000);
+  __check('the map can be dragged right until only 15% of the viewport shows it',
+    tx().x === 600 - KEEPX, JSON.stringify(tx()));
+  __check('...and down the same way', tx().y === 400 - KEEPY, JSON.stringify(tx()));
 
-  // ...and far left stops at the pad beyond the map's right edge:
-  // vw - (imgW + PAD*2) + PAD, all derived from PAD above.
-  fireW('pointerdown',500,500); fireW('pointermove',-4000,-4000); fireW('pointerup',-4000,-4000);
-  __check('the map cannot be dragged past the far edge of the pad',
-    tx().x === 600 - (1000 + PAD * 2) + PAD, JSON.stringify(tx()));
-  __check('...nor past the bottom of it',
-    tx().y === 400 - (800 + PAD * 2) + PAD, JSON.stringify(tx()));
+  // ...and the other way, until the map's far edge is 15% into the viewport.
+  fireW('pointerdown',500,500); fireW('pointermove',-6000,-6000); fireW('pointerup',-6000,-6000);
+  __check('the map can be dragged left until only 15% of it remains',
+    tx().x === KEEPX - 1000, JSON.stringify(tx()));
+  __check('...nor further up than that',
+    tx().y === KEEPY - 800, JSON.stringify(tx()));
 
   // The point of the pad: a token parked OUTSIDE the image is reachable. At the
-  // left limit the visible world starts at stage-local -PAD, so negative grid
-  // coordinates are on screen — which is where the server has always allowed
-  // tokens to be (-10000..10000) and where nothing could previously scroll.
-  fireW('pointerdown',100,100); fireW('pointermove',2000,2000); fireW('pointerup',2000,2000);
+  // left limit negative grid coordinates are on screen — which is where the
+  // server has always allowed tokens to be (-10000..10000). (Since Fix 8 the
+  // limit is 85% of the viewport to the left of the map, not the pad's edge.)
+  fireW('pointerdown',100,100); fireW('pointermove',4000,4000); fireW('pointerup',4000,4000);
   const leftmostVisible = -tx().x / 1;
   __check('space off the left of the image is reachable',
     leftmostVisible <= 0, String(leftmostVisible));

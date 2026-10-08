@@ -37,7 +37,7 @@ function createCampaignOperations({
       if (p.error) return { status: 400, error: p.error };
       password_hash = await hashPassword(p.value);
     } else if (body.password) {
-      return { status: 400, error: 'a public campaign cannot have a password' };
+      return { status: 400, error: 'A public campaign cannot have a password' };
     }
 
     // Cap enforcement must be ATOMIC, not read-then-write: a plain
@@ -91,7 +91,7 @@ function createCampaignOperations({
         if (err.capExceeded) {
           return {
             status: 409,
-            error: `you can own at most ${MAX_CAMPAIGNS_PER_USER} campaigns — delete one first`,
+            error: `You can own at most ${MAX_CAMPAIGNS_PER_USER} campaigns. Delete one first`,
           };
         }
         // Retry the whole aborted transaction. Jitter separates competing
@@ -122,10 +122,10 @@ function createCampaignOperations({
 
   async function join({ campaignId, userId, body: input }) {
     const id = campaignId;
-    if (!validCampaignId(id)) return { status: 404, error: 'campaign not found' };
+    if (!validCampaignId(id)) return { status: 404, error: 'Campaign not found' };
 
     const campaign = await knex('campaigns').where({ id }).whereNull('deleted_at').first();
-    if (!campaign) return { status: 404, error: 'campaign not found' };
+    if (!campaign) return { status: 404, error: 'Campaign not found' };
 
     const existing = await knex('campaign_members')
       .where({ campaign_id: id, user_id: userId })
@@ -133,7 +133,7 @@ function createCampaignOperations({
 
     // 1. Banned — before any password work.
     if (existing && existing.status === 'banned') {
-      return { status: 403, error: 'you are banned from this campaign' };
+      return { status: 403, error: 'You are banned from this campaign' };
     }
 
     // 2. Already active (includes the owner) — no password, no write.
@@ -147,10 +147,10 @@ function createCampaignOperations({
       // Bound before hashing: mirrors the pre-hash guard in config/passport.js
       // so an oversized body can't force expensive Argon2id work.
       if (typeof supplied !== 'string' || supplied.length === 0 || supplied.length > 128) {
-        return { status: 401, error: 'incorrect campaign password' };
+        return { status: 401, error: 'Incorrect campaign password' };
       }
       const ok = await verifyPassword(campaign.password_hash, supplied);
-      if (!ok) return { status: 401, error: 'incorrect campaign password' };
+      if (!ok) return { status: 401, error: 'Incorrect campaign password' };
     }
 
     // The mutable color state also tracks whether a conflict already dropped it.
@@ -204,8 +204,8 @@ function createCampaignOperations({
         });
         break;
       } catch (err) {
-        if (err.campaignFull) return { status: 409, error: 'this campaign is full' };
-        if (err.memberBanned) return { status: 403, error: 'you are banned from this campaign' };
+        if (err.campaignFull) return { status: 409, error: 'This campaign is full' };
+        if (err.memberBanned) return { status: 403, error: 'You are banned from this campaign' };
         // Only these two known uniqueness conflicts are recoverable. A duplicate
         // membership retries the lookup; a color collision drops the color,
         // including a returning member's retained color, before retrying.
@@ -239,13 +239,13 @@ function createCampaignOperations({
     const result = await knex.transaction(async (trx) => {
       // Same lock order as transfer: campaign first, then membership.
       const campaign = await trx('campaigns').where({ id: campaignId }).forUpdate().first();
-      if (!campaign || campaign.deleted_at) return { status: 404, error: 'campaign not found' };
+      if (!campaign || campaign.deleted_at) return { status: 404, error: 'Campaign not found' };
       if (campaign.owner_id === userId) {
-        return { status: 409, error: 'the owner cannot leave — transfer ownership or delete the campaign' };
+        return { status: 409, error: 'The owner cannot leave. Transfer ownership or delete the campaign' };
       }
       const member = await trx('campaign_members')
         .where({ campaign_id: campaign.id, user_id: userId }).forUpdate().first();
-      if (!member || member.status !== 'active') return { status: 404, error: 'campaign not found' };
+      if (!member || member.status !== 'active') return { status: 404, error: 'Campaign not found' };
       await trx('campaign_members').where({ campaign_id: campaign.id, user_id: userId })
         .update({ status: 'left' });
       return {};
@@ -257,7 +257,7 @@ function createCampaignOperations({
     const result = await knex.transaction(async (trx) => {
       const campaign = await trx('campaigns').where({ id: campaignId }).forUpdate().first();
       if (!campaign || campaign.deleted_at || campaign.owner_id !== userId) {
-        return { status: 404, error: 'campaign not found' };
+        return { status: 404, error: 'Campaign not found' };
       }
       const body = input || {};
       const updates = {};
@@ -301,7 +301,7 @@ function createCampaignOperations({
       if (nextIsPublic) {
         // Going public drops the password: a public campaign has no secret to keep.
         if (body.password) {
-          return { status: 400, error: 'a public campaign cannot have a password' };
+          return { status: 400, error: 'A public campaign cannot have a password' };
         }
         if (!wasPublic) updates.password_hash = null;
       } else {
@@ -312,7 +312,7 @@ function createCampaignOperations({
         } else if (wasPublic && body.is_public !== undefined) {
           // Going private requires a password in the same request; otherwise the
           // campaign would sit private with a NULL hash and be unjoinable.
-          return { status: 400, error: 'a password is required to make a campaign private' };
+          return { status: 400, error: 'A password is required to make a campaign private' };
         }
       }
 
@@ -321,7 +321,7 @@ function createCampaignOperations({
       // below still names it, so other dashboards redraw the card.
       const visibilitySent = body.is_public !== undefined;
       if (Object.keys(updates).length === 0 && !visibilitySent) {
-        return { status: 400, error: 'nothing to update' };
+        return { status: 400, error: 'Nothing to update' };
       }
 
       updates.updated_at = trx.fn.now();
@@ -341,7 +341,7 @@ function createCampaignOperations({
       .where({ id: campaignId, owner_id: userId }).whereNull('deleted_at')
       .update({ deleted_at: knex.fn.now(), updated_at: knex.fn.now() });
 
-    if (!changed) return { status: 404, error: 'campaign not found' };
+    if (!changed) return { status: 404, error: 'Campaign not found' };
 
     return {};
   }
@@ -369,16 +369,16 @@ function createCampaignOperations({
 
   async function restore({ campaignId, userId }) {
     const id = campaignId;
-    if (!validCampaignId(id)) return { status: 404, error: 'campaign not found' };
+    if (!validCampaignId(id)) return { status: 404, error: 'Campaign not found' };
 
     const result = await withOwnershipCapTransaction(async (trx) => {
       const campaign = await trx('campaigns').where({ id }).forUpdate().first();
       if (!campaign || !campaign.deleted_at || campaign.owner_id !== userId) {
-        return { status: 404, error: 'no deleted campaign with that id' };
+        return { status: 404, error: 'No deleted campaign with that id' };
       }
       const expiry = new Date(campaign.deleted_at).getTime() + SOFT_DELETE_DAYS * 86400000;
       if (now() > expiry) {
-        return { status: 410, error: 'the 30-day recovery window has passed' };
+        return { status: 410, error: 'The 30-day recovery window has passed' };
       }
 
       const owned = await trx('campaigns')
@@ -386,7 +386,7 @@ function createCampaignOperations({
         .count({ n: '*' }).first();
       if (Number(owned.n) >= MAX_CAMPAIGNS_PER_USER) {
         return { status: 409,
-          error: `you already own ${MAX_CAMPAIGNS_PER_USER} campaigns — delete one before restoring` };
+          error: `You already own ${MAX_CAMPAIGNS_PER_USER} campaigns. Delete one before restoring` };
       }
       const [row] = await trx('campaigns').where({ id })
         .update({ deleted_at: null, updated_at: trx.fn.now() })
@@ -400,7 +400,7 @@ function createCampaignOperations({
     const targetId = input && input.user_id;
     if (!validCampaignId(targetId)) return { status: 400, error: 'user_id is required' };
     if (targetId === userId) {
-      return { status: 409, error: 'you already own this campaign' };
+      return { status: 409, error: 'You already own this campaign' };
     }
 
     const result = await withOwnershipCapTransaction(async (trx) => {
@@ -408,18 +408,18 @@ function createCampaignOperations({
       // attempt and hold the campaign row until the transfer commits.
       const campaign = await trx('campaigns').where({ id: campaignId }).forUpdate().first();
       if (!campaign || campaign.deleted_at || campaign.owner_id !== userId) {
-        return { status: 404, error: 'campaign not found' };
+        return { status: 404, error: 'Campaign not found' };
       }
       const member = await trx('campaign_members')
         .where({ campaign_id: campaign.id, user_id: targetId }).forUpdate().first();
       if (!member || member.status !== 'active') {
-        return { status: 409, error: 'ownership can only be transferred to an active member' };
+        return { status: 409, error: 'Ownership can only be transferred to an active member' };
       }
       const owned = await trx('campaigns')
         .where({ owner_id: targetId }).whereNull('deleted_at')
         .count({ n: '*' }).first();
       if (Number(owned.n) >= MAX_CAMPAIGNS_PER_USER) {
-        return { status: 409, error: `the recipient already owns ${MAX_CAMPAIGNS_PER_USER} campaigns` };
+        return { status: 409, error: `The recipient already owns ${MAX_CAMPAIGNS_PER_USER} campaigns` };
       }
       const [row] = await trx('campaigns').where({ id: campaign.id })
         .update({ owner_id: targetId, updated_at: trx.fn.now() })
@@ -430,7 +430,7 @@ function createCampaignOperations({
   }
 
   async function moderate({ campaignId, userId, targetId, nextStatus }) {
-    if (!validCampaignId(targetId)) return { status: 404, error: 'member not found' };
+    if (!validCampaignId(targetId)) return { status: 404, error: 'Member not found' };
     if (targetId === userId) {
       return { status: 409, error: `you cannot ${nextStatus === 'banned' ? 'ban' : 'kick'} yourself` };
     }
@@ -439,17 +439,17 @@ function createCampaignOperations({
       // Middleware authorized a snapshot. Serialize with ownership transfer and
       // check the current owner before changing any membership.
       const campaign = await trx('campaigns').where({ id: campaignId }).forUpdate().first();
-      if (!campaign || campaign.deleted_at) return { status: 404, error: 'campaign not found' };
+      if (!campaign || campaign.deleted_at) return { status: 404, error: 'Campaign not found' };
       if (campaign.owner_id !== userId) {
         const caller = await trx('campaign_members')
           .where({ campaign_id: campaign.id, user_id: userId }).first();
         return caller && caller.status === 'active'
-          ? { status: 403, error: 'only the campaign owner can do that' }
-          : { status: 404, error: 'campaign not found' };
+          ? { status: 403, error: 'Only the campaign owner can do that' }
+          : { status: 404, error: 'Campaign not found' };
       }
       const member = await trx('campaign_members')
         .where({ campaign_id: campaign.id, user_id: targetId }).forUpdate().first();
-      if (!member) return { status: 404, error: 'member not found' };
+      if (!member) return { status: 404, error: 'Member not found' };
       await trx('campaign_members').where({ campaign_id: campaign.id, user_id: targetId })
         .update({ status: nextStatus });
       return {};
@@ -458,19 +458,19 @@ function createCampaignOperations({
   }
 
   async function unban({ campaignId, userId, targetId }) {
-    if (!validCampaignId(targetId)) return { status: 404, error: 'member not found' };
+    if (!validCampaignId(targetId)) return { status: 404, error: 'Member not found' };
 
     const result = await knex.transaction(async (trx) => {
       const campaign = await trx('campaigns').where({ id: campaignId }).forUpdate().first();
       if (!campaign || campaign.deleted_at || campaign.owner_id !== userId) {
-        return { status: 404, error: 'campaign not found' };
+        return { status: 404, error: 'Campaign not found' };
       }
       const member = await trx('campaign_members')
         .where({ campaign_id: campaignId, user_id: targetId })
         .first();
-      if (!member) return { status: 404, error: 'member not found' };
+      if (!member) return { status: 404, error: 'Member not found' };
       if (member.status !== 'banned') {
-        return { status: 409, error: 'that member is not banned' };
+        return { status: 409, error: 'That member is not banned' };
       }
 
       await trx('campaign_members')

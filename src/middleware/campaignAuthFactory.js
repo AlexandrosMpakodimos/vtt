@@ -40,7 +40,7 @@ function createCampaignAuth(knex) {
   async function resolveMember(req, res, next, { requireOpen }) {
     try {
       const campaign = await loadLiveCampaign(req.params.id);
-      if (!campaign) return res.status(404).json({ error: 'campaign not found' });
+      if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
 
       if (campaign.owner_id === req.user.id) {
         // The GM is never locked out of their own campaign. Closing it is how
@@ -56,7 +56,7 @@ function createCampaignAuth(knex) {
         .first();
 
       if (!member || member.status !== 'active') {
-        return res.status(404).json({ error: 'campaign not found' });
+        return res.status(404).json({ error: 'Campaign not found' });
       }
 
       // A closed campaign is not playable by anyone but its GM.
@@ -68,7 +68,7 @@ function createCampaignAuth(knex) {
       // 404 here would tell somebody who belongs at the table that their campaign
       // had vanished.
       if (requireOpen && campaign.is_open === false) {
-        return res.status(403).json({ error: 'this campaign is closed — the GM has not opened the game' });
+        return res.status(403).json({ error: 'This campaign is closed, the GM has not opened the game' });
       }
 
       req.campaign = campaign;
@@ -108,16 +108,16 @@ function createCampaignAuth(knex) {
   async function requireOwner(req, res, next) {
     try {
       const campaign = await loadLiveCampaign(req.params.id);
-      if (!campaign) return res.status(404).json({ error: 'campaign not found' });
+      if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
 
       if (campaign.owner_id !== req.user.id) {
         const member = await knex('campaign_members')
           .where({ campaign_id: campaign.id, user_id: req.user.id })
           .first();
         if (member && member.status === 'active') {
-          return res.status(403).json({ error: 'only the campaign owner can do that' });
+          return res.status(403).json({ error: 'Only the campaign owner can do that' });
         }
-        return res.status(404).json({ error: 'campaign not found' });
+        return res.status(404).json({ error: 'Campaign not found' });
       }
 
       req.campaign = campaign;

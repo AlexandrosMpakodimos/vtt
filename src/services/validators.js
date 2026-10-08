@@ -3,37 +3,37 @@ const USERNAME_RE = /^[\p{L}\p{N}_]{3,30}$/u;
 function normalizeEmail(email) { return typeof email === 'string' ? email.trim().toLowerCase() : ''; }
 function validateEmail(email) {
   const e = normalizeEmail(email);
-  if (!e) return { error: 'email is required' };
-  if (e.length > 254) return { error: 'email is too long' };
-  if (!EMAIL_RE.test(e)) return { error: 'email format is invalid' };
+  if (!e) return { error: 'Email is required' };
+  if (e.length > 254) return { error: 'Email is too long' };
+  if (!EMAIL_RE.test(e)) return { error: 'Email format is invalid' };
   return { value: e };
 }
 function validateUsername(username) {
   const u = typeof username === 'string' ? username.trim() : '';
-  if (!u) return { error: 'username is required' };
-  if (!USERNAME_RE.test(u)) return { error: 'username must be 3-30 characters: letters, numbers, or underscore' };
+  if (!u) return { error: 'Username is required' };
+  if (!USERNAME_RE.test(u)) return { error: 'Username must be 3-30 characters: letters, numbers, or underscore' };
   return { value: u };
 }
 function validatePassword(password) {
-  if (typeof password !== 'string' || password.length === 0) return { error: 'password is required' };
-  if (password.length < 8) return { error: 'password must be at least 8 characters' };
+  if (typeof password !== 'string' || password.length === 0) return { error: 'Password is required' };
+  if (password.length < 8) return { error: 'Password must be at least 8 characters' };
   // Argon2id has no short input limit (unlike bcrypt's 72-byte truncation); this
   // generous cap only guards against pathologically long inputs (a DoS vector).
-  if (password.length > 64) return { error: 'password is too long (max 64 characters)' }; //64 character limit per NIST's recommendation
+  if (password.length > 64) return { error: 'Password is too long (max 64 characters)' }; //64 character limit per NIST's recommendation
   return { value: password };
 }
 function validateCampaignName(name) {
   const n = typeof name === 'string' ? name.trim() : '';
-  if (!n) return { error: 'campaign name is required' };
-  if (n.length > 100) return { error: 'campaign name is too long (max 100 characters)' };
+  if (!n) return { error: 'Campaign name is required' };
+  if (n.length > 100) return { error: 'Campaign name is too long (max 100 characters)' };
   return { value: n };
 }
 function validateCampaignDescription(description) {
   if (description === undefined || description === null || description === '') return { value: null };
-  if (typeof description !== 'string') return { error: 'description must be text' };
+  if (typeof description !== 'string') return { error: 'Description must be text' };
   const d = description.trim();
   // TEXT is unbounded in Postgres; this only rejects absurd payloads.
-  if (d.length > 2000) return { error: 'description is too long (max 2000 characters)' };
+  if (d.length > 2000) return { error: 'Description is too long (max 2000 characters)' };
   return { value: d || null };
 }
 // Same treatment as avatar_url in routes/auth.js: parse, restrict the scheme to
@@ -65,10 +65,10 @@ function validateImageUrl(url, field = 'img_url') {
 // account cap rather than its exact value.
 function validateCampaignPassword(password) {
   if (typeof password !== 'string' || password.length === 0) {
-    return { error: 'a private campaign requires a password' };
+    return { error: 'A private campaign requires a password' };
   }
-  if (password.length < 4) return { error: 'campaign password must be at least 4 characters' };
-  if (password.length > 128) return { error: 'campaign password is too long (max 128 characters)' };
+  if (password.length < 4) return { error: 'Campaign password must be at least 4 characters' };
+  if (password.length > 128) return { error: 'Campaign password is too long (max 128 characters)' };
   return { value: password };
 }
 const HEX_COLOR_RE = /^#[0-9a-fA-F]{6}$/;
@@ -77,9 +77,9 @@ function validateColor(color) {
   // [FIXED 2026-08-04] Same as validateImageUrl above: String(['#ffffff'])
   // returns '#ffffff'. Found by a probe written for the M6 colour picker, in
   // code that has been in place since M1.
-  if (typeof color !== 'string') return { error: 'color must be a hex value like #A1B2C3' };
+  if (typeof color !== 'string') return { error: 'Color must be a hex value like #A1B2C3' };
   const c = color.trim();
-  if (!HEX_COLOR_RE.test(c)) return { error: 'color must be a hex value like #A1B2C3' };
+  if (!HEX_COLOR_RE.test(c)) return { error: 'Color must be a hex value like #A1B2C3' };
   return { value: c.toLowerCase() };
 }
 
@@ -87,8 +87,8 @@ function validateColor(color) {
 
 function validateSceneName(name) {
   const n = typeof name === 'string' ? name.trim() : '';
-  if (!n) return { error: 'scene name is required' };
-  if (n.length > 100) return { error: 'scene name is too long (max 100 characters)' };
+  if (!n) return { error: 'Scene name is required' };
+  if (n.length > 100) return { error: 'Scene name is too long (max 100 characters)' };
   return { value: n };
 }
 
@@ -96,9 +96,9 @@ function validateSceneName(name) {
 // same 100-char bound as other names; stored/rendered as text, never as markup.
 function validateTokenName(name) {
   if (name === undefined || name === null || name === '') return { value: null };
-  if (typeof name !== 'string') return { error: 'token name must be text' };
+  if (typeof name !== 'string') return { error: 'Token name must be text' };
   const n = name.trim();
-  if (n.length > 100) return { error: 'token name is too long (max 100 characters)' };
+  if (n.length > 100) return { error: 'Token name is too long (max 100 characters)' };
   return { value: n || null };
 }
 
@@ -217,9 +217,9 @@ function validateFogPoint(p, i) {
 //   poly   — 3..MAX_FOG_POINTS vertices, stored in the order drawn (winding
 //            order is the renderer's business, not the database's).
 function validateFogPoints(type, points) {
-  if (!Array.isArray(points)) return { error: 'points must be an array' };
+  if (!Array.isArray(points)) return { error: 'Points must be an array' };
   if (points.length > MAX_FOG_POINTS) {
-    return { error: `points has too many items (max ${MAX_FOG_POINTS})` };
+    return { error: `Points has too many items (max ${MAX_FOG_POINTS})` };
   }
 
   const need = (n) => `a ${type} needs exactly ${n} points`;
@@ -227,7 +227,7 @@ function validateFogPoints(type, points) {
     return { error: need(2) };
   }
   if (type === 'poly' && points.length < 3) {
-    return { error: 'a poly needs at least 3 points' };
+    return { error: 'A poly needs at least 3 points' };
   }
 
   const out = [];
@@ -240,7 +240,7 @@ function validateFogPoints(type, points) {
   if (type === 'rect') {
     const [a, b] = out;
     if (a.x === b.x || a.y === b.y) {
-      return { error: 'a rect must have a non-zero width and height' };
+      return { error: 'A rect must have a non-zero width and height' };
     }
     return {
       value: [
@@ -253,7 +253,7 @@ function validateFogPoints(type, points) {
   if (type === 'circle') {
     const [c, rim] = out;
     if (c.x === rim.x && c.y === rim.y) {
-      return { error: 'a circle must have a non-zero radius' };
+      return { error: 'A circle must have a non-zero radius' };
     }
     return { value: out };
   }
@@ -341,7 +341,7 @@ function validateShortText(v, field, max = 50) {
 const ACTOR_SIZES = ['Tiny', 'Small', 'Medium', 'Large', 'Huge', 'Gargantuan'];
 function validateActorSize(v) {
   if (v === undefined || v === null || v === '') return { value: 'Medium' };
-  if (typeof v !== 'string') return { error: 'size must be text' };
+  if (typeof v !== 'string') return { error: 'Size must be text' };
   const wanted = v.trim().toLowerCase();
   const hit = ACTOR_SIZES.find((s) => s.toLowerCase() === wanted);
   if (!hit) return { error: `size must be one of: ${ACTOR_SIZES.join(', ')}` };
@@ -633,9 +633,9 @@ function validateSortOrder(v) {
 // ---------------------------------------------------------------------------
 
 function validateSpellName(v) {
-  if (typeof v !== 'string' || !v.trim()) return { error: 'name is required' };
+  if (typeof v !== 'string' || !v.trim()) return { error: 'Name is required' };
   const t = v.trim();
-  if (t.length > 100) return { error: 'name is too long (max 100 characters)' };
+  if (t.length > 100) return { error: 'Name is too long (max 100 characters)' };
   return { value: t };
 }
 
@@ -655,7 +655,7 @@ const SPELL_SOURCES = ['class', 'race', 'item', 'other'];
 function validateSpellSource(v) {
   if (v === undefined) return { value: undefined };
   if (v === null || v === '') return { value: null };
-  if (typeof v !== 'string') return { error: 'source must be text' };
+  if (typeof v !== 'string') return { error: 'Source must be text' };
   const t = v.trim().toLowerCase();
   if (!SPELL_SOURCES.includes(t)) {
     return { error: `source must be one of: ${SPELL_SOURCES.join(', ')}` };
@@ -694,7 +694,7 @@ function validateGrid(v) {
   // An array is an object to typeof, and this is the type-confusion class the
   // M2 canvas audit found. Refused explicitly.
   if (typeof v !== 'object' || Array.isArray(v)) {
-    return { error: 'grid must be an object' };
+    return { error: 'Grid must be an object' };
   }
 
   const out = {};
@@ -785,10 +785,10 @@ function validateHpOverride(v) {
 // recipient and then held in the campaign's history.
 const MAX_MESSAGE_LENGTH = 2000;
 function validateMessageContent(v) {
-  if (typeof v !== 'string' || !v.trim()) return { error: 'content is required' };
+  if (typeof v !== 'string' || !v.trim()) return { error: 'Content is required' };
   const s = v.trim();
   if (s.length > MAX_MESSAGE_LENGTH) {
-    return { error: `content is too long (max ${MAX_MESSAGE_LENGTH} characters)` };
+    return { error: `Content is too long (max ${MAX_MESSAGE_LENGTH} characters)` };
   }
   return { value: s };
 }

@@ -51,8 +51,12 @@
   function init() {
     initTheme();
     var resetState = readUrlParams();   // must run before the session check renders
+    // A link from another page (/#signup, /#login) asks for that form. An
+    // e-mail link (?reset=, ?verified=…) wins; the form opens only once the
+    // session check says the visitor is signed out.
+    var linkedFace = resetState.open ? null : readDeepLink();
     initAuthCard(resetState);
-    initSessionCheck();
+    initSessionCheck(linkedFace);
     initParallax();
 
     // Enable theme-crossfade transitions only AFTER the first paint, so the
@@ -97,6 +101,21 @@
       try { window.history.replaceState(null, '', '/'); } catch (e) { /* no-op */ }
     }
     return out;
+  }
+
+  // Deep links from other pages: /#signup and /#login. Any other fragment
+  // (#about, the skip link) is left alone. The fragment is removed from the
+  // address bar so a reload does not reopen the form.
+  var DEEP_LINKS = { '#signup': 'formSignup', '#login': 'formLogin' };
+  function readDeepLink() {
+    var face = Object.prototype.hasOwnProperty.call(DEEP_LINKS, window.location.hash)
+      ? DEEP_LINKS[window.location.hash] : null;
+    if (face) {
+      try {
+        window.history.replaceState(null, '', window.location.pathname + window.location.search);
+      } catch (e) { /* no-op */ }
+    }
+    return face;
   }
 
   // ── 4. Auth card ───────────────────────────────────────────────────────────
@@ -235,7 +254,7 @@
         // the outcome so the user knows to log in (or that the link failed).
         openCard('formLogin', null);
         if (resetState.verified === 'ok') {
-          setStatus('liStatus', 'Email verified — you can log in now.');
+          setStatus('liStatus', 'Email verified. You can log in now.');
         } else {
           setStatus('liStatus', 'That verification link is invalid or has expired. Try logging in, or request a new link.');
         }
@@ -244,7 +263,7 @@
         openCard('formLogin', null);
         var ec = resetState.emailChanged;
         var ecMsg = ec === '1'
-          ? 'Your email address has been changed — log in with your new email.'
+          ? 'Your email address has been changed. Log in with your new email.'
           : ec === 'taken'
             ? 'That address was taken before you confirmed. Request the email change again.'
             : ec === 'nothing'
@@ -397,7 +416,7 @@
       // exposing that it matched a breach corpus — friendlier and less alarming.
       // Matched on a stable substring so minor server-wording changes still map.
       if (/common|breach/i.test(msg)) {
-        return 'That password is too weak — please choose a stronger, less common one.';
+        return 'That password is too weak. Please choose a stronger, less common one.';
       }
       return msg;
     }
@@ -405,11 +424,17 @@
   }
 
   // ── 3. Session check (spec §4) ─────────────────────────────────────────────
-  function initSessionCheck() {
+  // linkedFace: the form a deep link asked for (or null). Opened only for a
+  // signed-out visitor; a signed-in one sees the usual Continue button.
+  function initSessionCheck(linkedFace) {
+    function out() {
+      signedOut();
+      if (linkedFace) openCard(linkedFace, null);
+    }
     api('GET', '/api/auth/me').then(function (r) {
       if (r.status === 200 && r.data && r.data.user) signedIn(r.data.user);
-      else signedOut();
-    }).catch(function () { signedOut(); });
+      else out();
+    }).catch(out);
   }
 
   function signedIn(user) {

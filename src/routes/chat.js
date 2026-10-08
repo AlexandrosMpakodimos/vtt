@@ -122,7 +122,7 @@ router.get('/', requireMember, async (req, res, next) => {
     if (req.query.before !== undefined) {
       const t = new Date(req.query.before);
       if (Number.isNaN(t.getTime())) {
-        return res.status(400).json({ error: 'before must be a timestamp' });
+        return res.status(400).json({ error: 'Before must be a timestamp' });
       }
       q.andWhere('created_at', '<', t.toISOString());
     }
@@ -227,12 +227,12 @@ router.post('/', requireMember, async (req, res, next) => {
       // 404 rather than 403 for BOTH "no such character" and "not yours", so
       // this route cannot be used to enumerate the GM's prepared NPCs — the same
       // refusal shape resolveTokenActor was flattened to during M4.
-      if (!actor) return res.status(404).json({ error: 'character not found' });
+      if (!actor) return res.status(404).json({ error: 'Character not found' });
 
       // A player may speak only as a character they control. The GM may speak as
       // any character in the campaign, which is what running NPCs requires.
       const mine = actor.user_id === req.user.id;
-      if (!req.isOwner && !mine) return res.status(404).json({ error: 'character not found' });
+      if (!req.isOwner && !mine) return res.status(404).json({ error: 'Character not found' });
 
       // The NAME is copied, not referenced. No actor_id is stored: a foreign key
       // here would be a new door onto actors from a table every member can read,

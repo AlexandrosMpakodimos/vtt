@@ -129,7 +129,7 @@ async function loadCampaign() {
 
   if (!campaign.is_gm) {
     document.getElementById('info').textContent =
-      'you are not the GM of this campaign — alignment is GM-only';
+      'You are not the GM of this campaign, alignment is GM-only';
     return;
   }
 
@@ -170,7 +170,7 @@ async function selectScene(sceneId) {
 
   const tokenCount = (r.data.tokens || []).length;
   document.getElementById('info').textContent =
-    `${scene.name} — ${tokenCount} token(s)`;
+    `${scene.name}: ${tokenCount} token(s)`;
   // (The pre-emptive "changing the cell size moves tokens" warning was removed.)
   document.getElementById('hazard').textContent = '';
 
@@ -281,7 +281,7 @@ document.getElementById('measure').addEventListener('click', () => {
   measuring = { points: [] };
   document.getElementById('ruler').style.display = 'none';
   document.getElementById('saveMsg').textContent =
-    'click two grid intersections on the map, then say how many cells apart they are';
+    'Click two grid intersections on the map, then say how many cells apart they are';
 });
 
 viewport.addEventListener('click', (e) => {
@@ -307,7 +307,7 @@ viewport.addEventListener('click', (e) => {
   const derived = spanImage / cells;
   if (derived < 5 || derived > 500) {
     document.getElementById('saveMsg').textContent =
-      `that gives a cell size of ${round2(derived)}px, outside the allowed 5–500`;
+      `That gives a cell size of ${round2(derived)}px, outside the allowed 5–500`;
     return;
   }
   // Anchor the offset on the FIRST point clicked, so the grid starts on a line
@@ -351,13 +351,13 @@ document.getElementById('save').addEventListener('click', async () => {
     },
   });
   show('PATCH grid', r);
-  if (r.status !== 200) { msg.textContent = (r.data && r.data.error) || 'save failed'; return; }
+  if (r.status !== 200) { msg.textContent = (r.data && r.data.error) || 'Save failed'; return; }
   scene = r.data.scene;
   // Saving is done — close the modal. (Previously this left a "N tokens now sit
   // differently" message in place; the GM asked for the modal to close on save.)
   const dlg = document.getElementById('alignDialog');
   if (dlg && typeof dlg.close === 'function' && dlg.open) dlg.close();
-  else { msg.textContent = 'saved'; }
+  else { msg.textContent = 'Saved'; }
 });
 
 document.getElementById('reset').addEventListener('click', () => {
@@ -413,13 +413,13 @@ async function boot(campaignId, scene) {
   // scene, else the first. This is why align works whenever a scene exists.
   const r = await api('GET', `/api/campaigns/${campaignId}`);
   if (r.status !== 200 || !r.data || !r.data.campaign) {
-    document.getElementById('info').textContent = 'could not load this campaign';
+    document.getElementById('info').textContent = 'Could not load this campaign';
     return;
   }
   campaign = r.data.campaign;
   if (!campaign.is_gm) {
     document.getElementById('info').textContent =
-      'you are not the GM of this campaign — alignment is GM-only';
+      'You are not the GM of this campaign, alignment is GM-only';
     return;
   }
 
@@ -434,7 +434,7 @@ async function boot(campaignId, scene) {
   else if (scenes.length) pick = scenes[0].id;
 
   if (pick) return selectScene(pick);
-  document.getElementById('info').textContent = 'no scenes yet — create one first';
+  document.getElementById('info').textContent = 'No scenes yet. Create one first';
 }
 window.VTTAlign = { boot };
 

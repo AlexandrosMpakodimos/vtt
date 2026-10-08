@@ -47,7 +47,7 @@
     return { status: res.status, data: data };
   }
 
-  var NETWORK_ERROR = 'Network error — check your connection and try again.';
+  var NETWORK_ERROR = 'Network error. Check your connection and try again.';
 
   function $(id) { return document.getElementById(id); }
 

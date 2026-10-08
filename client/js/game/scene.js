@@ -4,13 +4,15 @@
 // Interactions:
 //   - drag a token           -> move it (syncs ON DROP via token:move)
 //   - drag a selection       -> group move (syncs ON DROP via token:move-batch)
-//   - drag empty stage        -> marquee-select tokens you may move
+//   - left-drag empty space  -> pan; wheel -> zoom about the pointer
+//   - right-drag             -> marquee-select tokens you may move
 //   - click a token          -> select just it; shift-click toggles
 //   - click empty            -> clear selection
 //   - arrow keys             -> nudge selection by 1 grid unit (authority-checked)
 //   - right-click            -> context menu (resize/hide/lock/copy/paste/delete)
 //   - ctrl/cmd C / V         -> copy / paste (GM only)
 //   - Delete / Backspace     -> delete selection (GM only)
+//   - Place (form), then click the map -> place; Esc or right-click cancels
 // Movement is ON DROP, never streamed. Server is authoritative on every write.
 
 const out = document.getElementById('out');
@@ -27,6 +29,14 @@ const fogShapeEl = document.getElementById('fog-shape');
 
 function show(label, data) {
   out.textContent = label + (data === undefined ? '' : '\n' + JSON.stringify(data, null, 2));
+}
+
+// Run a callback at the next display frame. A plain timer stands in where
+// requestAnimationFrame does not exist (the jsdom suites), so callers never
+// have to ask which environment they are in.
+function nextFrame(cb) {
+  if (typeof window.requestAnimationFrame === 'function') return window.requestAnimationFrame(cb);
+  return setTimeout(cb, 16);
 }
 function log(msg) {
   logEl.textContent += `[${new Date().toLocaleTimeString()}] ${msg}\n`;
@@ -124,8 +134,8 @@ async function whoami() {
   const r = await api('GET', '/api/auth/me');
   me = r.status === 200 ? r.data.user : null;
   document.getElementById('whoami').textContent = me
-    ? `logged in as ${me.username} (${me.id})`
-    : 'NOT logged in — log in first';
+    ? `Logged in as ${me.username} (${me.id})`
+    : 'NOT logged in. Log in first';
 }
 
 // --- scene management ---
@@ -174,8 +184,8 @@ async function loadScenes() {
       await openScene(activeSceneId);
     } else {
       closeScene(isGm()
-        ? (lastSceneList.length ? 'no scene is active yet — open one from Scenes' : '')
-        : 'the GM has not opened a scene yet');
+        ? (lastSceneList.length ? 'No scene is active yet. Open one from Scenes' : '')
+        : 'The GM has not opened a scene yet');
     }
   }
 }
@@ -202,7 +212,7 @@ function renderSceneList(scenes) {
   if (!scenes.length) {
     const note = document.createElement('p');
     note.className = 'scenes-empty';
-    note.textContent = 'No scenes yet — create one above.';
+    note.textContent = 'No scenes yet. Create one above.';
     box.appendChild(note);
     return;
   }
@@ -256,7 +266,7 @@ function renderSceneList(scenes) {
     openBtn.type = 'button';
     openBtn.className = 'btn small secondary';
     openBtn.textContent = 'Open';
-    openBtn.title = 'Load this scene for you only — players are not moved';
+    openBtn.title = 'Load this scene for you only. Players are not moved';
     openBtn.addEventListener('click', () => openScene(sc.id));
     actions.appendChild(openBtn);
 
@@ -265,7 +275,7 @@ function renderSceneList(scenes) {
     actBtn.className = 'btn small primary';
     actBtn.textContent = isActive ? 'Active' : 'Activate';
     actBtn.disabled = isActive;
-    actBtn.title = 'Make this the active scene — every player is moved here';
+    actBtn.title = 'Make this the active scene. Every player is moved here';
     actBtn.addEventListener('click', () => activateScene(sc.id));
     actions.appendChild(actBtn);
 
@@ -318,7 +328,7 @@ async function deleteScene(sc) {
     blast = `${t} token${t === 1 ? '' : 's'} and ${f} fog region${f === 1 ? '' : 's'}`;
   }
   const active = sc.id === activeSceneId
-    ? ' This is the active scene — every player will be dropped out of it.' : '';
+    ? ' This is the active scene. Every player will be dropped out of it.' : '';
   const body = `This permanently removes the scene and ${blast}. It cannot be undone.${active}`;
 
   // Use the shared themed confirm dialog (same as the dashboard's "Delete this
@@ -328,7 +338,7 @@ async function deleteScene(sc) {
     show(`delete scene -> ${r.status}`, r.data);
     if (r.status !== 200) return;
     log(`deleted "${sc.name}" (${r.data.deleted.tokens} tokens, ${r.data.deleted.fog} fog regions)`);
-    if (scene && scene.id === sc.id) closeScene('scene deleted');
+    if (scene && scene.id === sc.id) closeScene('Scene deleted');
     if (r.data.was_active) activeSceneId = null;
     await loadScenes();
   };
@@ -341,6 +351,7 @@ async function deleteScene(sc) {
 
 // Tear the canvas down — used when a player's scene stops being the active one.
 function closeScene(reason) {
+  cancelPlacement();
   scene = null;
   for (const { el } of tokens.values()) el.remove();
   tokens.clear(); selection.clear();
@@ -368,7 +379,7 @@ document.getElementById('create-scene').addEventListener('click', async () => {
   const _cid = document.getElementById('campaign-id');
   if (_cid) campaignId = _cid.value.trim();
   const name = document.getElementById('new-scene-name').value.trim();
-  if (!campaignId || !name) return show('need a campaign id and a scene name');
+  if (!campaignId || !name) return show('Need a campaign id and a scene name');
   const r = await api('POST', `/api/campaigns/${campaignId}/scenes`, { name });
   show(`create scene -> ${r.status}`, r.data);
   if (r.status === 201) loadScenes();
@@ -380,6 +391,9 @@ async function openScene(sceneId) {
   show(`open scene -> ${r.status}`, { scene: r.data.scene, tokenCount: r.data.tokens && r.data.tokens.length });
   if (r.status !== 200) return;
 
+  // A placement armed on the previous scene (or before a reconnect reload)
+  // must not land on this one.
+  cancelPlacement();
   scene = r.data.scene;
   document.getElementById('scene-title').textContent = `— ${scene.name}`;
   stage.style.width = SCENE_SIZE.w + 'px';
@@ -667,7 +681,7 @@ function paintArt(el, row) {
   }
   layout();
   // Placement can paint before the token has been attached to the document.
-  requestAnimationFrame(layout);
+  nextFrame(layout);
 }
 
 function paintToken({ row, el }) {
@@ -710,6 +724,7 @@ let pickState = null;   // { chosen:Set, exclude:Set, onDone } while active
 function pickTokens(options, onDone) {
   if (!isGm()) { onDone && onDone(null); return; }
   if (pickState) endPick(null);   // never stack two pickers
+  cancelPlacement();              // nor a picker over a placement: both own the clicks
   const exclude = options && options.exclude ? options.exclude : new Set();
   pickState = { chosen: new Set(), exclude, onDone: onDone || null };
 
@@ -858,17 +873,26 @@ async function loadActorPicker() {
 // old read of an <option>'s data-name (the custom list has no <option> nodes).
 let tokActorDD = null;
 const actorNameById = new Map();
+// [ADDED 2026-10-07] What the placement ghosts need to draw a token that
+// inherits from its character: picture, framing and size. Display only — the
+// server re-derives all of it from the character when the token is created.
+const actorLookById = new Map();
 
 function renderActorPicker(list) {
   const dd = document.getElementById('tokActorDD');
   if (!dd) return;
 
-  const options = [{ value: '', label: '— no character —' }];
+  const options = [{ value: '', label: 'No character picked' }];
   actorNameById.clear();
+  actorLookById.clear();
   for (const a of list) {
     if (!isGm() && !(me && a.user_id === me.id)) continue;
     options.push({ value: a.id, label: a.name + (a.is_npc ? ' (NPC)' : '') });
     actorNameById.set(a.id, a.name);   // raw name, for numbering multiples ("Frog 2"…)
+    actorLookById.set(a.id, {
+      name: a.name, img_url: a.img_url || null, size: a.size || null,
+      img_offset_x: a.img_offset_x, img_offset_y: a.img_offset_y, img_scale: a.img_scale,
+    });
   }
 
   const dropdownApi = window.VTTCommon && window.VTTCommon.initDropdown;
@@ -919,8 +943,28 @@ function instanceName(base, i) {
   return i === 0 ? base : `${base} ${i + 1}`;
 }
 
-document.getElementById('place-token').addEventListener('click', async () => {
-  if (!scene) return show('open a scene first');
+// [CHANGED 2026-10-07] Place ARMS a placement; a click on the map commits it.
+//
+// Pressing Place used to create the token at once, "where the pointer is, like
+// paste does". But the pointer was on the Place button, over the form, so the
+// token landed wherever the pointer had last crossed the map on its way there —
+// a position the user never chose and could not see coming.
+//
+// Now Place reads the form ONCE (as before: the plan the ghosts show is the plan
+// that is sent), closes the form, and the token — or the whole block, for a
+// multiple — follows the pointer at half opacity, laid out and snapped exactly as
+// it will be created. A left click on the map sends the SAME requests as before
+// with the click's square as the origin; Esc or a right click cancels and
+// nothing is created. While placing, panning and wheel zoom keep working, and
+// nothing else on the canvas can be selected or dragged.
+//
+// Refusals the client can already see (a player asking for several tokens) are
+// still given when Place is pressed, before any ghost appears, with the same
+// message. They remain a convenience: the server refuses on its own.
+
+// Read the form into a placement plan, or explain why not (as before).
+function readPlacementForm() {
+  if (!scene) { show('Open a scene first'); return null; }
   const name = document.getElementById('tok-name').value.trim();
   const img_url = document.getElementById('tok-img').value.trim();
   const sizeKey = document.getElementById('tok-size').value;
@@ -935,7 +979,7 @@ document.getElementById('place-token').addEventListener('click', async () => {
   // That is why the size select gained an explicit "from character" option: a
   // <select> always has a value, so there was no way to express "don't send
   // one" until there was an option that meant it.
-  const inheritSize = actorId && sizeKey === '';
+  const inheritSize = !!actorId && sizeKey === '';
   const footprint = SIZE_UNITS[sizeKey] || 1;
 
   // The base used to number multiples. A typed name wins; otherwise, when a
@@ -953,52 +997,56 @@ document.getElementById('place-token').addEventListener('click', async () => {
   if (!Number.isFinite(count) || count < 1) count = 1;
   if (count > 50) count = 50;
 
-  // Place where the pointer is, like paste does.
-  const origin = { x: cursorGrid.x, y: cursorGrid.y };
-
   // A single token goes through the normal placement endpoint, so that PLAYERS
   // (who may place one) can still use this form. Bulk placement uses the paste
   // endpoint, which is GM-only — a player asking for >1 is told so plainly
   // rather than getting a confusing 403.
-  if (count === 1) {
+  if (count > 1 && !isGm()) { show('Only the GM can place multiple tokens at once'); return null; }
+
+  // The crop chosen for the override image, captured with the rest of the form.
+  const frame = img_url && tokenFrame.set
+    ? { ox: tokenFrame.ox, oy: tokenFrame.oy, scale: tokenFrame.scale } : null;
+  return { name, img_url, actorId, inheritSize, footprint, numberBase, count, frame };
+}
+
+// The request bodies for a plan placed at a grid origin. ONE function feeds both
+// the ghosts and the requests, so what is shown is what is sent.
+function placementBodies(plan, origin) {
+  if (plan.count === 1) {
     const body = { x: origin.x, y: origin.y };
-    if (actorId) body.actor_id = actorId;
+    if (plan.actorId) body.actor_id = plan.actorId;
     // Omitted when blank so the character's own value comes through. With no
     // character selected this is identical to the pre-M6 behaviour, because the
     // server treats an absent name on an unlinked token as no name.
-    if (name) body.name = name;
-    if (img_url) body.img_url = img_url;
+    if (plan.name) body.name = plan.name;
+    if (plan.img_url) body.img_url = plan.img_url;
     // Send the chosen crop for the override image (only when the user framed it).
-    if (img_url && tokenFrame.set) {
-      body.img_offset_x = tokenFrame.ox;
-      body.img_offset_y = tokenFrame.oy;
-      body.img_scale = tokenFrame.scale;
+    if (plan.frame) {
+      body.img_offset_x = plan.frame.ox;
+      body.img_offset_y = plan.frame.oy;
+      body.img_scale = plan.frame.scale;
     }
-    if (!inheritSize) { body.width = footprint; body.height = footprint; }
-
-    const r = await api('POST', `/api/campaigns/${campaignId}/scenes/${scene.id}/tokens`, body);
-    show(`place token -> ${r.status}`, r.data);
-    return;
+    if (!plan.inheritSize) { body.width = plan.footprint; body.height = plan.footprint; }
+    return [body];
   }
-  if (!isGm()) return show('only the GM can place multiple tokens at once');
 
   // Bulk placement inherits per spec, on the same absence rule. Numbering now
   // uses numberBase — a typed name, or the character's own name when none was
   // typed — so a pile placed from one character is individually referable
   // ("Frog", "Frog 2"…). Sending an explicit name also means the server keeps
   // it rather than re-filling the character's bare name on every token.
-  const offsets = packOffsets(count, footprint);
-  const specs = offsets.map((o, i) => {
+  const footprint = plan.footprint;
+  const specs = packOffsets(plan.count, footprint).map((o, i) => {
     const spec = { hidden: false, x: origin.x + o.dx, y: origin.y + o.dy };
-    if (actorId) spec.actor_id = actorId;
-    if (numberBase) spec.name = instanceName(numberBase, i);
-    if (img_url) spec.img_url = img_url;
-    if (img_url && tokenFrame.set) {
-      spec.img_offset_x = tokenFrame.ox;
-      spec.img_offset_y = tokenFrame.oy;
-      spec.img_scale = tokenFrame.scale;
+    if (plan.actorId) spec.actor_id = plan.actorId;
+    if (plan.numberBase) spec.name = instanceName(plan.numberBase, i);
+    if (plan.img_url) spec.img_url = plan.img_url;
+    if (plan.frame) {
+      spec.img_offset_x = plan.frame.ox;
+      spec.img_offset_y = plan.frame.oy;
+      spec.img_scale = plan.frame.scale;
     }
-    if (!inheritSize) { spec.width = footprint; spec.height = footprint; }
+    if (!plan.inheritSize) { spec.width = footprint; spec.height = footprint; }
     return spec;
   });
 
@@ -1017,13 +1065,164 @@ document.getElementById('place-token').addEventListener('click', async () => {
       s.y = Math.max(0, s.y - shiftY);
     }
   }
+  return specs;
+}
 
+// Send a plan with the requests placement has always used. Resolves to whether
+// it was created and the rows the server returned (shaped for this viewer).
+async function sendPlacement(plan, origin) {
+  const bodies = placementBodies(plan, origin);
+  if (plan.count === 1) {
+    const r = await api('POST', `/api/campaigns/${campaignId}/scenes/${scene.id}/tokens`, bodies[0]);
+    show(`place token -> ${r.status}`, r.data);
+    return { ok: r.status === 201, rows: r.data && r.data.token ? [r.data.token] : [] };
+  }
   const r = await api('POST', `/api/campaigns/${campaignId}/scenes/${scene.id}/tokens/copy`,
-    { tokens: specs });
-  show(`place ${count} -> ${r.status}`, {
-    at: origin, block: `${Math.ceil(Math.sqrt(count))} wide`,
+    { tokens: bodies });
+  show(`place ${plan.count} -> ${r.status}`, {
+    at: origin, block: `${Math.ceil(Math.sqrt(plan.count))} wide`,
     created: r.data && r.data.tokens && r.data.tokens.length,
   });
+  return { ok: r.status === 201, rows: r.data && Array.isArray(r.data.tokens) ? r.data.tokens : [] };
+}
+
+// What each ghost looks like: the body that will be sent, completed with what
+// the server will inherit from the character when a field is absent. A preview
+// only; the server decides the real values.
+function ghostRows(plan, origin) {
+  const look = plan.actorId ? actorLookById.get(plan.actorId) : null;
+  const inheritedSize = (look && SIZE_UNITS[String(look.size || '').toLowerCase()]) || 1;
+  return placementBodies(plan, origin).map((b) => {
+    const ownPicture = !!b.img_url;
+    return {
+      x: b.x, y: b.y,
+      width: b.width !== undefined ? b.width : inheritedSize,
+      height: b.height !== undefined ? b.height : inheritedSize,
+      name: b.name !== undefined ? b.name : (look ? look.name : ''),
+      img_url: ownPicture ? b.img_url : (look ? look.img_url : null),
+      img_offset_x: ownPicture ? b.img_offset_x : (look ? look.img_offset_x : 0),
+      img_offset_y: ownPicture ? b.img_offset_y : (look ? look.img_offset_y : 0),
+      img_scale: ownPicture ? b.img_scale : (look ? look.img_scale : 1),
+    };
+  });
+}
+
+// The placement in progress, or null. The ghosts are children of the stage, so
+// they pan and zoom with the map; they are NOT in `tokens`, so marquee,
+// select-all, keyboard moves and the context menu never see them.
+let placing = null;   // { plan, ghosts: [el], press }
+let placePointer = null;   // last pointer position over the canvas (client px)
+let swallowContextMenu = false;   // the right click that cancelled a placement
+// How far a press may travel and still count as a click that places, rather
+// than the start of a pan. The mouse value is the pan's own threshold; a finger
+// is less steady, so a tap gets more room.
+const PLACE_SLOP_MOUSE = 4;
+const PLACE_SLOP_TOUCH = 10;
+
+function startPlacement(plan) {
+  cancelPlacement();
+  if (pickState) endPick(null);
+  const ghosts = ghostRows(plan, { x: 0, y: 0 }).map((row) => {
+    const el = document.createElement('div');
+    el.className = 'token ghost';
+    el.setAttribute('aria-hidden', 'true');
+    const art = document.createElement('div');
+    art.className = 'art';
+    el.appendChild(art);
+    const cap = document.createElement('div');
+    cap.className = 'cap';
+    cap.textContent = row.name || '(token)';
+    el.appendChild(cap);
+    el.style.width = (row.width * GRID_PX) + 'px';
+    el.style.height = (row.height * GRID_PX) + 'px';
+    // Hidden until the pointer is over the map. visibility, not display: a
+    // display:none frame has no size, and paintArt lays the picture out from
+    // the frame's size — a character portrait never appeared in the ghost.
+    el.style.visibility = 'hidden';
+    stage.appendChild(el);
+    paintArt(el, row);
+    return el;
+  });
+  placing = { plan, ghosts, press: null };
+  wrap.classList.add('placing');
+  // The game shell closes the form on this (game.js); the canvas does not reach
+  // into the shell's popovers itself.
+  window.dispatchEvent(new CustomEvent('vtt:placement-start'));
+  log(`placing ${plan.count > 1 ? plan.count + ' tokens' : 'a token'} — click the map; Esc or right-click cancels`);
+  if (placePointer) showGhostsAt(placePointer.x, placePointer.y);
+}
+
+function removeGhosts(ghosts) { for (const el of ghosts) el.remove(); }
+
+// End a placement without creating anything. Safe to call when none is active.
+function cancelPlacement(reason) {
+  if (!placing) return;
+  removeGhosts(placing.ghosts);
+  placing = null;
+  wrap.classList.remove('placing');
+  if (reason) log(reason);
+}
+
+// Lay the ghosts out for the square under a screen point. Uses the same
+// conversion (stageGrid) and the same layout (placementBodies) as the commit.
+function showGhostsAt(clientX, clientY) {
+  if (!placing) return;
+  const origin = stageGrid({ clientX, clientY });
+  ghostRows(placing.plan, origin).forEach((row, i) => {
+    const el = placing.ghosts[i];
+    el.style.left = (row.x * GRID_PX) + 'px';
+    el.style.top = (row.y * GRID_PX) + 'px';
+    el.style.visibility = '';
+  });
+}
+
+function hideGhosts() {
+  if (!placing) return;
+  for (const el of placing.ghosts) el.style.visibility = 'hidden';
+}
+
+// Commit at a grid origin: the ghosts stay where they were dropped until the
+// server answers, then either become real tokens or disappear. The interaction
+// itself ends at once, so a second click cannot place twice.
+async function commitPlacement(origin) {
+  const p = placing;
+  if (!p) return;
+  placing = null;
+  wrap.classList.remove('placing');
+  ghostRows(p.plan, origin).forEach((row, i) => {
+    p.ghosts[i].style.left = (row.x * GRID_PX) + 'px';
+    p.ghosts[i].style.top = (row.y * GRID_PX) + 'px';
+    p.ghosts[i].style.visibility = '';
+  });
+  const sceneId = scene && scene.id;
+  try {
+    const res = await sendPlacement(p.plan, origin);
+    // Draw the created tokens from the response, so they appear at full opacity
+    // the moment the ghosts go. The room broadcast carries the same rows and
+    // upsertToken is idempotent, so whichever arrives second changes nothing.
+    if (res.ok && scene && scene.id === sceneId) {
+      for (const row of res.rows) if (row && row.id && row.scene_id === sceneId) upsertToken(row);
+    }
+  } catch (err) {
+    log(`placement failed: ${err && err.message ? err.message : err}`);
+  } finally {
+    removeGhosts(p.ghosts);
+  }
+}
+
+// A press that ended: a click places, a drag was a pan and places nothing.
+function settlePlacementPress(e) {
+  const press = placing && placing.press;
+  if (!press) return;
+  placing.press = null;
+  if (e.type !== 'pointerup' || e.pointerId !== press.id) return;
+  const travel = Math.abs(e.clientX - press.x) + Math.abs(e.clientY - press.y);
+  if (travel <= (press.touch ? PLACE_SLOP_TOUCH : PLACE_SLOP_MOUSE)) commitPlacement(press.origin);
+}
+
+document.getElementById('place-token').addEventListener('click', () => {
+  const plan = readPlacementForm();
+  if (plan) startPlacement(plan);
 });
 
 // --- token pointer: click to select, drag to move (single or group) ---
@@ -1184,7 +1383,42 @@ const view = { x: 0, y: 0, z: 1 };
 // says whether the gesture was a click or a drag. Nothing has to be tracked, so
 // nothing can be tracked wrongly — the flag is gone rather than corrected.
 
-// Keep the map inside the viewport.
+// Keep part of the map on screen.
+//
+// [CHANGED 2026-10-07] THE RULE IS NOW "NEVER LOSE THE MAP", NOT "NEVER SHOW AN
+// EDGE". The 2026-08-10 rule below (no empty background while the world is
+// larger than the viewport, centred while it is smaller) made a zoomed-out map
+// almost immovable: at 25% the whole grid is smaller than the window, so it was
+// pinned in the middle and a drag did nothing at all. That is the opposite of
+// what zooming out is for — getting an overview and moving around it.
+//
+// The new rule: the map may be dragged far past its edges, in either direction,
+// at every zoom, until only KEEP_VISIBLE (15%) of the visible canvas still shows
+// it — measured per axis, so dragging into a corner leaves a 15% x 15% corner.
+// It can never be dragged away completely.
+//
+// "The map" is the map PICTURE: the scene box, grown to the background image's
+// drawn extent when the image is larger (applyGridAlignment sizes #stage-bg to
+// an uncalibrated or scaled image, which may reach far into the pad). So a big
+// battle map stays reachable to its last corner, and 15% of it — not 15% of
+// empty pad grid — is what remains on screen at the limit. (A first version of
+// this fix used the whole grid, scene plus pad; at the limit that left only a
+// corner of empty grid lines on screen and the picture gone — which is the
+// map being lost, just more politely.)
+//
+// What this gives up, deliberately: zoomed IN, the old rule let the view travel
+// all the way across the pad, so at 400% the screen could show nothing but pad.
+// That is now refused, because it is the map being lost. Squares near the
+// board stay reachable (at 100% on a 1440x900 window with the sidebar open,
+// about 18 pad squares sideways and 14 up or down; all 24 once zoomed out), so
+// tokens parked off the board are still found.
+//
+// "Visible canvas" is the part of the viewport that is not covered by the
+// game's own chrome: the top bar, the right sidebar while it is open, and the
+// dice tray along the bottom. A 15% strip on the right would otherwise sit
+// entirely under the 360px sidebar, and the map would be lost behind it. Where
+// those elements do not exist (the jsdom fixtures) the visible canvas is the
+// whole viewport.
 //
 // [ADDED 2026-08-10] Nothing constrained the pan, so the map could be dragged —
 // or FOCUSED — into a position where most of the viewport was empty
@@ -1194,53 +1428,105 @@ const view = { x: 0, y: 0, z: 1 };
 // camera is offset" rather than as "the ping is wrong": the centring was exact
 // and the framing was absurd.
 //
-// The rule is the ordinary one for maps:
+// The rule was then the ordinary one for maps:
 //   larger than the viewport  -> no empty edge is allowed; pan up to the edges
 //   smaller than the viewport -> centred, and it stays centred
-//
-// Applied in applyView rather than at each call site, so panning, zooming and
+// (superseded 2026-10-07, see above). What survives from it is WHERE the rule
+// lives: in applyView rather than at each call site, so panning, zooming and
 // focusing are all constrained by one function — three callers with three
 // copies of a clamp is how they drift apart.
-function clampView() {
-  if (!scene) return;
-  // clientWidth, not getBoundingClientRect().width: the content box is where
-  // the stage actually sits, and the border is what made the centring land one
-  // pixel out.
+const KEEP_VISIBLE = 0.15;
+
+// The part of the viewport the map is really seen through, in wrapper-local
+// pixels: the viewport minus the top bar, the open sidebar and the dice tray. Measured on each
+// clamp, so a collapsed sidebar (transformed off screen) or a resized window is
+// simply what it is at that moment.
+//
+// clientWidth, not getBoundingClientRect().width, for the viewport itself: the
+// content box is where the stage actually sits, and the border is what once
+// made the centring land one pixel out.
+function visibleCanvas() {
   const vw = wrap.clientWidth;
   const vh = wrap.clientHeight;
+  const out = { left: 0, top: 0, right: vw, bottom: vh };
+  const wr = wrap.getBoundingClientRect();
+  const bar = document.getElementById('topBar');
+  if (bar) {
+    const r = bar.getBoundingClientRect();
+    if (r.height > 0 && r.bottom > wr.top) out.top = Math.min(vh, r.bottom - wr.top);
+  }
+  const side = document.getElementById('sideBar');
+  if (side) {
+    const r = side.getBoundingClientRect();
+    if (r.width > 0 && r.left < wr.left + vw) out.right = Math.max(0, Math.min(vw, r.left - wr.left));
+  }
+  // The dice tray floats across the bottom; it is not full width, but the
+  // corner the map leaves at the bottom limit sat right behind it, so it is
+  // treated as a bottom band. (The left rail is small enough to leave alone.)
+  const tray = document.getElementById('diceTrayBar');
+  if (tray) {
+    const r = tray.getBoundingClientRect();
+    if (r.height > 0 && r.top < wr.top + vh) out.bottom = Math.max(0, Math.min(out.bottom, r.top - wr.top));
+  }
+  // A window too small to leave anything uncovered falls back to the whole
+  // viewport rather than to a zero-size target.
+  if (out.right - out.left < 1) { out.left = 0; out.right = vw; }
+  if (out.bottom - out.top < 1) { out.top = 0; out.bottom = vh; }
+  return out;
+}
 
-  // The pannable world is the image PLUS the pad on every side, so the clamp
-  // stops at the edge of the grid rather than at the edge of the picture. This
-  // is what gives the overshoot room, and it is the same rule as before applied
-  // to a larger rectangle rather than a second rule bolted alongside it.
-  //
-  // The world starts at stage-local -PAD_PX, not 0, so the upper bound on
-  // view.x is PAD_PX * z rather than 0 — the map may be pushed right until the
-  // grid's left edge reaches the viewport's, and no further.
-  const sw = (SCENE_SIZE.w + PAD_PX * 2) * view.z;
-  const sh = (SCENE_SIZE.h + PAD_PX * 2) * view.z;
-  const originX = PAD_PX * view.z;
-  const originY = PAD_PX * view.z;
+// The map picture's extent in stage pixels: the scene box, and the background
+// element when it has been sized to a larger (or offset) image. Read from the
+// inline style applyGridAlignment writes, so it costs no layout.
+function mapExtent() {
+  const st = stageBg.style;
+  const left = parseFloat(st.left) || 0;
+  const top = parseFloat(st.top) || 0;
+  const w = parseFloat(st.width);
+  const h = parseFloat(st.height);
+  return {
+    x0: Math.min(0, left),
+    y0: Math.min(0, top),
+    x1: Math.max(SCENE_SIZE.w, Number.isFinite(w) ? left + w : 0),
+    y1: Math.max(SCENE_SIZE.h, Number.isFinite(h) ? top + h : 0),
+  };
+}
 
-  view.x = sw <= vw
-    ? (vw - sw) / 2 + originX
-    : Math.min(originX, Math.max(vw - sw + originX, view.x));
-  view.y = sh <= vh
-    ? (vh - sh) / 2 + originY
-    : Math.min(originY, Math.max(vh - sh + originY, view.y));
+// One axis of the clamp. The map occupies [v + lo, v + lo + size] on screen.
+// It must overlap the visible span [a, b] by at least `keep`:
+//   its far edge   v + lo + size >= a + keep
+//   its near edge  v + lo        <= b - keep
+// keep is 15% of the visible span, but never more than the map itself, so a
+// map narrower than 15% of the window can still be pushed to either side.
+function clampAxis(v, lo, size, a, b) {
+  const keep = Math.min(KEEP_VISIBLE * (b - a), size);
+  const min = a + keep - lo - size;
+  const max = b - keep - lo;
+  return Math.min(max, Math.max(min, v));
+}
+
+function clampView() {
+  if (!scene) return;
+  const c = visibleCanvas();
+  const m = mapExtent();
+  const z = view.z;
+  view.x = clampAxis(view.x, m.x0 * z, (m.x1 - m.x0) * z, c.left, c.right);
+  view.y = clampAxis(view.y, m.y0 * z, (m.y1 - m.y0) * z, c.top, c.bottom);
 }
 
 function applyView() {
   clampView();
   stage.style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.z})`;
   if (zoomHud) zoomHud.textContent = `${Math.round(view.z * 100)}%`;
+  // [ADDED 2026-10-07] The map moved under a still pointer (pan, wheel zoom, a
+  // focus ping): the square under it changed, so the placement ghosts follow.
+  if (placing && placePointer) showGhostsAt(placePointer.x, placePointer.y);
 }
 
-// Centre the map in the viewport at the current zoom. clampView already centres a
-// map SMALLER than the viewport, but a larger one is otherwise clamped to its
-// top-left corner on load; this sets the pan so the middle of the map sits in the
-// middle of the canvas, then applyView() clamps it (which is a no-op when already
-// centred). Called when a scene is opened so entering a game frames the map.
+// Centre the map in the viewport at the current zoom: the pan is set so the
+// middle of the map sits in the middle of the canvas, then applyView() clamps it
+// (a no-op, since a centred map is always inside the rule). Called when a scene
+// is opened so entering a game frames the map.
 function centerView() {
   if (!scene) return;
   const vw = wrap.clientWidth;
@@ -1273,34 +1559,132 @@ function setZoom(next, anchor) {
 
 function resetView() {
   view.x = 0; view.y = 0; view.z = 1;
-  // applyView clamps, so a map smaller than the viewport lands centred rather
-  // than pinned to the top-left corner.
   applyView();
 }
 
 // Wheel zooms. preventDefault because the wrapper no longer scrolls — the
 // transform is the only thing that moves the map, and letting the page scroll
 // underneath a map you are zooming is the worst of both.
+//
+// [CHANGED 2026-10-07] AT MOST ONE ZOOM STEP IS APPLIED PER DISPLAY FRAME.
+// A trackpad (and Safari's smooth wheel) delivers several wheel events per
+// frame. Each used to run setZoom on its own, and setZoom reads the wrapper's
+// bounding rect right after the previous step wrote the transform — a forced
+// style and layout pass per event, all for frames the screen never shows.
+// Measured in a Chromium trace: 64 such forced passes in 180 wheel events.
+// WebKit then re-rasterises the scaled stage for each new scale it is handed.
+//
+// The first step of a burst is applied at once, so a single mouse-wheel notch
+// feels exactly as before. Steps that arrive before the next frame are folded
+// into one: the target zoom is computed step by step with the same factor and
+// the same MIN_ZOOM/MAX_ZOOM clamp at every step, so where a burst ends is
+// unchanged; the anchor is the latest pointer position. The view itself is
+// still written synchronously (applyView), so every coordinate conversion —
+// stagePoint reads the stage's rect — always sees a transform that matches
+// `view`.
+let wheelPending = null;   // { z, anchor } folded since the last applied step
+let wheelFrameArmed = false;
+
+function wheelFrame() {
+  wheelFrameArmed = false;
+  if (!wheelPending) return;
+  const p = wheelPending;
+  wheelPending = null;
+  if (!scene) return;
+  setZoom(p.z, p.anchor);
+  wheelFrameArmed = true;      // one step per frame, so wait for the next one
+  nextFrame(wheelFrame);
+}
+
+// Apply a folded step now rather than at the next frame. For the suites, which
+// dispatch wheel events faster than any frame and then read the result.
+function settleWheelZoom() {
+  if (!wheelPending) return;
+  const p = wheelPending;
+  wheelPending = null;
+  if (scene) setZoom(p.z, p.anchor);
+}
+
 wrap.addEventListener('wheel', (e) => {
   if (!scene) return;
   e.preventDefault();
   // Multiplicative, so a step feels the same at 25% as at 400%.
-  setZoom(view.z * (e.deltaY < 0 ? 1.12 : 1 / 1.12), { x: e.clientX, y: e.clientY });
+  const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+  const from = wheelPending ? wheelPending.z : view.z;
+  const z = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, from * factor));
+  const anchor = { x: e.clientX, y: e.clientY };
+  if (!wheelFrameArmed) {
+    setZoom(z, anchor);
+    wheelFrameArmed = true;
+    nextFrame(wheelFrame);
+  } else {
+    wheelPending = { z, anchor };
+  }
 }, { passive: false });
 
 // Left-drag on empty space pans. Attached to the WRAPPER, not the stage: the
 // stage is the thing being moved, and a drag handler on a moving element
 // chases its own transform.
 let pan = null;
+function beginPan(e) {
+  pan = { x: e.clientX, y: e.clientY, vx: view.x, vy: view.y };
+  wrap.classList.add('panning');
+  wrap.setPointerCapture(e.pointerId);
+}
 wrap.addEventListener('pointerdown', (e) => {
   if (e.button !== 0 || !scene) return;
+  // A placement owns the press; its capture listener below already began the pan.
+  if (placing) return;
   // A token, a fog region or a fog draw tool owns the left button where it
   // applies. Panning is what is left over — empty space only.
   if (e.target !== stage && e.target !== stageBg && e.target !== wrap) return;
   if (fogMode) return;
-  pan = { x: e.clientX, y: e.clientY, vx: view.x, vy: view.y };
-  wrap.classList.add('panning');
-  wrap.setPointerCapture(e.pointerId);
+  beginPan(e);
+});
+
+// [ADDED 2026-10-07] While a placement is armed it owns the canvas's presses,
+// in the CAPTURE phase so they never reach a token (no select, no drag), the
+// stage (no marquee, no context menu) or the fog layer:
+//   left press   -> a pan begins, from anywhere, as on empty space; released
+//                   without travelling it is a click, and the click places
+//                   (settlePlacementPress, from endPan)
+//   right press  -> cancels; the context menu that follows it is swallowed
+// Wheel zoom is untouched: it is a separate event and still zooms.
+wrap.addEventListener('pointerdown', (e) => {
+  swallowContextMenu = false;
+  if (!placing || !scene) return;
+  e.stopPropagation();
+  if (e.button === 2) {
+    e.preventDefault();
+    swallowContextMenu = true;
+    cancelPlacement('placement cancelled');
+    return;
+  }
+  if (e.button !== 0) return;
+  placePointer = { x: e.clientX, y: e.clientY };
+  showGhostsAt(e.clientX, e.clientY);
+  placing.press = {
+    id: e.pointerId, x: e.clientX, y: e.clientY,
+    origin: stageGrid(e), touch: e.pointerType === 'touch',
+  };
+  beginPan(e);
+}, true);
+
+// The ghosts follow the pointer over the canvas, and leave with it: over the
+// sidebar, the rail or outside the window there is no square to show.
+wrap.addEventListener('pointermove', (e) => {
+  placePointer = { x: e.clientX, y: e.clientY };
+  if (placing) showGhostsAt(e.clientX, e.clientY);
+});
+wrap.addEventListener('pointerleave', () => {
+  placePointer = null;
+  hideGhosts();
+});
+// The right click that cancelled must not open the browser's menu. On macOS
+// contextmenu follows the press, on Windows the release; either way it is the
+// next one to arrive, and the next press re-arms nothing.
+wrap.addEventListener('contextmenu', (e) => {
+  if (placing || swallowContextMenu) { e.preventDefault(); swallowContextMenu = false; }
 });
 wrap.addEventListener('pointermove', (e) => {
   if (!pan) return;
@@ -1314,10 +1698,13 @@ wrap.addEventListener('pointermove', (e) => {
 });
 function endPan(e) {
   if (!pan) return;
+  // [ADDED 2026-10-07] While placing, the press belongs to the placement: a
+  // click places, a drag was only a pan. Neither touches the selection.
+  if (placing && placing.press) settlePlacementPress(e);
   // [ADDED 2026-10-01] A left CLICK on empty space (a press that did not turn
   // into a pan) clears the token selection, as in every map and drawing tool.
   // A drag keeps it, so panning to look around doesn't lose what you selected.
-  if (e.type === 'pointerup' && !pan.moved && selection.size) setSelection([]);
+  else if (e.type === 'pointerup' && !pan.moved && selection.size && !placing) setSelection([]);
   pan = null;
   wrap.classList.remove('panning');
   try { wrap.releasePointerCapture(e.pointerId); } catch { /* already released */ }
@@ -1745,11 +2132,11 @@ function openCtxMenu(px, py) {
   // check applies unchanged — it validates a finite number inside the scene,
   // and never required that number to be whole.
   const at = { x: cursorPoint.x, y: cursorPoint.y };
-  item('ping here', () => sendPing(at.x, at.y, false));
+  item('Ping here', () => sendPing(at.x, at.y, false));
   if (gm) {
     // A focus ping MOVES every player's view. GM-only, and named so the
     // difference is visible in the menu rather than being a surprise.
-    item('ping and focus everyone', () => sendPing(at.x, at.y, true));
+    item('Ping and focus everyone', () => sendPing(at.x, at.y, true));
   }
 
   if (gm && sel.length) {
@@ -1758,7 +2145,7 @@ function openCtxMenu(px, py) {
     // nothing on an empty selection.
     sep();
     const sizeHead = document.createElement('div');
-    sizeHead.className = 'head'; sizeHead.textContent = 'resize (5e)';
+    sizeHead.className = 'head'; sizeHead.textContent = 'Resize (5e)';
     ctxMenu.appendChild(sizeHead);
     for (const size of SIZE_PRESETS) item(`  ${size}`, () => resizeSelection(size));
     sep();
@@ -2014,30 +2401,40 @@ function renderFog() {
   const covered = [...fog.values()].filter((f) => !f.revealed);
   const revealed = [...fog.values()].filter((f) => f.revealed);
 
-  const defs = svgEl('defs');
-  const mask = svgEl('mask', { id: 'fog-mask' });
-  // Black base: nothing is painted until a covered region says otherwise.
-  mask.appendChild(svgEl('rect', { x: 0, y: 0, width: SCENE_SIZE.w, height: SCENE_SIZE.h, fill: 'black' }));
+  // [ADDED 2026-10-07] No covered region, no fog to paint — and no mask. The
+  // masked full-scene rect below is drawn on every scene, fog or not, and an
+  // SVG mask is rendered through an offscreen buffer the size of its on-screen
+  // area. In Safari that buffer is redrawn at every zoom step (WebKit
+  // re-rasterises the scaled stage), and its area grows with the square of the
+  // zoom — part of what made zooming in lag. With nothing covered the mask is
+  // all black and the rect paints nothing, so leaving both out changes nothing
+  // on screen. Editing outlines and the draw preview below are unaffected.
   const remember = (id, el) => {
     if (!fogNodes.has(id)) fogNodes.set(id, []);
     fogNodes.get(id).push(el);
     return el;
   };
-  for (const f of covered) mask.appendChild(remember(f.id, fogShape(f, { fill: 'white' })));
-  // Revealed regions punch back through, whatever order they were drawn in.
-  for (const f of revealed) mask.appendChild(remember(f.id, fogShape(f, { fill: 'black' })));
-  defs.appendChild(mask);
-  fogLayer.appendChild(defs);
+  if (covered.length) {
+    const defs = svgEl('defs');
+    const mask = svgEl('mask', { id: 'fog-mask' });
+    // Black base: nothing is painted until a covered region says otherwise.
+    mask.appendChild(svgEl('rect', { x: 0, y: 0, width: SCENE_SIZE.w, height: SCENE_SIZE.h, fill: 'black' }));
+    for (const f of covered) mask.appendChild(remember(f.id, fogShape(f, { fill: 'white' })));
+    // Revealed regions punch back through, whatever order they were drawn in.
+    for (const f of revealed) mask.appendChild(remember(f.id, fogShape(f, { fill: 'black' })));
+    defs.appendChild(mask);
+    fogLayer.appendChild(defs);
 
-  // The GM sees through their own fog; players do not. This is a rendering
-  // choice, NOT a security boundary: the scene image reaches every member
-  // regardless, so fog conceals nothing that a player could not already fetch.
-  const painted = svgEl('rect', {
-    x: 0, y: 0, width: SCENE_SIZE.w, height: SCENE_SIZE.h,
-    fill: '#0b0b12', 'fill-opacity': isGm() ? 0.55 : 1, mask: 'url(#fog-mask)',
-  });
-  painted.setAttribute('pointer-events', 'none');
-  fogLayer.appendChild(painted);
+    // The GM sees through their own fog; players do not. This is a rendering
+    // choice, NOT a security boundary: the scene image reaches every member
+    // regardless, so fog conceals nothing that a player could not already fetch.
+    const painted = svgEl('rect', {
+      x: 0, y: 0, width: SCENE_SIZE.w, height: SCENE_SIZE.h,
+      fill: '#0b0b12', 'fill-opacity': isGm() ? 0.55 : 1, mask: 'url(#fog-mask)',
+    });
+    painted.setAttribute('pointer-events', 'none');
+    fogLayer.appendChild(painted);
+  }
 
   fogLayer.classList.toggle('editing', editing);
   // No select-only cursor state any more: in fog mode the layer both draws
@@ -2346,6 +2743,7 @@ async function commitFogMove(e) {
 // not access control.
 function setFogMode(on) {
   const next = !!on && isGm();
+  if (next) cancelPlacement();   // fog mode owns the left button; never both
   fogMode = next;
   fogModeEl.checked = next;          // keeps the checkbox honest when F is used
   // Leaving fog mode drops any in-progress drawing and any fog selection, so the
@@ -2367,13 +2765,13 @@ fogToolEl.addEventListener('change', () => {
 });
 
 document.getElementById('fog-cover-all').addEventListener('click', async () => {
-  if (!scene) return show('open a scene first');
+  if (!scene) return show('Open a scene first');
   const cols = SCENE_SIZE.w / GRID_PX, rows = SCENE_SIZE.h / GRID_PX;
   await createFog('rect', [{ x: 0, y: 0 }, { x: cols, y: rows }], false);
 });
 
 document.getElementById('fog-clear-all').addEventListener('click', async () => {
-  if (!scene) return show('open a scene first');
+  if (!scene) return show('Open a scene first');
   const r = await api('POST', `${fogUrl()}/batch-delete`, { all: true });
   show(`clear all fog -> ${r.status}`, r.data);
 });
@@ -2394,7 +2792,7 @@ function openFogCtxMenu(px_, py_) {
   };
   const sep = () => { const s = document.createElement('div'); s.className = 'sep'; ctxMenu.appendChild(s); };
 
-  item('toggle cover / reveal', toggleFogSelection);
+  item('Toggle cover / reveal', toggleFogSelection);
   sep();
   item('copy', copyFogSelection);
   item('cut', cutFogSelection);
@@ -2450,6 +2848,16 @@ function fogKeydown(e) {
 const BIG_NUDGE = 5;   // squares moved per Shift+arrow
 
 document.addEventListener('keydown', (e) => {
+  // [ADDED 2026-10-07] A placement is modal on the canvas: Esc cancels it, and
+  // no shortcut may select, move, paste or delete anything meanwhile. An open
+  // dialog keeps its own Esc (it closes the dialog, not the placement).
+  if (placing) {
+    if (e.key === 'Escape' && !document.querySelector('dialog[open]')) {
+      e.preventDefault();
+      cancelPlacement('placement cancelled');
+    }
+    return;
+  }
   // Never hijack typing in a form field.
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
   if (!scene) return;
@@ -2523,7 +2931,7 @@ const roomConnection = window.VTTCommon.watchCampaignSocket('scene', socket,
       await loadScenes();
       const target = isGm() ? (selected || activeSceneId) : activeSceneId;
       if (target) await openScene(target);
-      else closeScene('the GM has not opened a scene yet');
+      else closeScene('The GM has not opened a scene yet');
       if (recoveryFailed) throw new Error('State refresh failed');
     } finally { recoveringSocket = false; }
   }, value => { joinedRoom = value; });
@@ -2591,7 +2999,7 @@ socket.on('fog:deleted-batch', (d) => {
 // scene was the active one, players are told separately via scene:activated.
 socket.on('scene:deleted', (d) => {
   if (!campaignId || d.campaign_id !== campaignId) return;
-  if (scene && scene.id === d.id) closeScene('this scene was deleted');
+  if (scene && scene.id === d.id) closeScene('This scene was deleted');
   lastSceneList = lastSceneList.filter((x) => x.id !== d.id);
   renderSceneList(lastSceneList);
   log('a scene was deleted');
@@ -2721,7 +3129,7 @@ socket.on('scene:activated', (d) => {
     renderSceneList(lastSceneList);
     return;
   }
-  if (!d.scene_id) { closeScene('the GM closed the scene'); renderSceneList([]); return; }
+  if (!d.scene_id) { closeScene('The GM closed the scene'); renderSceneList([]); return; }
   if (scene && scene.id === d.scene_id) return;   // already here
   log('GM switched the active scene — following');
   openScene(d.scene_id);
@@ -2771,7 +3179,7 @@ if (window.VTTImagePicker) {
     // Choosing an image frames it in the picker; the crop rides with placement.
     frame: () => ({ offsetX: tokenFrame.ox, offsetY: tokenFrame.oy, scale: tokenFrame.scale }),
     frameTitle: 'Frame the token image',
-    frameNote: 'Drag to move · scroll to zoom. This is the crop the token will use.',
+    frameNote: 'Drag to move, scroll to zoom. This is the crop the token will use.',
     onChoose: (url, framing) => {
       if (framing) tokenFrame = { ox: framing.offsetX, oy: framing.offsetY, scale: framing.scale, set: true };
     },
