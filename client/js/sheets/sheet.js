@@ -153,11 +153,11 @@ window.VTTSheet = (function () {
   ];
 
   for (const [key, label] of SAVES) {
-    FIELDS.push({ key: `${key}_p`, label: 'prof', type: 'bool', tier: 'player', path: 'data', group: 'saves', narrow: true });
+    FIELDS.push({ key: `${key}_p`, label: 'Prof', type: 'bool', tier: 'player', path: 'data', group: 'saves', narrow: true });
     FIELDS.push({ key, label, type: 'text', max: 8, tier: 'player', path: 'data', group: 'saves', narrow: true });
   }
   for (const [key, label, abil] of SKILLS) {
-    FIELDS.push({ key: `${key}_p`, label: 'prof', type: 'bool', tier: 'player', path: 'data', group: 'skills', narrow: true });
+    FIELDS.push({ key: `${key}_p`, label: 'Prof', type: 'bool', tier: 'player', path: 'data', group: 'skills', narrow: true });
     // The ability abbreviation is part of the LABEL only. It is a reminder of
     // which score a table would use; the sheet never reads that score.
     FIELDS.push({ key, label: `${label} (${abil})`, type: 'text', max: 8, tier: 'player', path: 'data', group: 'skills', narrow: true });
@@ -174,12 +174,12 @@ window.VTTSheet = (function () {
     { id: 'identity', title: 'Identity' },
     { id: 'vitals', title: 'Vitals' },
     { id: 'abilities', title: 'Ability scores' },
-    { id: 'saves', title: 'Saving throws', hint: 'Type the bonus yourself — nothing here is calculated from an ability score or a proficiency bonus.' },
-    { id: 'skills', title: 'Skills', hint: 'Storage only. The tick marks proficiency for your own reference; it adds nothing to the number beside it.' },
-    { id: 'currency', title: 'Currency', hint: 'Stored, never arithmetic — nothing is deducted or converted automatically.' },
-    { id: 'combat', title: 'Attacks, proficiencies & features', hint: 'Free text on purpose. Attack bonuses are not computed, and there is no skill grid — the 18-skill system is out of scope, so write what you need here.' },
+    { id: 'saves', title: 'Saving throws', hint: 'Enter a bonus value here, including your ability modifier and proficiency. The sheet doesn\'t calculate automatically.' },
+    { id: 'skills', title: 'Skills', hint: 'Storage only. The tick marks proficiency for your own reference, it adds nothing to the number beside it.' },
+    { id: 'currency', title: 'Currency', hint: 'Stored, never arithmetic, nothing is deducted or converted automatically.' },
+    { id: 'combat', title: 'Attacks, proficiencies & features', hint: 'Free text on purpose. Attack bonuses are not computed, and there is no skill grid. Write anything you need here.' },
     { id: 'character', title: 'Character', hint: 'Personality, appearance, allies, treasure.' },
-    { id: 'death', title: 'Death saves', hint: 'Two counters. The server stores them and never acts on them — no auto-stabilisation, no auto-death.' },
+    { id: 'death', title: 'Death saves', hint: 'Two counters. The server stores them and never acts on them. No auto-stabilisation, no auto-death.' },
     {
       id: 'freeform',
       title: 'Free text',
@@ -267,7 +267,7 @@ window.VTTSheet = (function () {
     container.className = 'folio';
     const a = ctx.actor;
     if (!a) {
-      container.appendChild(el('p', { cls: 'muted', text: 'select a character' }));
+      container.appendChild(el('p', { cls: 'muted', text: 'Select a character' }));
       return;
     }
 
@@ -702,7 +702,7 @@ window.VTTSheet = (function () {
     container.appendChild(errBox);
 
     if (!anyWritable) {
-      container.appendChild(el('p', { cls: 'muted as-readonly', text: 'Read-only — you do not control this character.' }));
+      container.appendChild(el('p', { cls: 'muted as-readonly', text: 'Read-only. You do not control this character.' }));
       // Read-only viewers get the composed sheet with no edit controls at all.
       return;
     }
@@ -760,7 +760,7 @@ window.VTTSheet = (function () {
     // number"). Anything unmatched falls back to the box at the top rather than
     // vanishing.
     function showError(message) {
-      const msg = String(message || 'request refused');
+      const msg = String(message || 'Request refused');
       let placed = false;
       for (const [key, { errNode }] of inputs) {
         const named = msg.includes(key);
@@ -793,7 +793,7 @@ window.VTTSheet = (function () {
         if (raw === '') continue;            // empty means "not on this sheet"
         if (field.type === 'int') {
           const n = Number(raw);
-          if (!Number.isInteger(n)) { errNode.textContent = 'whole numbers only'; bad = true; continue; }
+          if (!Number.isInteger(n)) { errNode.textContent = 'Whole numbers only'; bad = true; continue; }
           next[key] = n;
         } else {
           next[key] = raw;
@@ -822,7 +822,7 @@ window.VTTSheet = (function () {
 
     function refreshCounter() {
       const used = dataBytes();
-      counter.textContent = `data: ${used.toLocaleString()} / ${MAX_DATA_BYTES.toLocaleString()} bytes`;
+      counter.textContent = `Data: ${used.toLocaleString()} / ${MAX_DATA_BYTES.toLocaleString()} bytes`;
       counter.className = used > MAX_DATA_BYTES ? 'sheet-error' : 'muted';
     }
     for (const { field, node } of inputs.values()) {
@@ -848,9 +848,9 @@ window.VTTSheet = (function () {
         if (raw === valueOf(a, field)) continue;
 
         if (field.type === 'int') {
-          if (raw === '') { errNode.textContent = 'required'; clientError = true; continue; }
+          if (raw === '') { errNode.textContent = 'Required'; clientError = true; continue; }
           const n = Number(raw);
-          if (!Number.isInteger(n)) { errNode.textContent = 'whole numbers only'; clientError = true; continue; }
+          if (!Number.isInteger(n)) { errNode.textContent = 'Whole numbers only'; clientError = true; continue; }
           patch[key] = n;
         } else {
           patch[key] = raw;
@@ -866,20 +866,20 @@ window.VTTSheet = (function () {
       if (!clientError && patch.data) {
         const bytes = new TextEncoder().encode(JSON.stringify(patch.data)).length;
         if (bytes > MAX_DATA_BYTES) {
-          errBox.textContent = `data is ${bytes.toLocaleString()} bytes; the limit is ${MAX_DATA_BYTES.toLocaleString()}. Move long prose into Backstory, which is a separate 5000-character column.`;
+          errBox.textContent = `Data is ${bytes.toLocaleString()} bytes. The limit is ${MAX_DATA_BYTES.toLocaleString()}. Move long prose into Backstory, which is a separate 5000-character column.`;
           clientError = true;
         }
       }
 
-      if (clientError) { status.textContent = 'not sent — fix the fields above'; return; }
-      if (Object.keys(patch).length === 0) { status.textContent = 'nothing changed'; return; }
+      if (clientError) { status.textContent = 'Not sent. Fix the fields above'; return; }
+      if (Object.keys(patch).length === 0) { status.textContent = 'Nothing changed'; return; }
 
       saving = true; saveBtn.disabled = true;
-      status.textContent = 'saving…';
+      status.textContent = 'Saving…';
       try {
         const r = await ctx.onSave(patch);
         if (r.status === 200) {
-          status.textContent = `saved ${Object.keys(patch).length} field(s)`;
+          status.textContent = `Saved ${Object.keys(patch).length} field(s)`;
           // Saved values become the new baseline for Cancel, and the footer
           // hides until the next change. A subsequent refresh re-renders anyway;
           // if none comes, the live controls already hold the saved values.
@@ -888,11 +888,11 @@ window.VTTSheet = (function () {
           if (ctx.onDone) ctx.onDone(r);
         } else {
           // Failure keeps the sheet open with the footer showing and edits intact.
-          status.textContent = `refused (${r.status})`;
+          status.textContent = `Refused (${r.status})`;
           showError(r.data && r.data.error);
         }
       } catch (err) {
-        status.textContent = 'network error — your edits are kept';
+        status.textContent = 'Network error, your edits are kept';
       }
       saving = false; saveBtn.disabled = false;
     });

@@ -44,14 +44,14 @@ window.VTTItemSheet = (function () {
     { key: 'magical', label: 'Magical', type: 'bool', path: 'properties', group: 'extra' },
     { key: 'requires_attunement', label: 'Requires attunement', type: 'bool', path: 'properties', group: 'extra' },
     { key: 'cost', label: 'Cost', type: 'text', max: 30, path: 'properties', group: 'extra' },
-    { key: 'attunement_note', label: 'Attunement note', type: 'text', max: 120, path: 'properties', group: 'extra', wide: true, help: 'e.g. "by a druid"' },
+    { key: 'attunement_note', label: 'Attunement note', type: 'text', max: 120, path: 'properties', group: 'extra', wide: true, help: 'For example "by a druid"' },
 
-    { key: 'damage', label: 'Damage', type: 'text', max: 30, path: 'properties', group: 'weapon', help: 'Recorded only; nothing is rolled.' },
+    { key: 'damage', label: 'Damage', type: 'text', max: 30, path: 'properties', group: 'weapon', help: 'Recorded only, nothing is rolled.' },
     { key: 'damage_type', label: 'Damage type', type: 'text', max: 30, path: 'properties', group: 'weapon' },
     { key: 'weapon_range', label: 'Range', type: 'text', max: 30, path: 'properties', group: 'weapon' },
-    { key: 'weapon_properties', label: 'Properties', type: 'text', max: 120, path: 'properties', group: 'weapon', wide: true, help: 'finesse, light, thrown…' },
+    { key: 'weapon_properties', label: 'Properties', type: 'text', max: 120, path: 'properties', group: 'weapon', wide: true, help: 'Finesse, light, thrown…' },
 
-    { key: 'armor_class', label: 'Armour class', type: 'text', max: 40, path: 'properties', group: 'armor', help: 'Free text, e.g. "14 + Dex modifier (max 2)". Recorded only; does not change character stats.' },
+    { key: 'armor_class', label: 'Armour class', type: 'text', max: 40, path: 'properties', group: 'armor', help: 'Free text, e.g. "14 + Dex modifier (max 2)". Recorded only, does not change character stats.' },
     { key: 'armor_type', label: 'Armour type', type: 'select', options: ARMOR_TYPES, path: 'properties', group: 'armor' },
     { key: 'strength_req', label: 'Strength requirement', type: 'text', max: 20, path: 'properties', group: 'armor' },
     { key: 'stealth_disadvantage', label: 'Stealth disadvantage', type: 'bool', path: 'properties', group: 'armor', wide: true },
@@ -281,7 +281,7 @@ window.VTTItemSheet = (function () {
 
     const effectDisc = disclosure('Effect / rules', 'ie-disc-effect', false);
     buildPropField(effectDisc.body, 'effect');
-    effectDisc.body.appendChild(el('p', { cls: 'ie-help', text: 'What the item does \u2014 kept separate from the description.' }));
+    effectDisc.body.appendChild(el('p', { cls: 'ie-help', text: 'What the item does (kept separate from the description).' }));
     container.appendChild(effectDisc.root);
 
     const weaponSec = el('section', { cls: 'ie-typesec' });
@@ -318,7 +318,7 @@ window.VTTItemSheet = (function () {
     const chargesGrid = el('div', { cls: 'ie-grid' });
     ['charges', 'charges_max', 'recharge', 'save_dc'].forEach((k) => buildPropField(chargesGrid, k));
     chargesDisc.body.appendChild(chargesGrid);
-    chargesDisc.body.appendChild(el('p', { cls: 'ie-help', text: 'Recorded only; nothing spends or restores charges.' }));
+    chargesDisc.body.appendChild(el('p', { cls: 'ie-help', text: 'Recorded only, nothing spends or restores charges.' }));
     container.appendChild(chargesDisc.root);
 
     const sourceDisc = disclosure('Source / notes', 'ie-disc-source', false);
@@ -627,7 +627,7 @@ window.VTTItemSheet = (function () {
       const bytes = new TextEncoder().encode(JSON.stringify(nextProps)).length;
       if (bytes > MAX_PROPS_BYTES) {
         errSummary.hidden = false;
-        errSummary.textContent = 'This item stores ' + bytes.toLocaleString() + ' bytes of details; the limit is ' + MAX_PROPS_BYTES.toLocaleString() + '. Shorten the Effect or Source text.';
+        errSummary.textContent = 'This item stores ' + bytes.toLocaleString() + ' bytes of details. The limit is ' + MAX_PROPS_BYTES.toLocaleString() + '. Shorten the Effect or Source text.';
         firstBad = firstBad || 'effect';
         effectDisc.setOpen(true);
       }
@@ -651,7 +651,7 @@ window.VTTItemSheet = (function () {
         showServerError(r && r.data && r.data.error);
         status.textContent = 'Not saved';
       } catch (err) {
-        errSummary.hidden = false; errSummary.textContent = 'Network error \u2014 your edits are kept. Try again.';
+        errSummary.hidden = false; errSummary.textContent = 'Network error, your edits are kept. Try again.';
         status.textContent = 'Not saved';
       }
       saving = false; saveBtn.disabled = false; saveBtn.textContent = prevLabel;
@@ -719,7 +719,7 @@ window.VTTItemSheet = (function () {
     container.appendChild(title);
 
     if (!identified) {
-      container.appendChild(el('p', { cls: 'ir-unid', text: 'Not yet identified — its properties are hidden.' }));
+      container.appendChild(el('p', { cls: 'ir-unid', text: 'Not yet identified. Its properties are hidden.' }));
       return;
     }
 

@@ -180,7 +180,7 @@ window.VTTFrameTool = (function () {
       if (r && r.error) { root.msg.textContent = r.error; }
       else { close(); return; }
     } catch (err) {
-      root.msg.textContent = 'Save failed — try again.';
+      root.msg.textContent = 'Save failed. Try again.';
     }
     state.saving = false; root.save.textContent = prev; root.save.disabled = false;
   }
@@ -196,7 +196,7 @@ window.VTTFrameTool = (function () {
       saving: false,
     };
     root.title.textContent = opts.title || 'Frame the picture';
-    root.note.textContent = opts.note || 'Drag to move · scroll to zoom. This is the crop that will be used.';
+    root.note.textContent = opts.note || 'Drag to move, scroll to zoom. This is the crop that will be used.';
     if (opts.imageUrl) { root.art.src = String(opts.imageUrl); root.art.style.display = 'block'; }
     else { root.art.removeAttribute('src'); }
     root.msg.textContent = '';

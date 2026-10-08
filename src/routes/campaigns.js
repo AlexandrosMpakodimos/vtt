@@ -128,7 +128,7 @@ router.get('/deleted', async (req, res, next) => {
 router.get('/search', async (req, res, next) => {
   try {
     const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
-    if (q.length > 100) return res.status(400).json({ error: 'search term is too long' });
+    if (q.length > 100) return res.status(400).json({ error: 'Search term is too long' });
 
     const visibility = ['all', 'public', 'private'].includes(req.query.visibility)
       ? req.query.visibility
@@ -241,7 +241,7 @@ router.patch('/:id/me', requireMemberAnyState, contentWriteLimiter, async (req, 
   try {
     const body = req.body || {};
     if (body.color === undefined) {
-      return res.status(400).json({ error: 'nothing to update' });
+      return res.status(400).json({ error: 'Nothing to update' });
     }
     const c = validateColor(body.color);
     if (c.error) return res.status(400).json({ error: c.error });
@@ -257,11 +257,11 @@ router.patch('/:id/me', requireMemberAnyState, contentWriteLimiter, async (req, 
         .returning(['user_id', 'status', 'color', 'joined_at']);
     } catch (err) {
       if (err.code === '23505') {
-        return res.status(409).json({ error: 'somebody at this table already has that colour' });
+        return res.status(409).json({ error: 'Somebody at this table already has that colour' });
       }
       throw err;
     }
-    if (!row) return res.status(404).json({ error: 'membership not found' });
+    if (!row) return res.status(404).json({ error: 'Membership not found' });
 
     const user = await knex('users').where({ id: req.user.id }).first();
     const shaped = publicMember({

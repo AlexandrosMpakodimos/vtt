@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="color-scheme" content="light dark">
-  <title>Your games — A Virtual Tabletop</title>
+  <title>Your games | A Virtual Tabletop</title>
 
   <!-- Data-URI favicon: a simple gold d20 glyph on the near-black ground. -->
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%230c0e13'/%3E%3Cpath d='M16 3 L27 9.5 L27 22.5 L16 29 L5 22.5 L5 9.5 Z' fill='none' stroke='%23c79a5b' stroke-width='1.4'/%3E%3Cpath d='M16 3 L16 29 M5 9.5 L27 22.5 M27 9.5 L5 22.5' stroke='%238a6c3c' stroke-width='1'/%3E%3C/svg%3E">
@@ -394,15 +394,16 @@
       </div>
 
       <p class="status idcard-status" id="pfStatus" role="status" aria-live="polite"></p>
-      <p class="idcard-privacy">What we keep and how deletion works: <a href="/privacy.html">privacy notice</a>.</p>
+      <p class="idcard-privacy">What we keep and how deletion works: <a href="/privacy.html">privacy policy</a>.</p>
       <!-- Log out at the left; Save changes (when shown) and the delete-account
            bin at the right. The bin opens the confirm, then #delAccountDialog.
-           Its trash glyph is the one the game page uses for direct trash. -->
+           Its trash glyph and its style (btn small danger) are the ones the game
+           page uses for direct trash. -->
       <div class="idcard-actions">
         <button id="pfLogout" class="btn secondary small" type="button">Log out</button>
         <div class="idcard-actions-end">
           <button id="pfSaveBtn" class="btn primary small" type="button" hidden>Save changes</button>
-          <button id="pfDeleteBtn" class="btn icon idcard-bin" type="button" aria-label="Delete account" title="Delete account" aria-haspopup="dialog">
+          <button id="pfDeleteBtn" class="btn small danger idcard-bin" type="button" aria-label="Delete account" title="Delete account" aria-haspopup="dialog">
             <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
               <path d="M4 7h16"></path><path d="M9 7V4h6v3"></path><path d="M6 7l1 13h10l1-13"></path>
             </svg>

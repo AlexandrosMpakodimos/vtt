@@ -297,11 +297,11 @@ async function resolveTokenActor({ req, rawActorId }) {
   const actor = await loadActorInCampaign(rawActorId, req.campaign.id);
   // 404-shaped refusal rather than "wrong campaign": a member of campaign A
   // must not be able to confirm that an actor id exists in campaign B.
-  if (!actor) return { error: 'actor not found' };
+  if (!actor) return { error: 'Actor not found' };
 
   const isOwner = req.campaign.owner_id === req.user.id;
   if (!isOwner && actor.user_id !== req.user.id) {
-    return { error: 'actor not found' };
+    return { error: 'Actor not found' };
   }
   return { actor };
 }
@@ -399,7 +399,7 @@ router.put('/active', requireOwner, async (req, res, next) => {
     let nextId = null;
     if (body.scene_id !== null) {
       const scene = await loadSceneInCampaign(body.scene_id, req.campaign.id);
-      if (!scene) return res.status(404).json({ error: 'scene not found' });
+      if (!scene) return res.status(404).json({ error: 'Scene not found' });
       nextId = scene.id;
     }
 
@@ -426,9 +426,9 @@ router.put('/active', requireOwner, async (req, res, next) => {
 router.get('/:sceneId', requireMember, async (req, res, next) => {
   try {
     const scene = await loadSceneInCampaign(req.params.sceneId, req.campaign.id);
-    if (!scene) return res.status(404).json({ error: 'scene not found' });
+    if (!scene) return res.status(404).json({ error: 'Scene not found' });
     // A player may only load the active scene (see mayUseScene).
-    if (!mayUseScene(req, scene)) return res.status(404).json({ error: 'scene not found' });
+    if (!mayUseScene(req, scene)) return res.status(404).json({ error: 'Scene not found' });
 
     // True hiding: a hidden token is filtered out of what a PLAYER receives, not
     // merely dimmed client-side. Sending it and hiding it in CSS would leak — a
@@ -515,7 +515,7 @@ router.get('/:sceneId', requireMember, async (req, res, next) => {
 router.patch('/:sceneId', requireOwner, async (req, res, next) => {
   try {
     const scene = await loadSceneInCampaign(req.params.sceneId, req.campaign.id);
-    if (!scene) return res.status(404).json({ error: 'scene not found' });
+    if (!scene) return res.status(404).json({ error: 'Scene not found' });
 
     const body = req.body || {};
     const updates = {};
@@ -548,7 +548,7 @@ router.patch('/:sceneId', requireOwner, async (req, res, next) => {
     }
 
     if (!Object.keys(updates).length) {
-      return res.status(400).json({ error: 'nothing to update' });
+      return res.status(400).json({ error: 'Nothing to update' });
     }
     updates.updated_at = knex.fn.now();
 
@@ -599,7 +599,7 @@ router.patch('/:sceneId', requireOwner, async (req, res, next) => {
 router.delete('/:sceneId', requireOwner, async (req, res, next) => {
   try {
     const scene = await loadSceneInCampaign(req.params.sceneId, req.campaign.id);
-    if (!scene) return res.status(404).json({ error: 'scene not found' });
+    if (!scene) return res.status(404).json({ error: 'Scene not found' });
 
     const wasActive = req.campaign.active_scene_id === scene.id;
     const tokenCount = Number((await knex('tokens').where({ scene_id: scene.id }).count({ n: '*' }).first()).n);
@@ -654,11 +654,11 @@ router.delete('/:sceneId', requireOwner, async (req, res, next) => {
 router.post('/:sceneId/tokens', requireMember, async (req, res, next) => {
   try {
     const scene = await loadSceneInCampaign(req.params.sceneId, req.campaign.id);
-    if (!scene) return res.status(404).json({ error: 'scene not found' });
+    if (!scene) return res.status(404).json({ error: 'Scene not found' });
     // A player may only place on the active scene — otherwise "players are only
     // on the active scene" would hold for reads but not for writes, and a player
     // could seed tokens onto a map the GM has not opened yet.
-    if (!mayUseScene(req, scene)) return res.status(404).json({ error: 'scene not found' });
+    if (!mayUseScene(req, scene)) return res.status(404).json({ error: 'Scene not found' });
 
     const body = req.body || {};
     const isOwner = req.campaign.owner_id === req.user.id;
@@ -848,7 +848,7 @@ router.post('/:sceneId/tokens', requireMember, async (req, res, next) => {
         } catch (err) {
           if (err.tokenCap) {
             return res.status(409).json({
-              error: `players may place at most ${MAX_PLAYER_TOKENS_PER_SCENE} token(s) in a scene`,
+              error: `Players may place at most ${MAX_PLAYER_TOKENS_PER_SCENE} token(s) in a scene`,
             });
           }
           if (await retryAfterSerializationFailure(err, attempt)) { attempt += 1; continue; }
@@ -908,23 +908,23 @@ router.post('/:sceneId/tokens', requireMember, async (req, res, next) => {
 router.delete('/:sceneId/tokens/:tokenId', requireMember, async (req, res, next) => {
   try {
     const scene = await loadSceneInCampaign(req.params.sceneId, req.campaign.id);
-    if (!scene) return res.status(404).json({ error: 'scene not found' });
+    if (!scene) return res.status(404).json({ error: 'Scene not found' });
     // This is the one player-reachable WRITE besides placement, and it was missed
     // in the first pass of the active-scene work: without this a player could
     // still delete their own token on a scene the GM had switched away from —
     // mutating state on a map the server refuses to show them.
-    if (!mayUseScene(req, scene)) return res.status(404).json({ error: 'scene not found' });
+    if (!mayUseScene(req, scene)) return res.status(404).json({ error: 'Scene not found' });
 
     if (!validUuid(req.params.tokenId)) {
-      return res.status(404).json({ error: 'token not found' });
+      return res.status(404).json({ error: 'Token not found' });
     }
     const token = await knex('tokens')
       .where({ id: req.params.tokenId, scene_id: scene.id })
       .first();
-    if (!token) return res.status(404).json({ error: 'token not found' });
+    if (!token) return res.status(404).json({ error: 'Token not found' });
 
     if (!tokenMovePolicy({ campaign: req.campaign, token, userId: req.user.id })) {
-      return res.status(403).json({ error: 'you can only remove tokens you placed' });
+      return res.status(403).json({ error: 'You can only remove tokens you placed' });
     }
 
     await knex('tokens').where({ id: token.id }).del();
@@ -965,12 +965,12 @@ router.delete('/:sceneId/tokens/:tokenId', requireMember, async (req, res, next)
 router.patch('/:sceneId/tokens/:tokenId', requireOwner, async (req, res, next) => {
   try {
     const scene = await loadSceneInCampaign(req.params.sceneId, req.campaign.id);
-    if (!scene) return res.status(404).json({ error: 'scene not found' });
+    if (!scene) return res.status(404).json({ error: 'Scene not found' });
 
-    if (!validUuid(req.params.tokenId)) return res.status(404).json({ error: 'token not found' });
+    if (!validUuid(req.params.tokenId)) return res.status(404).json({ error: 'Token not found' });
     const token = await knex('tokens')
       .where({ id: req.params.tokenId, scene_id: scene.id }).first();
-    if (!token) return res.status(404).json({ error: 'token not found' });
+    if (!token) return res.status(404).json({ error: 'Token not found' });
 
     const body = req.body || {};
     const updates = {};
@@ -979,7 +979,7 @@ router.patch('/:sceneId/tokens/:tokenId', requireOwner, async (req, res, next) =
     // width/height are mutually exclusive to avoid an ambiguous request.
     if (body.size !== undefined) {
       if (body.width !== undefined || body.height !== undefined) {
-        return res.status(400).json({ error: 'use either size or width/height, not both' });
+        return res.status(400).json({ error: 'Use either size or width/height, not both' });
       }
       const key = typeof body.size === 'string' ? body.size.toLowerCase() : '';
       if (!Object.prototype.hasOwnProperty.call(SIZE_PRESETS, key)) {
@@ -1039,7 +1039,7 @@ router.patch('/:sceneId/tokens/:tokenId', requireOwner, async (req, res, next) =
     }
 
     if (Object.keys(updates).length === 0) {
-      return res.status(400).json({ error: 'nothing to update' });
+      return res.status(400).json({ error: 'Nothing to update' });
     }
     updates.updated_at = knex.fn.now();
 
@@ -1091,7 +1091,7 @@ router.patch('/:sceneId/tokens/:tokenId', requireOwner, async (req, res, next) =
 router.post('/:sceneId/tokens/batch-delete', requireOwner, async (req, res, next) => {
   try {
     const scene = await loadSceneInCampaign(req.params.sceneId, req.campaign.id);
-    if (!scene) return res.status(404).json({ error: 'scene not found' });
+    if (!scene) return res.status(404).json({ error: 'Scene not found' });
 
     const ids = validateTokenIdList(req.body && req.body.token_ids);
     if (ids.error) return res.status(400).json({ error: ids.error });
@@ -1156,12 +1156,12 @@ router.post('/:sceneId/tokens/batch-delete', requireOwner, async (req, res, next
 router.post('/:sceneId/tokens/copy', requireOwner, async (req, res, next) => {
   try {
     const scene = await loadSceneInCampaign(req.params.sceneId, req.campaign.id);
-    if (!scene) return res.status(404).json({ error: 'scene not found' });
+    if (!scene) return res.status(404).json({ error: 'Scene not found' });
 
     const specs = req.body && req.body.tokens;
-    if (!Array.isArray(specs)) return res.status(400).json({ error: 'tokens must be an array' });
-    if (specs.length === 0) return res.status(400).json({ error: 'tokens is empty' });
-    if (specs.length > 500) return res.status(400).json({ error: 'too many tokens (max 500)' });
+    if (!Array.isArray(specs)) return res.status(400).json({ error: 'Tokens must be an array' });
+    if (specs.length === 0) return res.status(400).json({ error: 'Tokens is empty' });
+    if (specs.length > 500) return res.status(400).json({ error: 'Too many tokens (max 500)' });
 
     // Validate every field of every spec before touching the DB — one bad spec
     // rejects the whole paste rather than half-applying it.
@@ -1170,7 +1170,7 @@ router.post('/:sceneId/tokens/copy', requireOwner, async (req, res, next) => {
     // each one once rather than once per pasted token.
     const linkedActors = new Map();
     for (const spec of specs) {
-      if (!spec || typeof spec !== 'object') return res.status(400).json({ error: 'invalid token spec' });
+      if (!spec || typeof spec !== 'object') return res.status(400).json({ error: 'Invalid token spec' });
 
       const name = validateTokenName(spec.name);
       if (name.error) return res.status(400).json({ error: name.error });
@@ -1359,7 +1359,7 @@ router.post('/:sceneId/tokens/copy', requireOwner, async (req, res, next) => {
 router.post('/:sceneId/fog', requireOwner, async (req, res, next) => {
   try {
     const scene = await loadSceneInCampaign(req.params.sceneId, req.campaign.id);
-    if (!scene) return res.status(404).json({ error: 'scene not found' });
+    if (!scene) return res.status(404).json({ error: 'Scene not found' });
 
     const body = req.body || {};
 
@@ -1424,10 +1424,10 @@ router.post('/:sceneId/fog', requireOwner, async (req, res, next) => {
 router.patch('/:sceneId/fog/:fogId', requireOwner, async (req, res, next) => {
   try {
     const scene = await loadSceneInCampaign(req.params.sceneId, req.campaign.id);
-    if (!scene) return res.status(404).json({ error: 'scene not found' });
+    if (!scene) return res.status(404).json({ error: 'Scene not found' });
 
     const fog = await loadFogInScene(req.params.fogId, scene.id);
-    if (!fog) return res.status(404).json({ error: 'fog region not found' });
+    if (!fog) return res.status(404).json({ error: 'Fog region not found' });
 
     const body = req.body || {};
     const updates = {};
@@ -1445,11 +1445,11 @@ router.patch('/:sceneId/fog/:fogId', requireOwner, async (req, res, next) => {
     }
 
     if (body.type !== undefined) {
-      return res.status(400).json({ error: 'type cannot be changed; delete and redraw instead' });
+      return res.status(400).json({ error: 'Type cannot be changed. Delete and redraw instead' });
     }
 
     if (Object.keys(updates).length === 0) {
-      return res.status(400).json({ error: 'nothing to update' });
+      return res.status(400).json({ error: 'Nothing to update' });
     }
     updates.updated_at = knex.fn.now();
 
@@ -1468,10 +1468,10 @@ router.patch('/:sceneId/fog/:fogId', requireOwner, async (req, res, next) => {
 router.delete('/:sceneId/fog/:fogId', requireOwner, async (req, res, next) => {
   try {
     const scene = await loadSceneInCampaign(req.params.sceneId, req.campaign.id);
-    if (!scene) return res.status(404).json({ error: 'scene not found' });
+    if (!scene) return res.status(404).json({ error: 'Scene not found' });
 
     const fog = await loadFogInScene(req.params.fogId, scene.id);
-    if (!fog) return res.status(404).json({ error: 'fog region not found' });
+    if (!fog) return res.status(404).json({ error: 'Fog region not found' });
 
     await knex('fog_of_war').where({ id: fog.id }).del();
 
@@ -1494,7 +1494,7 @@ router.delete('/:sceneId/fog/:fogId', requireOwner, async (req, res, next) => {
 router.post('/:sceneId/fog/batch-delete', requireOwner, async (req, res, next) => {
   try {
     const scene = await loadSceneInCampaign(req.params.sceneId, req.campaign.id);
-    if (!scene) return res.status(404).json({ error: 'scene not found' });
+    if (!scene) return res.status(404).json({ error: 'Scene not found' });
 
     const body = req.body || {};
     let deletedIds;
@@ -1502,7 +1502,7 @@ router.post('/:sceneId/fog/batch-delete', requireOwner, async (req, res, next) =
     if (body.all !== undefined) {
       const b = validateBool(body.all, 'all');
       if (b.error) return res.status(400).json({ error: b.error });
-      if (!b.value) return res.status(400).json({ error: 'all must be true, or send fog_ids' });
+      if (!b.value) return res.status(400).json({ error: 'All must be true, or send fog_ids' });
       const deleted = await knex('fog_of_war').where({ scene_id: scene.id }).del().returning('id');
       deletedIds = deleted.map((r) => r.id);
     } else {
@@ -1544,15 +1544,15 @@ router.post('/:sceneId/fog/batch-delete', requireOwner, async (req, res, next) =
 router.post('/:sceneId/fog/copy', requireOwner, async (req, res, next) => {
   try {
     const scene = await loadSceneInCampaign(req.params.sceneId, req.campaign.id);
-    if (!scene) return res.status(404).json({ error: 'scene not found' });
+    if (!scene) return res.status(404).json({ error: 'Scene not found' });
 
     const specs = req.body && req.body.regions;
-    if (!Array.isArray(specs)) return res.status(400).json({ error: 'regions must be an array' });
-    if (specs.length === 0) return res.status(400).json({ error: 'regions is empty' });
+    if (!Array.isArray(specs)) return res.status(400).json({ error: 'Regions must be an array' });
+    if (specs.length === 0) return res.status(400).json({ error: 'Regions is empty' });
     // Bounded by the per-scene cap: one request can never legitimately create
     // more regions than a scene may hold.
     if (specs.length > MAX_FOG_REGIONS_PER_SCENE) {
-      return res.status(400).json({ error: `too many regions (max ${MAX_FOG_REGIONS_PER_SCENE})` });
+      return res.status(400).json({ error: `Too many regions (max ${MAX_FOG_REGIONS_PER_SCENE})` });
     }
 
     // Validate every spec before touching the DB — one bad spec rejects the whole
@@ -1560,7 +1560,7 @@ router.post('/:sceneId/fog/copy', requireOwner, async (req, res, next) => {
     const rows = [];
     for (const spec of specs) {
       if (!spec || typeof spec !== 'object' || Array.isArray(spec)) {
-        return res.status(400).json({ error: 'invalid fog spec' });
+        return res.status(400).json({ error: 'Invalid fog spec' });
       }
 
       const type = validateFogType(spec.type);

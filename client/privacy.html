@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="color-scheme" content="light dark">
-  <title>Privacy and accessibility — A Virtual Tabletop</title>
+  <title>Privacy and accessibility | A Virtual Tabletop</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%230c0e13'/%3E%3Cpath d='M16 3 L27 9.5 L27 22.5 L16 29 L5 22.5 L5 9.5 Z' fill='none' stroke='%23c79a5b' stroke-width='1.4'/%3E%3Cpath d='M16 3 L16 29 M5 9.5 L27 22.5 M27 9.5 L5 22.5' stroke='%238a6c3c' stroke-width='1'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/css/tokens.css">
   <!-- Anti-flash theme script (no defer): the stored theme, else the system's. -->
@@ -16,9 +16,22 @@
        Keep every fact in step with the code (retention, cookie, storage keys). -->
   <a class="skip" href="#content">Skip to content</a>
 
+  <!-- Same top-right controls as the landing. Signed out (the default here):
+       Sign up and Log in, which open the landing's form (/#signup, /#login).
+       Signed in: Your games. privacy.js swaps them after /api/auth/me. -->
   <header class="site-header">
     <a class="wordmark" href="/">A Virtual Tabletop</a>
-    <a class="header-link" href="/dashboard.html">Your games</a>
+    <div class="header-actions">
+      <button id="themeToggle" class="btn icon" type="button" aria-label="Switch to light theme">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <circle cx="12" cy="12" r="5"></circle>
+          <path d="M12 1v2M12 21v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M1 12h2M21 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4"></path>
+        </svg>
+      </button>
+      <a id="headerSignup" class="btn secondary" href="/#signup">Sign up</a>
+      <a id="headerLogin" class="btn secondary" href="/#login">Log in</a>
+      <a id="headerDash" class="btn secondary" href="/dashboard.html" hidden>Your games</a>
+    </div>
   </header>
 
   <main id="content">
@@ -27,22 +40,21 @@
 
     <h2>Who is responsible</h2>
     <p>This app is an undergraduate thesis project (Department of Informatics, Ionian
-    University), run by Alexandros Mpakodimos, who is the data controller. Contact:
+    University), run by Alexandros Mpakodimos-Kopsacheilis, who is the data controller. Contact:
     <a href="mailto:support@trucksart.com">support@trucksart.com</a>.</p>
 
     <h2>What we collect and why</h2>
     <ul>
-      <li><strong>Account:</strong> e-mail address, username, password (stored only as an
-      Argon2id hash) and an optional profile picture. These are needed to create and use an
-      account.</li>
+      <li><strong>Account:</strong> e-mail address, username, password (stored only as a
+      hash) and optional profile pictures. These are needed to create and use an account.</li>
       <li><strong>Game content:</strong> games, scenes, characters, items, spells, chat
       messages, dice rolls and images you upload or add by link. Needed to run your games.</li>
-      <li><strong>Sign-in session:</strong> a record of which account a signed-in browser
-      belongs to.</li>
+      <li><strong>Sign-in session:</strong> a record that keeps your browser logged in to your
+      account until you log out or for up to 7 days.</li>
       <li><strong>Security:</strong> your IP address in the web host's server logs. Rate limits
       count requests under a keyed hash of your IP address or account.</li>
     </ul>
-    <p>Legal basis: providing the service you sign up for (GDPR Art. 6(1)(b)); server logs
+    <p>Legal basis: providing the service you sign up for (GDPR Art. 6(1)(b)). Server logs
     and rate limits rest on our legitimate interest in keeping the service secure
     (Art. 6(1)(f)). There is no profiling, advertising or automated decision-making.</p>
 
@@ -54,7 +66,7 @@
       Neon (database, Frankfurt),
       Render (short-lived data and rate-limit counters, Frankfurt) and
       Cloudflare (uploaded images, stored in its Eastern Europe region and delivered through
-      its global network). Neon, Render and Cloudflare are US companies;
+      its global network). Neon, Render and Cloudflare are US companies.
       <a href="https://render.com/dpa">Render's</a> and
       <a href="https://www.cloudflare.com/cloudflare-customer-dpa/">Cloudflare's</a>
       data-processing terms cover transfers outside the EU under the EU-US Data Privacy
@@ -63,49 +75,55 @@
       <li><strong>Password check:</strong> when you choose a password, our server sends the
       first 5 characters of its SHA-1 hash to the Pwned Passwords service to check it against
       known breaches. The password itself is never sent.</li>
-      <li><strong>Images added by link</strong> are loaded by each player's browser from that
-      website, which can see their IP address.</li>
+      <li><strong>Images added by link</strong> are loaded by the browser of each player in that
+      game directly from the website that hosts them, which can see their IP address.</li>
     </ul>
 
     <h2>How long we keep it</h2>
     <ul>
       <li>Sign-in: 7 days, or until you log out.</li>
-      <li>E-mail links: verification 24 hours; password reset and e-mail change 1 hour.</li>
-      <li>Deleted games: 30 days in Recently deleted, then removed with their images.</li>
+      <li>E-mail links: Verification for 24 hours. Password reset and e-mail change for 1 hour.</li>
+      <li>Deleted games: remain for 30 days in Recently deleted, then removed permanently with their images.</li>
       <li>Your account and content: until you delete them.</li>
       <li>Rate-limit counters: at most one hour. Server logs: under
       <a href="https://www.ip.gr/el/services/terms.php#privacy_policy" lang="el" hreflang="el">IP.GR's policy</a>.</li>
     </ul>
 
     <h2>On your device</h2>
-    <p>One cookie, <code>connect.sid</code>, keeps you signed in for 7 days. It is strictly
-    necessary for the service, so there is no consent banner. Your browser's local storage
-    keeps your theme, dice colours and last "speaking as" choice; these are never sent to us.
+    <p>One cookie keeps you signed in for 7 days. It is strictly necessary for the service,
+    so there is no consent banner. Your browser's local storage keeps your theme, dice
+    colours and last "speaking as" choice. These are never sent to us.
     There are no analytics or third-party cookies.</p>
 
     <h2>Deleting your account</h2>
-    <p>In My Account, use the bin icon. Transfer or delete any game you own first. Your
-    account, sessions, memberships, profile picture and your games in Recently deleted are
-    removed. In other people's games, your chat lines (under the name you used), your
-    characters (unassigned) and the tokens and images you added stay, no longer linked to
-    you, so those games stay intact.</p>
+    <p>To delete your account, go to Dashboard &gt; My account &gt; Bin icon. Make sure you
+    have deleted or transferred your games first. Your account, profile picture and games in
+    Recently deleted are removed. In other people's games, your chat lines, your characters,
+    the tokens and images you added stay, no longer linked to you, so those games stay
+    intact.</p>
 
     <h2>Your rights</h2>
     <p>You can ask to access, correct or delete your data, to restrict or object to its use,
-    and to receive a copy of it (portability). Most of this is in My Account; for the rest,
+    and to receive a copy of it (portability). Most of this is in My Account. For the rest,
     e-mail <a href="mailto:support@trucksart.com">support@trucksart.com</a>. We answer within
-    one month. You can also complain to the Hellenic Data Protection Authority
+    one month. If you believe we handle your personal data in a way that breaks data
+    protection law, you have the right to lodge a complaint with a data protection
+    authority: in Greece, the Hellenic Data Protection Authority
     (<a href="https://www.dpa.gr" hreflang="el">dpa.gr</a>).</p>
 
     <h2 id="accessibility">Accessibility</h2>
-    <p>We aim for WCAG 2.2 level AA, as a voluntary target. Known limits: tokens and fog on
-    the map need a mouse, and the pages are built for desktop and tablet screens, not phones.
-    If something is hard to use, e-mail
-    <a href="mailto:support@trucksart.com">support@trucksart.com</a>.</p>
+    <p>The site aims to be usable for as many people as possible, including people who use a
+    keyboard instead of a mouse, screen readers, or larger text. The target is the WCAG 2.2
+    AA standard. Some parts don't meet it yet: moving tokens and drawing fog on the map needs
+    a mouse, the site is designed for computers and tablets rather than phones, and a few
+    colours and labels on the game page still need work.</p>
   </main>
 
   <footer>
-    <div class="foot">Alexandros Mpakodimos · Ionian University, Department of Informatics · 2026 · <a href="/">Home</a></div>
+    <div class="foot">Alexandros Mpakodimos-Kopsacheilis · Ionian University, Department of Informatics · 2026 · <a href="/">Home</a></div>
   </footer>
+
+  <script src="/js/shared/common.js" defer></script>
+  <script src="/js/pages/privacy.js" defer></script>
 </body>
 </html>

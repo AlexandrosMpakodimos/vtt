@@ -56,16 +56,28 @@ window.eval(fs.readFileSync(rootPath('client/js/shared/common.js'),'utf8') + '\n
   const asUser = (id) => { me = { id }; window.__uid = id; };
   asUser('GM');
 
+  // [CHANGED 2026-10-07] Fix 8: Place ARMS a placement and a click on the map
+  // commits it at the clicked square (it no longer reads cursorGrid). So the
+  // helper presses Place, then clicks the map at the cursor's square: the
+  // stage sits at the origin at 100% zoom here, so square * 50 is the pixel.
+  // What is sent — endpoints, packing, numbering, sizes, edge shift — is
+  // unchanged, and is what the rest of this file checks.
+  const wrapEl = document.getElementById('stage-wrap');
+  const clickMap = (g) => {
+    const opts = { bubbles: true, cancelable: true, clientX: g.x * 50, clientY: g.y * 50, pointerId: 7, button: 0 };
+    wrapEl.dispatchEvent(new window.PointerEvent('pointerdown', opts));
+    wrapEl.dispatchEvent(new window.PointerEvent('pointerup', opts));
+  };
   const place = async (name, count, size, cursor={x:0,y:0}) => {
     document.getElementById('tok-name').value = name;
     document.getElementById('tok-img').value = '';
     document.getElementById('tok-count').value = String(count);
     document.getElementById('tok-size').value = size;
-    cursorGrid = cursor;
     me = { id: window.__uid };   // defeat any load-time whoami() that clobbered me
     calls.fetch.length = 0;
     document.getElementById('place-token').dispatchEvent(
       new window.MouseEvent('click', { bubbles: true, cancelable: true }));
+    clickMap(cursor);
     await new Promise(r => setTimeout(r, 80));
     const placement = calls.fetch.filter(c => c.path.includes('/tokens'));
     return placement[placement.length - 1];
@@ -181,7 +193,7 @@ window.eval(fs.readFileSync(rootPath('client/js/shared/common.js'),'utf8') + '\n
     calls.fetch.some(c => c.path.slice(-7) === '/actors'),
     calls.fetch.map(c => c.path).join(' | '));
   __check('...and still offers "no character" first',
-    playerOpts[0] === '— no character —', playerOpts.join(' | '));
+    playerOpts[0] === 'No character picked', playerOpts.join(' | '));
 
   // As the GM the same list yields both.
   asUser('GM');
@@ -208,7 +220,7 @@ window.eval(fs.readFileSync(rootPath('client/js/shared/common.js'),'utf8') + '\n
     __check('...and every token stays linked to the character',
       cc.body.tokens.every(t => t.actor_id === 'PA2'),
       JSON.stringify(cc.body.tokens.map(t => t.actor_id)));
-    pickByLabel('— no character —');   // restore for any later assertions
+    pickByLabel('No character picked');   // restore for any later assertions
   }
 
   __check('the size select offers "from character"',
@@ -232,9 +244,9 @@ window.eval(fs.readFileSync(rootPath('client/js/shared/common.js'),'utf8') + '\n
     document.getElementById('tok-name').value = 'Statue';
     document.getElementById('tok-count').value = '1';
     document.getElementById('tok-size').value = 'medium';
-    cursorGrid = { x: 2, y: 2 };
     calls.fetch.length = 0;
     document.getElementById('place-token').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    clickMap({ x: 2, y: 2 });   // Fix 8: Place arms, the map click commits
     await new Promise(r => setTimeout(r, 80));
     const fp = calls.fetch.filter(x => x.path.includes('/tokens')).pop();
     __check('placement carries the chosen framing', fp && fp.body.img_offset_x === 0.2 && fp.body.img_offset_y === -0.1 && fp.body.img_scale === 1.5,
@@ -246,6 +258,7 @@ window.eval(fs.readFileSync(rootPath('client/js/shared/common.js'),'utf8') + '\n
     document.getElementById('tok-name').value = 'Other';
     calls.fetch.length = 0;
     document.getElementById('place-token').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    clickMap({ x: 2, y: 2 });
     await new Promise(r => setTimeout(r, 80));
     const fp2 = calls.fetch.filter(x => x.path.includes('/tokens')).pop();
     __check('a manual image edit clears stale framing from the body',

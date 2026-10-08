@@ -295,6 +295,18 @@ const SHELL = [
     d.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
     t('GM: Esc closes the rail popover', tokPop.hasAttribute('hidden'));
     t('GM: railToken aria-expanded false after Esc', tokBtn.getAttribute('aria-expanded') === 'false');
+    // [ADDED 2026-10-07] Fix 8: when Place arms a placement, the canvas
+    // announces it and the shell closes the form so the map can be clicked.
+    tokBtn.dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
+    w.dispatchEvent(new w.CustomEvent('vtt:placement-start'));
+    t('GM: a placement starting closes the token form', tokPop.hasAttribute('hidden'));
+    t('GM: ...and resets railToken aria-expanded', tokBtn.getAttribute('aria-expanded') === 'false');
+    // ...but never another popover that happens to be open.
+    const fogBtn = d.getElementById('railFog'); const fogPop = d.getElementById('fog-panel');
+    fogBtn.dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
+    w.dispatchEvent(new w.CustomEvent('vtt:placement-start'));
+    t('GM: the event leaves a different popover (fog) alone', !fogPop.hasAttribute('hidden'));
+    fogBtn.dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
   }
 
   // ── 5. Dialogs open via recorded showModal + focus return to invoker ────────

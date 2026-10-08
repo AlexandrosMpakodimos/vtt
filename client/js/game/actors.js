@@ -77,7 +77,7 @@ async function whoami() {
   const r = await api('GET', '/api/auth/me');
   me = r.status === 200 ? r.data.user : null;
   document.getElementById('whoami').textContent = me
-    ? `logged in as ${me.username}`
+    ? `Logged in as ${me.username}`
     : 'NOT logged in';
 }
 
@@ -121,6 +121,13 @@ function actorInitials(name) {
 // filtered.
 const charFilter = { q: '', type: '', control: '', party: '' };
 let charFiltersWired = false;
+// Set once the filters are wired: redraws the chips and the badge from
+// charFilter and closes the panel. "Clear search and filters" calls it instead
+// of re-wiring. [FIXED 2026-10-08] It used to reset charFiltersWired, so the next
+// render wired everything AGAIN: the toggle got a second click listener (one
+// opened the panel, the other closed it at once) and the filters looked dead
+// until a reload.
+let resetCharFilterUi = null;
 // UI state belongs to the character, not to DOM rows recreated after mutations.
 const characterHpPanels = new Map();
 
@@ -174,18 +181,27 @@ function wireCharFilters() {
       box.appendChild(chip);
     }
   }
-  chipGroup(typeBox, [
-    { value: '', label: 'All' }, { value: 'pc', label: 'Player characters' }, { value: 'npc', label: 'NPCs' },
-  ], 'type');
-  chipGroup(controlBox, [
-    { value: '', label: 'All' }, { value: 'mine', label: 'Yours' }, { value: 'unassigned', label: 'Unassigned' },
-  ], 'control');
   const partyBox = document.getElementById('charFilterParty');
-  if (partyBox) {
-    partyBox.hidden = false;
-    chipGroup(partyBox, [{ value: '', label: 'All' }, { value: 'party', label: 'In party' }, { value: 'outside', label: 'Not in party' }], 'party');
+  function buildChips() {
+    chipGroup(typeBox, [
+      { value: '', label: 'All' }, { value: 'pc', label: 'Player characters' }, { value: 'npc', label: 'NPCs' },
+    ], 'type');
+    chipGroup(controlBox, [
+      { value: '', label: 'All' }, { value: 'mine', label: 'Yours' }, { value: 'unassigned', label: 'Unassigned' },
+    ], 'control');
+    if (partyBox) {
+      partyBox.hidden = false;
+      chipGroup(partyBox, [{ value: '', label: 'All' }, { value: 'party', label: 'In party' }, { value: 'outside', label: 'Not in party' }], 'party');
+    }
   }
+  buildChips();
   refreshBadge();
+  resetCharFilterUi = () => {
+    buildChips();
+    refreshBadge();
+    if (panel) panel.setAttribute('hidden', '');
+    if (toggle) { toggle.classList.remove('open'); toggle.setAttribute('aria-expanded', 'false'); }
+  };
 }
 
 function renderActors() {
@@ -207,11 +223,7 @@ function renderActors() {
     clear.addEventListener('click', () => {
       charFilter.q = ''; charFilter.type = ''; charFilter.control = ''; charFilter.party = '';
       const s = document.getElementById('charSearch'); if (s) s.value = '';
-      charFiltersWired = false;
-      const panel = document.getElementById('charFilterPanel');
-      const toggle = document.getElementById('charFilterToggle');
-      if (panel) panel.setAttribute('hidden', '');
-      if (toggle) { toggle.classList.remove('open', 'has-filters'); toggle.setAttribute('aria-expanded', 'false'); }
+      if (resetCharFilterUi) resetCharFilterUi();
       renderActors();
     });
     empty.appendChild(clear);
@@ -468,7 +480,7 @@ function renderAssets() {
     preview.appendChild(img); card.appendChild(preview);
     card.appendChild(el('div', { cls: 'image-name', text: assetName(a) }));
     card.appendChild(el('div', { cls: 'k', text: assetCategories[a.kind] || a.kind }));
-    card.appendChild(el('div', { cls: 'k', text: a.source === 'external' ? 'external link' : 'hosted' }));
+    card.appendChild(el('div', { cls: 'k', text: a.source === 'external' ? 'External link' : 'Hosted' }));
     const actions = el('div', { cls: 'image-actions' });
     const copy = button('Copy URL', async () => {
       try { await navigator.clipboard.writeText(a.url); document.getElementById('assetMsg').textContent = 'Image URL copied'; }
@@ -487,14 +499,14 @@ async function uploadAsset() {
   const msg = document.getElementById('assetMsg');
   const input = document.getElementById('assetFile');
   const file = input.files && input.files[0];
-  if (!file) { msg.textContent = 'choose a file first'; return; }
+  if (!file) { msg.textContent = 'Choose a file first'; return; }
 
   const kind = document.getElementById('assetKind').value;
   // An avatar is personal and has no campaign — the scopes are exclusive, and
   // sending both is refused by the server.
   const params = new URLSearchParams({ kind, mime: file.type });
   if (kind !== 'avatar') {
-    if (!campaign) { msg.textContent = 'load a campaign first'; return; }
+    if (!campaign) { msg.textContent = 'Load a campaign first'; return; }
     params.set('campaign_id', campaign.id);
   }
 
@@ -502,7 +514,7 @@ async function uploadAsset() {
   // written once) rather than via a replayable presigned grant. One request,
   // idempotent on retry.
   const idem = `${Date.now()}-${Math.random().toString(16).slice(2)}-${file.size}`;
-  msg.textContent = 'uploading…';
+  msg.textContent = 'Uploading…';
   let res; let data;
   try {
     res = await fetch(`/api/assets/upload?${params.toString()}`, {
@@ -513,16 +525,16 @@ async function uploadAsset() {
     });
     data = await res.json().catch(() => ({}));
   } catch (err) {
-    msg.textContent = `upload failed (${err.message})`;
+    msg.textContent = `Upload failed (${err.message})`;
     return;
   }
   show('POST upload', { status: res.status, data });
   if (res.status !== 201 && res.status !== 200) {
-    msg.textContent = (data && (data.message || data.error)) || `upload was refused (${res.status})`;
+    msg.textContent = (data && (data.message || data.error)) || `Upload was refused (${res.status})`;
     return;
   }
 
-  msg.textContent = 'uploaded';
+  msg.textContent = 'Uploaded';
   input.value = '';
   await loadAssets();
 }
@@ -530,22 +542,22 @@ async function uploadAsset() {
 async function addAssetLink() {
   const msg = document.getElementById('assetMsg');
   const url = str('assetUrl');
-  if (!url) { msg.textContent = 'paste a url first'; return; }
+  if (!url) { msg.textContent = 'Paste a URL first'; return; }
 
   const kind = document.getElementById('assetKind').value;
   const body = { kind, url };
   if (kind !== 'avatar') {
-    if (!campaign) { msg.textContent = 'load a campaign first'; return; }
+    if (!campaign) { msg.textContent = 'Load a campaign first'; return; }
     body.campaign_id = campaign.id;
   }
 
   const r = await api('POST', '/api/assets/external', body);
   show('POST external', r);
   if (r.status !== 201) {
-    msg.textContent = (r.data && r.data.error) || 'that link was not accepted';
+    msg.textContent = (r.data && r.data.error) || 'That link was not accepted';
     return;
   }
-  msg.textContent = 'link added — players will connect to that host directly';
+  msg.textContent = 'Link added. Players will connect to that host directly';
   document.getElementById('assetUrl').value = '';
   await loadAssets();
 }
@@ -560,14 +572,14 @@ async function performAssetDelete(a) {
   const r = await api('DELETE', `/api/assets/${a.id}`);
   show('DELETE asset', r);
   if (r.status !== 200) {
-    document.getElementById('assetMsg').textContent = (r.data && r.data.error) || 'could not delete';
+    document.getElementById('assetMsg').textContent = (r.data && r.data.error) || 'Could not delete';
     return;
   }
   // Stated plainly: the six columns that hold image URLs are not foreign keys
   // to this table, so nothing was rewritten. Anything still pointing here will
   // render a broken image rather than silently changing.
   document.getElementById('assetMsg').textContent =
-    'deleted — anything still using it will now show a broken image';
+    'Deleted, anything still using it will now show a broken image';
   await loadAssets();
 }
 
@@ -644,6 +656,9 @@ function spellSchool(sp) {
 // falsy is exactly the bug the item filter avoids.
 const spellFilter = { q: '', level: '', school: '' };
 let spellFiltersWired = false;
+// Same pattern and same [FIXED 2026-10-08] as resetCharFilterUi: clearing redraws
+// the chips and badge instead of re-wiring (which doubled the toggle's listener).
+let resetSpellFilterUi = null;
 
 // A spell is visible when it matches the name search AND the level chip AND the
 // school chip. Level 0 (Cantrip) is an active filter like any other.
@@ -728,6 +743,12 @@ function wireSpellFilters() {
 
   rebuildChips();
   refreshFilterBadge();
+  resetSpellFilterUi = () => {
+    rebuildChips();
+    refreshFilterBadge();
+    if (panel) panel.setAttribute('hidden', '');
+    if (toggle) { toggle.classList.remove('open'); toggle.setAttribute('aria-expanded', 'false'); }
+  };
 }
 
 function renderSpells() {
@@ -753,11 +774,7 @@ function renderSpells() {
     clear.addEventListener('click', () => {
       spellFilter.q = ''; spellFilter.level = ''; spellFilter.school = '';
       const s = document.getElementById('spellSearch'); if (s) s.value = '';
-      spellFiltersWired = false;                       // force chip + badge rebuild
-      const panel = document.getElementById('spellFilterPanel');
-      const toggle = document.getElementById('spellFilterToggle');
-      if (panel) panel.setAttribute('hidden', '');
-      if (toggle) { toggle.classList.remove('open', 'has-filters'); toggle.setAttribute('aria-expanded', 'false'); }
+      if (resetSpellFilterUi) resetSpellFilterUi();
       renderSpells();
     });
     empty.appendChild(clear);
@@ -1020,7 +1037,7 @@ async function loadSpellbook() {
   syncSpellbookControls();
   if (!actorId) {
     spellbookLoading = false;
-    who.textContent = 'select a character above';
+    who.textContent = 'Select a character above';
     list.textContent = ''; syncSpellbookControls(); return;
   }
   const actor = actors.find((a) => a.id === actorId);
@@ -1390,7 +1407,7 @@ function renderInventory(rows) {
   const add = document.getElementById('addToBag');
   if (add) add.hidden = !mayWrite;
   if (!rows || !rows.length) {
-    list.appendChild(el('p', { cls: 'muted', text: 'bag is empty' }));
+    list.appendChild(el('p', { cls: 'muted', text: 'Bag is empty' }));
     return;
   }
   for (const r of rows) {
@@ -1501,15 +1518,15 @@ async function loadCampaign(idArg, reconnect = false) {
   show('GET campaign', r);
   if (r.status !== 200) {
     campaign = null;
-    document.getElementById('campaignInfo').textContent = 'could not load that campaign';
+    document.getElementById('campaignInfo').textContent = 'Could not load that campaign';
     return;
   }
   campaign = r.data.campaign;
   isGm = campaign.is_gm === true;
   document.body.classList.toggle('is-gm', isGm);
   document.getElementById('campaignInfo').textContent =
-    `${campaign.name} — you are ${isGm ? 'the GM' : 'a player'}` +
-    (campaign.active_scene_id ? '' : ' · no active scene (NPCs stay hidden until one is set)');
+    `${campaign.name}: you are ${isGm ? 'the GM' : 'a player'}.` +
+    (campaign.active_scene_id ? '' : ' No active scene (NPCs stay hidden until one is set)');
 
   if (isGm) await loadMembers();
   if (isGm) renderItemEditor();
@@ -1664,8 +1681,8 @@ async function performActorDelete(a) {
   }
   if (selectedActor === a.id) {
     selectedActor = null;
-    document.getElementById('invWho').textContent = 'select a character above';
-    document.getElementById('sheetWho').textContent = 'none selected';
+    document.getElementById('invWho').textContent = 'Select a character above';
+    document.getElementById('sheetWho').textContent = 'None selected';
     renderSheet();
     loadSpellbook();
   }
@@ -1742,7 +1759,7 @@ function renderItemEditor() {
         current: current || null,
         frame: currentFrame || { offsetX: 0, offsetY: 0, scale: 1 },
         frameTitle: 'Frame the item image',
-        frameNote: 'Drag to move · scroll to zoom. This is how the item art will be cropped.',
+        frameNote: 'Drag to move, scroll to zoom. This is how the item art will be cropped.',
         onChoose: (url, framing) => choose(url, framing),
       });
     },
@@ -1876,7 +1893,7 @@ function renderSheet() {
   const a = actors.find((x) => x.id === selectedActor);
   if (!a) {
     panel.textContent = '';
-    panel.appendChild(el('p', { cls: 'muted', text: 'select a character above' }));
+    panel.appendChild(el('p', { cls: 'muted', text: 'Select a character above' }));
     return;
   }
 
@@ -1953,7 +1970,7 @@ function renderSheet() {
           scale: Number(a.img_scale) > 0 ? Number(a.img_scale) : 1,
         },
         frameTitle: 'Frame the portrait',
-        frameNote: 'Drag to move · scroll to zoom. This is the crop tokens will use.',
+        frameNote: 'Drag to move, scroll to zoom. This is the crop tokens will use.',
         onChoose: async (url, framing) => {
           setUrl(url || '');
           if (framing) {
@@ -1983,7 +2000,7 @@ async function loadBag() {
 }
 
 async function addToBag() {
-  if (!selectedActor) { show('add to bag', { status: 0, data: { error: 'select a character first' } }); return; }
+  if (!selectedActor) { show('Add to bag', { status: 0, data: { error: 'Select a character first' } }); return; }
   const r = await api('POST', `/api/campaigns/${campaign.id}/actors/${selectedActor}/inventory`, {
     item_id: document.getElementById('invItem').value,
     quantity: num('invQty'),

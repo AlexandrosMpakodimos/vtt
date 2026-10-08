@@ -420,7 +420,7 @@ router.post('/', requireOwner, async (req, res, next) => {
     // point at another campaign's map and the denormalized campaign_id can never
     // disagree with it.
     const scene = await loadSceneInCampaign(body.scene_id, req.campaign.id);
-    if (!scene) return res.status(404).json({ error: 'scene not found' });
+    if (!scene) return res.status(404).json({ error: 'Scene not found' });
 
     let combat;
     try {
@@ -481,7 +481,7 @@ router.post('/', requireOwner, async (req, res, next) => {
 router.get('/:combatId', requireMember, async (req, res, next) => {
   try {
     const found = await loadCombatForRequest(req);
-    if (!found) return res.status(404).json({ error: 'combat not found' });
+    if (!found) return res.status(404).json({ error: 'Combat not found' });
 
     const isOwner = req.isOwner === true;
     const rows = await loadRoster({ combat: found.combat, isOwner });
@@ -508,7 +508,7 @@ router.get('/:combatId', requireMember, async (req, res, next) => {
 router.patch('/:combatId', requireOwner, async (req, res, next) => {
   try {
     const found = await loadCombatForRequest(req);
-    if (!found) return res.status(404).json({ error: 'combat not found' });
+    if (!found) return res.status(404).json({ error: 'Combat not found' });
 
     const body = req.body || {};
     const updates = {};
@@ -539,7 +539,7 @@ router.patch('/:combatId', requireOwner, async (req, res, next) => {
       updates.turn_index = ti.value;
     }
     if (!Object.keys(updates).length) {
-      return res.status(400).json({ error: 'nothing to update' });
+      return res.status(400).json({ error: 'Nothing to update' });
     }
     updates.updated_at = knex.fn.now();
 
@@ -579,7 +579,7 @@ router.patch('/:combatId', requireOwner, async (req, res, next) => {
 router.delete('/:combatId', requireOwner, async (req, res, next) => {
   try {
     const found = await loadCombatForRequest(req);
-    if (!found) return res.status(404).json({ error: 'combat not found' });
+    if (!found) return res.status(404).json({ error: 'Combat not found' });
 
     const n = Number((await knex('combatants')
       .where({ combat_id: found.combat.id }).count({ n: '*' }).first()).n);
@@ -613,10 +613,10 @@ router.delete('/:combatId', requireOwner, async (req, res, next) => {
 router.post('/:combatId/combatants', requireOwner, async (req, res, next) => {
   try {
     const found = await loadCombatForRequest(req);
-    if (!found) return res.status(404).json({ error: 'combat not found' });
+    if (!found) return res.status(404).json({ error: 'Combat not found' });
 
     const body = req.body || {};
-    if (!validUuid(body.token_id)) return res.status(404).json({ error: 'token not found' });
+    if (!validUuid(body.token_id)) return res.status(404).json({ error: 'Token not found' });
 
     // Scoped to the combat's OWN scene. Without this a GM could enrol a token
     // from another map — and, since the roster is filtered by tokens.hidden on
@@ -625,7 +625,7 @@ router.post('/:combatId/combatants', requireOwner, async (req, res, next) => {
     const token = await knex('tokens')
       .where({ id: body.token_id, scene_id: found.combat.scene_id })
       .first();
-    if (!token) return res.status(404).json({ error: 'token not found' });
+    if (!token) return res.status(404).json({ error: 'Token not found' });
 
     const hp = validateHpOverride(body.hp_override);
     if (hp.error) return res.status(400).json({ error: hp.error });
@@ -677,16 +677,16 @@ router.post('/:combatId/combatants', requireOwner, async (req, res, next) => {
 router.patch('/:combatId/combatants/:combatantId', requireOwner, async (req, res, next) => {
   try {
     const found = await loadCombatForRequest(req);
-    if (!found) return res.status(404).json({ error: 'combat not found' });
+    if (!found) return res.status(404).json({ error: 'Combat not found' });
 
     if (!validUuid(req.params.combatantId)) {
-      return res.status(404).json({ error: 'combatant not found' });
+      return res.status(404).json({ error: 'Combatant not found' });
     }
     // Scoped through the combat, so a combatant id from another fight is a 404.
     const combatant = await knex('combatants')
       .where({ id: req.params.combatantId, combat_id: found.combat.id })
       .first();
-    if (!combatant) return res.status(404).json({ error: 'combatant not found' });
+    if (!combatant) return res.status(404).json({ error: 'Combatant not found' });
 
     const body = req.body || {};
     const updates = {};
@@ -708,7 +708,7 @@ router.patch('/:combatId/combatants/:combatantId', requireOwner, async (req, res
     }
 
     if (!Object.keys(updates).length) {
-      return res.status(400).json({ error: 'nothing to update' });
+      return res.status(400).json({ error: 'Nothing to update' });
     }
     updates.updated_at = knex.fn.now();
 
@@ -736,7 +736,7 @@ router.patch('/:combatId/combatants/:combatantId', requireOwner, async (req, res
 router.post('/:combatId/reorder', requireOwner, async (req, res, next) => {
   try {
     const found = await loadCombatForRequest(req);
-    if (!found) return res.status(404).json({ error: 'combat not found' });
+    if (!found) return res.status(404).json({ error: 'Combat not found' });
 
     // Reuses the existing batch id validator: array, non-empty, bounded, every
     // element a uuid, duplicates collapsed.
@@ -788,15 +788,15 @@ router.post('/:combatId/reorder', requireOwner, async (req, res, next) => {
 router.delete('/:combatId/combatants/:combatantId', requireOwner, async (req, res, next) => {
   try {
     const found = await loadCombatForRequest(req);
-    if (!found) return res.status(404).json({ error: 'combat not found' });
+    if (!found) return res.status(404).json({ error: 'Combat not found' });
 
     if (!validUuid(req.params.combatantId)) {
-      return res.status(404).json({ error: 'combatant not found' });
+      return res.status(404).json({ error: 'Combatant not found' });
     }
     const combatant = await knex('combatants')
       .where({ id: req.params.combatantId, combat_id: found.combat.id })
       .first();
-    if (!combatant) return res.status(404).json({ error: 'combatant not found' });
+    if (!combatant) return res.status(404).json({ error: 'Combatant not found' });
 
     await knex('combatants').where({ id: combatant.id }).del();
     await closeSortOrderGaps(found.combat.id);

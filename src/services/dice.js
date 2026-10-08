@@ -84,11 +84,11 @@ const FLAT_RE = /^([+-]?)(\d{1,5})/;
 // Parse a formula into { groups: [{count, sides}], modifier } or { error }.
 // Pure: no randomness, no I/O. The suite can enumerate the whole grammar.
 function parseFormula(raw) {
-  if (typeof raw !== 'string') return { error: 'formula must be text' };
+  if (typeof raw !== 'string') return { error: 'Formula must be text' };
   let s = raw.trim().toLowerCase().replace(/\s+/g, '');
-  if (!s) return { error: 'formula is required' };
+  if (!s) return { error: 'Formula is required' };
   if (s.length > MAX_FORMULA_LENGTH) {
-    return { error: `formula is too long (max ${MAX_FORMULA_LENGTH} characters)` };
+    return { error: `Formula is too long (max ${MAX_FORMULA_LENGTH} characters)` };
   }
 
   const groups = [];
@@ -107,31 +107,31 @@ function parseFormula(raw) {
     if (g) {
       const sign = g[1];
       if (sign === '-') {
-        return { error: 'dice cannot be subtracted — use a flat modifier instead' };
+        return { error: 'Dice cannot be subtracted. Use a flat modifier instead' };
       }
       if (!first && sign !== '+') {
-        return { error: 'dice groups must be joined with +' };
+        return { error: 'Dice groups must be joined with +' };
       }
       // A group after the flat modifier ("2d6+3+1d4") reads as arithmetic rather
       // than a throw, and canonical() could not round-trip it. Refused rather
       // than silently reordered.
-      if (sawModifier) return { error: 'the modifier must come last' };
+      if (sawModifier) return { error: 'The modifier must come last' };
 
       const count = g[2] === '' ? 1 : Number(g[2]);
       const sides = Number(g[3]);
 
-      if (count < 1) return { error: 'you must roll at least one die' };
+      if (count < 1) return { error: 'You must roll at least one die' };
       // A one-sided die is legal but pointless; a zero-sided one is not a die.
-      if (sides < 1) return { error: 'a die must have at least one side' };
-      if (sides > MAX_SIDES) return { error: `a die may have at most ${MAX_SIDES} sides` };
+      if (sides < 1) return { error: 'A die must have at least one side' };
+      if (sides > MAX_SIDES) return { error: `A die may have at most ${MAX_SIDES} sides` };
 
       totalDice += count;
       if (totalDice > MAX_DICE) {
-        return { error: `you may roll at most ${MAX_DICE} dice at once` };
+        return { error: `You may roll at most ${MAX_DICE} dice at once` };
       }
       groups.push({ count, sides });
       if (groups.length > MAX_GROUPS) {
-        return { error: `a roll may combine at most ${MAX_GROUPS} kinds of dice` };
+        return { error: `A roll may combine at most ${MAX_GROUPS} kinds of dice` };
       }
 
       s = s.slice(g[0].length);
@@ -141,13 +141,13 @@ function parseFormula(raw) {
 
     const f = FLAT_RE.exec(s);
     if (f) {
-      if (sawModifier) return { error: 'formula must look like 2d6+3' };
+      if (sawModifier) return { error: 'Formula must look like 2d6+3' };
       // A bare number is a modifier only if it is the whole formula ("5") or
       // explicitly signed ("2d6+3"). "2d6 3" is not a formula.
-      if (!first && f[1] === '') return { error: 'formula must look like 2d6+3' };
+      if (!first && f[1] === '') return { error: 'Formula must look like 2d6+3' };
       modifier = Number(`${f[1] === '-' ? '-' : ''}${f[2]}`);
       if (Math.abs(modifier) > MAX_MODIFIER) {
-        return { error: `modifier must be between -${MAX_MODIFIER} and ${MAX_MODIFIER}` };
+        return { error: `Modifier must be between -${MAX_MODIFIER} and ${MAX_MODIFIER}` };
       }
       sawModifier = true;
       s = s.slice(f[0].length);
@@ -156,10 +156,10 @@ function parseFormula(raw) {
     }
 
     // Unconsumable input. This is where kh3, !, r1, >7, * and ( all land.
-    return { error: 'formula must look like 2d6+3' };
+    return { error: 'Formula must look like 2d6+3' };
   }
 
-  if (!groups.length && !sawModifier) return { error: 'formula must look like 2d6+3' };
+  if (!groups.length && !sawModifier) return { error: 'Formula must look like 2d6+3' };
 
   return { groups, modifier };
 }

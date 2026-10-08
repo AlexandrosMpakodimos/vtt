@@ -139,7 +139,7 @@ try {
   window.eval(fs.readFileSync(rootPath('client/js/sheets/itemsheet.js'), 'utf8'));
   window.eval(fs.readFileSync(rootPath('client/js/sheets/spellsheet.js'), 'utf8'));
   window.eval(fs.readFileSync(rootPath('client/js/sheets/actorsheet.js'), 'utf8'));
-  window.eval(fs.readFileSync(rootPath('client/js/game/actors.js'), 'utf8').replace(/\}\)\(\);\s*$/, `window.__inventoryTest = { setRoster(gm, rows) { isGm = gm; me = { id: 'U1' }; campaign = { id: 'C1' }; selectedActor = null; actors = rows; Object.assign(charFilter, { q: '', type: '', control: '', party: '' }); charFiltersWired = false; renderActors(); }, renderInventory, renderSheet, loadSpellbook, renderSpellbook, renderSpellChoices, learnSpell, patchSpellbook, forgetSpell, seedBook(entries) { spellbook = entries; spellbookActorId = selectedActor; spellbookAvailable = true; spellbookLoading = false; spells = [{ id: 'B1', name: 'Light', level: 0 }, { id: 'B2', name: 'Shield', level: 1 }]; renderSpellbook(); renderSpellChoices(); }, set(gm, owner, npc = false) { isGm = gm; me = { id: 'U1' }; campaign = { id: 'C1' }; selectedActor = 'INV-A'; actors = [{ id: 'INV-A', name: 'Test mage', user_id: owner, is_npc: npc, ...(npc ? {} : { hp_max: 10, hp_current: 10, data: {} }) }]; } }; })();`));
+  window.eval(fs.readFileSync(rootPath('client/js/game/actors.js'), 'utf8').replace(/\}\)\(\);\s*$/, `window.__inventoryTest = { setRoster(gm, rows) { isGm = gm; me = { id: 'U1' }; campaign = { id: 'C1' }; selectedActor = null; actors = rows; Object.assign(charFilter, { q: '', type: '', control: '', party: '' }); if (resetCharFilterUi) resetCharFilterUi(); renderActors(); }, renderInventory, renderSheet, loadSpellbook, renderSpellbook, renderSpellChoices, learnSpell, patchSpellbook, forgetSpell, seedBook(entries) { spellbook = entries; spellbookActorId = selectedActor; spellbookAvailable = true; spellbookLoading = false; spells = [{ id: 'B1', name: 'Light', level: 0 }, { id: 'B2', name: 'Shield', level: 1 }]; renderSpellbook(); renderSpellChoices(); }, set(gm, owner, npc = false) { isGm = gm; me = { id: 'U1' }; campaign = { id: 'C1' }; selectedActor = 'INV-A'; actors = [{ id: 'INV-A', name: 'Test mage', user_id: owner, is_npc: npc, ...(npc ? {} : { hp_max: 10, hp_current: 10, data: {} }) }]; } }; })();`));
 } catch (err) {
   loadError = err;
 }
@@ -236,8 +236,8 @@ for (const id of [
   imageToolbar.querySelector('[data-kind=""]').click();
   t('clearing image filters restores the library', document.querySelectorAll('#assetList .asset').length === 3);
   t('image cards have accessible previews', document.querySelector('#assetList .image-thumb').getAttribute('aria-label').includes('a.png'));
-  t('a hosted image is labelled hosted', /hosted/.test(assetCards[0].textContent), assetCards[0].textContent);
-  t('an external link is labelled external', /external link/.test(assetCards[1].textContent),
+  t('a hosted image is labelled hosted', /Hosted/.test(assetCards[0].textContent), assetCards[0].textContent);
+  t('an external link is labelled external', /External link/.test(assetCards[1].textContent),
     assetCards[1].textContent);
   t('...and marked visually, because the two are not the same thing',
     assetCards[1].classList.contains('external'));
@@ -355,6 +355,21 @@ for (const id of [
       clearBtn.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
       t('clearing restores the full grid', spellCards().length === 2, String(spellCards().length));
       t('...and hides the filter count badge', document.getElementById('spellFilterCount').hidden);
+      // [2026-10-08] Same regression as the roster: filters work after clearing.
+      const sToggle = document.getElementById('spellFilterToggle');
+      const sPanel = document.getElementById('spellFilterPanel');
+      t('spells, after clearing: the panel is closed', sPanel.hasAttribute('hidden'));
+      sToggle.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+      t('spells, after clearing: ONE click on the filter toggle opens the panel',
+        !sPanel.hasAttribute('hidden') && sToggle.getAttribute('aria-expanded') === 'true');
+      const cantripAgain = [...document.getElementById('spellFilterLevel').querySelectorAll('.spell-chip')].find((c) => /Cantrip/.test(c.textContent));
+      cantripAgain.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+      t('spells, after clearing: a filter chip works again', spellCards().length === 1, String(spellCards().length));
+      const cantripNow = [...document.getElementById('spellFilterLevel').querySelectorAll('.spell-chip')].find((c) => /Cantrip/.test(c.textContent));
+      cantripNow.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+      t('...and un-clicking it restores the grid', spellCards().length === 2, String(spellCards().length));
+      sToggle.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+      t('...and the toggle closes the panel again', sPanel.hasAttribute('hidden'));
     }
   }
 
@@ -513,6 +528,48 @@ for (const id of [
     t('...and a Clear action is offered', !!clear);
     if (clear) clear.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
     t('clearing restores the full roster', cardsNow().length === 3, String(cardsNow().length));
+
+    // [2026-10-08] Regression: after "Clear search and filters" the filters must
+    // still work. Clearing used to re-wire them, doubling the toggle's click
+    // listener, so one click opened the panel and closed it again.
+    const toggle = document.getElementById('charFilterToggle');
+    const panel = document.getElementById('charFilterPanel');
+    t('after clearing: the panel is closed and the badge hidden',
+      panel.hasAttribute('hidden') && document.getElementById('charFilterCount').hidden
+      && !toggle.classList.contains('has-filters'));
+    toggle.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    t('after clearing: ONE click on the filter toggle opens the panel',
+      !panel.hasAttribute('hidden') && toggle.getAttribute('aria-expanded') === 'true');
+    toggle.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    t('...and a second click closes it', panel.hasAttribute('hidden'));
+    toggle.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    [...document.getElementById('charFilterType').querySelectorAll('.char-chip')].find((c) => /NPCs/.test(c.textContent))
+      .dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    t('after clearing: a filter chip works again', cardsNow().length === 1 && /Goblin/.test(list.textContent), String(cardsNow().length));
+    t('...with the active chip marked and the badge at 1',
+      !!document.querySelector('#charFilterType .char-chip.active')
+      && /NPCs/.test(document.querySelector('#charFilterType .char-chip.active').textContent)
+      && document.getElementById('charFilterCount').textContent === '1');
+    // Clear twice more: the toggle must still open with one click each time.
+    for (let round = 0; round < 2; round++) {
+      [...document.getElementById('charFilterControl').querySelectorAll('.char-chip')].find((c) => /Yours/.test(c.textContent))
+        .dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+      const again = [...list.querySelectorAll('.char-empty button')].find((b) => /Clear/.test(b.textContent));
+      if (again) again.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+      if (round === 0) {
+        [...document.getElementById('charFilterType').querySelectorAll('.char-chip')].find((c) => /NPCs/.test(c.textContent))
+          .dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+      }
+    }
+    toggle.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    t('after repeated clears: one click still opens the panel', !panel.hasAttribute('hidden'));
+    toggle.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    // Typing still filters after clearing.
+    search.value = 'gob';
+    search.dispatchEvent(new window.Event('input'));
+    t('after clearing: search still narrows the roster', cardsNow().length === 1 && /Goblin/.test(list.textContent));
+    search.value = '';
+    search.dispatchEvent(new window.Event('input'));
   }
 
   console.log('\n--- "+ New character" opens the creation modal ---');

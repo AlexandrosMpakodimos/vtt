@@ -11,6 +11,10 @@
 
 * { box-sizing: border-box; }
 
+/* The hidden attribute must always win over .btn's display (privacy.js hides
+   the account buttons that do not apply). */
+[hidden] { display: none !important; }
+
 body {
   margin: 0;
   background: var(--surface);
@@ -44,7 +48,22 @@ a:hover { color: var(--text); }
   content: ""; width: 22px; height: 22px; flex: none; background: var(--accent);
   -webkit-mask: var(--d20) center / contain no-repeat; mask: var(--d20) center / contain no-repeat;
 }
-.header-link { font-size: 0.875rem; display: inline-flex; align-items: center; min-height: 44px; }
+.header-actions { display: flex; align-items: center; gap: 0.5rem; }
+
+/* Header buttons: the landing's recipe (landing.css .btn, .btn.secondary,
+   .btn.icon). Their hover is the shared light-up in tokens.css. */
+.btn {
+  font: inherit; font-weight: 600; cursor: pointer;
+  border-radius: 2px; padding: 0.6rem 1.2rem;
+  min-height: 44px; min-width: 44px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem;
+  border: 1px solid transparent; background: transparent; color: inherit;
+  text-decoration: none; letter-spacing: 0.02em;
+}
+.btn.secondary { border-color: var(--rule); color: var(--accent); background: transparent; }
+.btn.icon { padding: 0.55rem; }
+.btn.icon svg { width: 20px; height: 20px; }
+.btn:focus-visible { outline-offset: 3px; }
 
 main { max-width: var(--maxw); margin: 0 auto; padding: 2.5rem var(--pad) 3rem; }
 

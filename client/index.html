@@ -61,9 +61,9 @@
       <div class="scrim"></div>
 
       <div class="hero-inner">
-        <h1 class="no-select">Jump into your fantastical worlds</h1>
+        <h1 class="no-select">Play with your friends now</h1>
         <div class="divider" aria-hidden="true"></div>
-        <p class="tagline no-select">Maps, tokens, fog and dice — one shared table, right in the browser.</p>
+        <p class="tagline no-select">Maps, tokens, fog and dice in one shared table, right in the browser.</p>
         <p class="subline no-select">An undergraduate thesis · Department of Informatics · Ionian University</p>
 
         <div id="ctaRow" class="cta-row">
@@ -84,12 +84,9 @@
       <h2 class="no-select">What this is</h2>
       <div class="rule" aria-hidden="true"></div>
       <p>A real-time virtual tabletop for small groups: a game master and up to seven
-      players share campaigns — scenes and tokens on a gridded map, fog of war,
-      characters and inventories, an initiative strip, dice, and chat with whispers.
-      Everything runs in the browser; the server is the single authority for what
-      happens at the table. The rules engine is deliberately small: the system is
-      D&amp;D-inspired but simplified, and the table — not the software — decides what a
-      roll means.</p>
+      players share campaigns. Scenes and tokens on a gridded map, fog of war,
+      characters and inventories, initiative order, 3D dice, and chat. Everything runs
+      in the browser. Inspired by the most popular D20 gaming system but simplified.</p>
 
       <ul class="feature-list">
         <li>
@@ -98,11 +95,11 @@
         </li>
         <li>
           <h3>Dice you can trust</h3>
-          <p>Every roll happens on the server; your browser only animates the result.</p>
+          <p>Every roll happens on the server, your browser only animates the result.</p>
         </li>
         <li>
           <h3>The GM runs the table</h3>
-          <p>A hidden token never reaches a player's browser — what you can't see was never sent.</p>
+          <p>A hidden token, message or roll never reaches someone who is not supposed to know.</p>
         </li>
       </ul>
     </section>
@@ -112,10 +109,11 @@
       <div class="rule" aria-hidden="true"></div>
       <div class="thesis-body">
         <span class="ionio-seal" role="img" aria-label="Seal of the Ionian University"></span>
-        <p>This application is the artefact of an undergraduate thesis at the
+        <p>This application is the project of an undergraduate thesis at the
         <a href="https://di.ionio.gr/en/" target="_blank" rel="noopener">Department of Informatics, Ionian University</a>:
-        building a server-authoritative real-time application — authentication and session
-        management, authorisation boundaries, and validation at every input.</p>
+        building a server-authoritative real-time TTRPG simulation application, with
+        authentication and session management, authorisation boundaries, and validation
+        at every input.</p>
       </div>
     </section>
 
@@ -129,9 +127,9 @@
 
   <footer>
     <div class="foot">
-      Alexandros Mpakodimos · Ionian University, Department of Informatics · 2026 ·
+      Alexandros Mpakodimos-Kopsacheilis · Ionian University, Department of Informatics · 2026 ·
       <a href="https://github.com/AlexandrosMpakodimos/vtt" target="_blank" rel="noopener">Source on GitHub</a> ·
-      <a href="/privacy.html">Privacy</a>
+      <a href="/privacy.html">Privacy Policy</a>
     </div>
   </footer>
 
@@ -159,10 +157,10 @@
             <input id="suPassword" type="password" autocomplete="new-password" minlength="8" maxlength="64" required>
             <button class="pw-toggle" type="button" aria-controls="suPassword" aria-pressed="false">Show</button>
           </div>
-          <span class="help">Must be 8–64 characters long.</span>
+          <span class="help">Password must be 8–64 characters long. Use a combination of letters, numbers and symbols.</span>
         </div>
         <!-- GDPR Art. 13: the notice at the point of collection. -->
-        <p class="card-note">How we use your data is explained in the <a href="/privacy.html" target="_blank" rel="noopener">privacy notice<span class="visually-hidden"> (opens in a new tab)</span></a>.</p>
+        <p class="card-note">How we use your data is explained in the <a href="/privacy.html" target="_blank" rel="noopener">privacy policy<span class="visually-hidden"> (opens in a new tab)</span></a>.</p>
         <p id="suStatus" class="status" role="status" aria-live="polite"></p>
         <button id="suSubmit" class="btn primary" type="submit">Create account</button>
         <button id="suResend" class="btn secondary" type="button" hidden>Resend verification email</button>
@@ -221,7 +219,7 @@
             <input id="rpPassword" type="password" autocomplete="new-password" minlength="8" maxlength="64" required>
             <button class="pw-toggle" type="button" aria-controls="rpPassword" aria-pressed="false">Show</button>
           </div>
-          <span class="help">Must be 8–64 characters long.</span>
+          <span class="help">Password must be 8–64 characters long. Use a combination of letters, numbers and symbols.</span>
         </div>
         <p id="rpStatus" class="status" role="status" aria-live="polite"></p>
         <button id="rpSubmit" class="btn primary" type="submit">Set new password</button>

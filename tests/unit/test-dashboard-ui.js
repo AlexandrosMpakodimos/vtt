@@ -281,7 +281,7 @@ function evalApp(window, beforeBoot) {
     // The owned card (collapsed): GM badge, Open pill, small Enter, no description.
     const owned = document.querySelector('[data-id="c-owned"]');
     t('owned card shows GM', owned.querySelector('.badge-role').textContent === 'GM');
-    t('owned card owner line reads "by you"', owned.querySelector('.card-owner').textContent === 'by you');
+    t('owned card owner line reads "by you"', owned.querySelector('.card-owner').textContent === 'By you');
     t('owned card shows Open', owned.querySelector('.pill-state').textContent === 'Open');
     // Join-gate label: public campaigns read "Anyone", private read "Password".
     t('a public game badge reads "Anyone"', owned.querySelector('.badge-vis').textContent === 'Anyone');
@@ -297,7 +297,7 @@ function evalApp(window, beforeBoot) {
     // The closed-as-player card: no Enter on the head; shows the GM's name.
     const closed = document.querySelector('[data-id="c-closed"]');
     t('closed card (player) has NO Enter link on the head', closed.querySelector('.card-head-actions .card-enter') === null);
-    t('played card owner line shows the GM name', closed.querySelector('.card-owner').textContent === 'by dungeon_dan');
+    t('played card owner line shows the GM name', closed.querySelector('.card-owner').textContent === 'By dungeon_dan');
   }
 
   // ── tablist keyboard model (APG) ───────────────────────────────────────────
@@ -1203,7 +1203,7 @@ function evalApp(window, beforeBoot) {
     const rows = document.querySelectorAll('#fdResults .find-card');
     t('search renders a card per result', rows.length === 4, String(rows.length));
     const r1 = document.querySelector('#fdResults [data-id="c-s1"]');
-    t('result shows the owner name', /by gandalf/.test(r1.querySelector('.find-body').textContent));
+    t('result shows the owner name', /By gandalf/.test(r1.querySelector('.find-body').textContent));
     t('result no longer shows a description', !r1.querySelector('.find-desc'));
     t('result with a cover renders an <img> thumbnail', !!r1.querySelector('.find-thumb img'));
     const r2 = document.querySelector('#fdResults [data-id="c-s2"]');
@@ -1497,8 +1497,10 @@ function evalApp(window, beforeBoot) {
       /\.idcard-actions-end \{[^}]*margin-left: auto/.test(fs.readFileSync(rootPath('client/css/dashboard.css'), 'utf8')));
     t('delete account: the bin has an accessible name and a tooltip',
       bin.getAttribute('aria-label') === 'Delete account' && bin.getAttribute('title') === 'Delete account' && bin.type === 'button');
-    t('delete account: the bin is an icon, not a red button',
-      bin.classList.contains('icon') && !bin.classList.contains('danger') && bin.textContent.trim() === '');
+    // Fix 7: the bin takes the app's direct-trash style (the game page's
+    // roster/inventory/image trash: btn small danger), still glyph-only.
+    t('delete account: the bin is the standard delete button (btn small danger), glyph only',
+      ['btn', 'small', 'danger', 'idcard-bin'].every((c) => bin.classList.contains(c)) && bin.textContent.trim() === '');
     {
       const svg = bin.querySelector('svg');
       const paths = svg ? Array.from(svg.querySelectorAll('path')).map((p) => p.getAttribute('d')).join('') : '';

@@ -158,7 +158,7 @@ async function commitContract(action, failCommit) {
   await f.run();
   check('DELETE retains a single conditional write, no transaction', f.counts().transactions === 0 && f.state().campaigns[0].deleted_at);
   check('DELETE retains eviction and exact response', JSON.stringify(f.effects) === JSON.stringify([['evictCampaign', CID], ['response']])
-    && f.res.body.message === 'campaign deleted — recoverable for 30 days');
+    && f.res.body.message === 'Campaign deleted. Recoverable for 30 days');
   f = fixture('remove', { campaign: { owner_id: PLAYER } });
   await f.run();
   check('refused DELETE has no eviction', f.res.statusCode === 404 && !f.state().campaigns[0].deleted_at && f.effects.length === 1);
@@ -180,7 +180,7 @@ async function commitContract(action, failCommit) {
     && f.res.body.campaign.is_public === false && f.res.body.campaign.has_password === true);
   f = fixture('patch', { body: { is_public: false } });
   await f.run();
-  check('PATCH refuses private without a password', f.res.statusCode === 400 && f.res.body.error === 'a password is required to make a campaign private' && f.state().campaigns[0].password_hash === null);
+  check('PATCH refuses private without a password', f.res.statusCode === 400 && f.res.body.error === 'A password is required to make a campaign private' && f.state().campaigns[0].password_hash === null);
   f = fixture('patch', { body: { is_open: 'false' } });
   await f.run();
   check('PATCH retains explicit string-false support', f.res.statusCode === 200 && f.state().campaigns[0].is_open === false && f.effects[0][0] === 'evictGamePlayers');

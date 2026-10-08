@@ -320,7 +320,7 @@ window.VTTActorSheet = (function () {
         errSummary.hidden = false; errSummary.textContent = msg;
         status.textContent = 'Not created';
       } catch (err) {
-        errSummary.hidden = false; errSummary.textContent = 'Network error — your entries are kept. Try again.';
+        errSummary.hidden = false; errSummary.textContent = 'Network error, your entries are kept. Try again.';
         status.textContent = 'Not created';
       }
       saving = false; saveBtn.disabled = false; saveBtn.textContent = prev;

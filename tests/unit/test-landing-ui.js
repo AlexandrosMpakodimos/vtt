@@ -371,7 +371,7 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
       /maxAge: 1000 \* 60 \* 60 \* 24 \* 7\b/.test(serverSrc) && /Sign-in: 7 days/.test(pv) && /keeps you signed in for 7 days/.test(pv));
     t('privacy: 24-hour verification and 1-hour reset/e-mail-change links match the code',
       /interval '24 hours'/.test(authSrc) && /interval '1 hour'/.test(authSrc)
-      && /verification 24 hours/.test(pv) && /e-mail change 1 hour/.test(pv));
+      && /Verification for 24 hours/.test(pv) && /e-mail change for 1 hour/.test(pv));
     t('privacy: the 30-day Recently deleted window matches SOFT_DELETE_DAYS',
       /SOFT_DELETE_DAYS\s*=\s*30\b/.test(constSrc) && /30 days in Recently deleted/.test(pv));
     // Every local-storage key the browser code uses is one the notice describes.
@@ -384,7 +384,7 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     const keys = new Set();
     for (const f of jsFiles) for (const m of fs.readFileSync(rootPath(f), 'utf8').matchAll(/['`](vtt\.[a-zA-Z]+)/g)) keys.add(m[1]);
     t('privacy: the browser stores only the keys the notice describes (theme, dice colours, speaking as)',
-      [...keys].every((k) => ['vtt.theme', 'vtt.dice', 'vtt.speakAs'].includes(k)) && /theme, dice colours and last "speaking as"/.test(pv),
+      [...keys].every((k) => ['vtt.theme', 'vtt.dice', 'vtt.speakAs'].includes(k)) && /theme, dice\s+colours and last "speaking as"/.test(pv),
       [...keys].join(', '));
   }
 

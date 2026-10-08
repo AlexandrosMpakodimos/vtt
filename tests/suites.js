@@ -14,12 +14,17 @@ const UNIT = [
   'test-campaign-ownership.js',
   'test-campaign-join-retry.js',
   'test-shortcuts.js', 'test-bulk-place.js', 'test-actor-picker-refresh.js', 'test-marquee.js',
+  // Fix 8: free panning, wheel zoom per frame, placement ghosts.
+  'test-view-placement.js',
   'test-fog-ui.js', 'test-fog-validators.js', 'test-sheet-ui.js',
   'test-dice.js', 'test-dice3d.js',
   'test-combat-ui.js', 'test-encounter-scene.js', 'test-member-refresh.js', 'test-authgate.js', 'test-audit-fixes.js', 'test-align-ui.js', 'test-landing-ui.js', 'test-dashboard-ui.js', 'test-actors-ui.js', 'test-game-ui.js',
   'test-storage.js', 'test-asset-delete.js', 'test-campaign-create-retry.js', 'test-atomic-cap-retry.js', 'test-imagepicker.js', 'test-events.js', 'test-closednotice.js', 'test-frametool.js',
   // Fix 2: JSON document schemas (editors vs server vs migration) and the CSP.
   'test-json-schemas.js', 'test-csp.js',
+  // Fix 7: site chrome (privacy header, landing deep links, the account bin,
+  // the header light-up, the theme toggle's transition).
+  'test-site-chrome.js',
 ];
 
 // Functional. Real Postgres, server on npm run dev:test.

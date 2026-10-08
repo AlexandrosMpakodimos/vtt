@@ -248,8 +248,8 @@ async function validateActorField(field, raw, campaignId) {
   }
   switch (field) {
     case 'name': {
-      if (typeof raw !== 'string' || !raw.trim()) return { error: 'name is required' };
-      if (raw.trim().length > 100) return { error: 'name is too long (max 100 characters)' };
+      if (typeof raw !== 'string' || !raw.trim()) return { error: 'Name is required' };
+      if (raw.trim().length > 100) return { error: 'Name is too long (max 100 characters)' };
       return { column: 'name', value: raw.trim() };
     }
     case 'img_url': {
@@ -567,10 +567,10 @@ router.get('/', requireMember, async (req, res, next) => {
 router.get('/:actorId', requireMember, async (req, res, next) => {
   try {
     const actor = await loadActorInCampaign(req.params.actorId, req.campaign.id);
-    if (!actor) return res.status(404).json({ error: 'actor not found' });
+    if (!actor) return res.status(404).json({ error: 'Actor not found' });
     if (req.isOwner === true) return gateway.sendJson(req, res, { actor: publicActor(actor) });
     if (!(await playersMayKnowActor(req.campaign, actor))) {
-      return res.status(404).json({ error: 'actor not found' });
+      return res.status(404).json({ error: 'Actor not found' });
     }
     return gateway.sendJson(req, res, { actor: shapeActorFor(false, actor) });
   } catch (err) {
@@ -584,7 +584,7 @@ router.get('/:actorId', requireMember, async (req, res, next) => {
 router.patch('/:actorId', requireMember, async (req, res, next) => {
   try {
     const actor = await loadActorInCampaign(req.params.actorId, req.campaign.id);
-    if (!actor) return res.status(404).json({ error: 'actor not found' });
+    if (!actor) return res.status(404).json({ error: 'Actor not found' });
 
     const isOwner = req.isOwner === true;
     if (!mayWriteActor({ isOwner, actor, userId: req.user.id })) {
@@ -593,9 +593,9 @@ router.patch('/:actorId', requireMember, async (req, res, next) => {
       // [FIXED 2026-10-01, thesis audit C5] Answering 403 here for an unseen NPC
       // confirmed that the id existed, which the read path deliberately hides.
       if (!(await playersMayKnowActor(req.campaign, actor))) {
-        return res.status(404).json({ error: 'actor not found' });
+        return res.status(404).json({ error: 'Actor not found' });
       }
-      return res.status(403).json({ error: 'you do not control that character' });
+      return res.status(403).json({ error: 'You do not control that character' });
     }
 
     const body = req.body || {};
@@ -628,7 +628,7 @@ router.patch('/:actorId', requireMember, async (req, res, next) => {
     }
 
     if (Object.keys(updates).length === 0) {
-      return res.status(400).json({ error: 'nothing to update' });
+      return res.status(400).json({ error: 'Nothing to update' });
     }
     updates.updated_at = knex.fn.now();
 
@@ -651,15 +651,15 @@ router.patch('/:actorId', requireMember, async (req, res, next) => {
 router.delete('/:actorId', requireMember, async (req, res, next) => {
   try {
     const actor = await loadActorInCampaign(req.params.actorId, req.campaign.id);
-    if (!actor) return res.status(404).json({ error: 'actor not found' });
+    if (!actor) return res.status(404).json({ error: 'Actor not found' });
 
     const isOwner = req.isOwner === true;
     if (!mayWriteActor({ isOwner, actor, userId: req.user.id })) {
       // Same rule as PATCH: an unknowable character is indistinguishable from none.
       if (!(await playersMayKnowActor(req.campaign, actor))) {
-        return res.status(404).json({ error: 'actor not found' });
+        return res.status(404).json({ error: 'Actor not found' });
       }
-      return res.status(403).json({ error: 'you do not control that character' });
+      return res.status(403).json({ error: 'You do not control that character' });
     }
 
     // Which tokens will be un-linked by the FK, and where. Counted BEFORE the
@@ -744,7 +744,7 @@ async function notifyInventory(req, actorId) {
 async function loadActorForInventory(req, res, { write }) {
   const isOwner = req.isOwner === true;
   const actor = await loadActorInCampaign(req.params.actorId, req.campaign.id);
-  if (!actor) { res.status(404).json({ error: 'actor not found' }); return null; }
+  if (!actor) { res.status(404).json({ error: 'Actor not found' }); return null; }
 
   // V2 of the M4 audit. This gate did not exist in the first build: the read
   // route checked only that the actor belonged to the campaign, so a player who
@@ -766,7 +766,7 @@ async function loadActorForInventory(req, res, { write }) {
   // non-claim) and never an NPC's, whether or not its token is on the board. A
   // visible goblin is not an invitation to read its pockets.
   if (!isOwner && actor.is_npc) {
-    res.status(404).json({ error: 'actor not found' });
+    res.status(404).json({ error: 'Actor not found' });
     return null;
   }
 
@@ -775,7 +775,7 @@ async function loadActorForInventory(req, res, { write }) {
   // so the refusal confirms nothing they cannot already read. NPCs — the GM's
   // prep, and the thing worth hiding — took the 404 above.
   if (write && !mayWriteActor({ isOwner, actor, userId: req.user.id })) {
-    res.status(403).json({ error: 'you do not control that character' });
+    res.status(403).json({ error: 'You do not control that character' });
     return null;
   }
   return actor;
@@ -881,7 +881,7 @@ router.post('/:actorId/inventory', requireMember, async (req, res, next) => {
     // the inventory read above.
     const item = await knex('items')
       .where({ id: body.item_id, campaign_id: req.campaign.id }).first();
-    if (!item) return res.status(404).json({ error: 'item not found' });
+    if (!item) return res.status(404).json({ error: 'Item not found' });
 
     const qty = validateQuantity(body.quantity);
     if (qty.error) return res.status(400).json({ error: qty.error });
@@ -953,12 +953,12 @@ router.patch('/:actorId/inventory/:invId', requireMember, async (req, res, next)
     const actor = await loadActorForInventory(req, res, { write: true });
     if (!actor) return undefined;
 
-    if (!validUuid(req.params.invId)) return res.status(404).json({ error: 'inventory row not found' });
+    if (!validUuid(req.params.invId)) return res.status(404).json({ error: 'Inventory row not found' });
     // Scoped to the actor: an inventory row is only addressable through the
     // character that carries it.
     const row = await knex('inventory')
       .where({ id: req.params.invId, actor_id: actor.id }).first();
-    if (!row) return res.status(404).json({ error: 'inventory row not found' });
+    if (!row) return res.status(404).json({ error: 'Inventory row not found' });
 
     const body = req.body || {};
     const updates = {};
@@ -987,7 +987,7 @@ router.patch('/:actorId/inventory/:invId', requireMember, async (req, res, next)
     if (attuning === false) updates.attuned = false;
 
     if (Object.keys(updates).length === 0 && attuning !== true) {
-      return res.status(400).json({ error: 'nothing to update' });
+      return res.status(400).json({ error: 'Nothing to update' });
     }
 
     let updated = row;
@@ -1014,7 +1014,7 @@ router.patch('/:actorId/inventory/:invId', requireMember, async (req, res, next)
         updated = rows[0];
       } catch (err) {
         if (err.capExceeded) return res.status(409).json({ error: err.message });
-        if (err.rowMissing) return res.status(404).json({ error: 'inventory row not found' });
+        if (err.rowMissing) return res.status(404).json({ error: 'Inventory row not found' });
         throw err;
       }
     }
@@ -1043,10 +1043,10 @@ router.delete('/:actorId/inventory/:invId', requireMember, async (req, res, next
     const actor = await loadActorForInventory(req, res, { write: true });
     if (!actor) return undefined;
 
-    if (!validUuid(req.params.invId)) return res.status(404).json({ error: 'inventory row not found' });
+    if (!validUuid(req.params.invId)) return res.status(404).json({ error: 'Inventory row not found' });
     const removed = await knex('inventory')
       .where({ id: req.params.invId, actor_id: actor.id }).del();
-    if (!removed) return res.status(404).json({ error: 'inventory row not found' });
+    if (!removed) return res.status(404).json({ error: 'Inventory row not found' });
 
     await notifyInventory(req, actor.id);
     return res.json({ deleted: true, id: req.params.invId });
@@ -1141,7 +1141,7 @@ router.post('/:actorId/spells', requireMember, async (req, res, next) => {
     // rather than a cross-campaign read.
     const spell = await knex('spells')
       .where({ id: body.spell_id, campaign_id: req.campaign.id }).first();
-    if (!spell) return res.status(404).json({ error: 'spell not found' });
+    if (!spell) return res.status(404).json({ error: 'Spell not found' });
 
     const prep = body.prepared === undefined
       ? { value: false } : validateBool(body.prepared, 'prepared');
@@ -1198,11 +1198,11 @@ router.patch('/:actorId/spells/:spellId', requireMember, async (req, res, next) 
   try {
     const actor = await loadActorForInventory(req, res, { write: true });
     if (!actor) return undefined;
-    if (!validUuid(req.params.spellId)) return res.status(404).json({ error: 'spell not found' });
+    if (!validUuid(req.params.spellId)) return res.status(404).json({ error: 'Spell not found' });
 
     const existing = await knex('actor_spells')
       .where({ actor_id: actor.id, spell_id: req.params.spellId }).first();
-    if (!existing) return res.status(404).json({ error: 'spell not found' });
+    if (!existing) return res.status(404).json({ error: 'Spell not found' });
 
     const body = req.body || {};
     const updates = {};
@@ -1217,7 +1217,7 @@ router.patch('/:actorId/spells/:spellId', requireMember, async (req, res, next) 
       updates.source = src.value;
     }
     if (!Object.keys(updates).length) {
-      return res.status(400).json({ error: 'nothing to update' });
+      return res.status(400).json({ error: 'Nothing to update' });
     }
     updates.updated_at = knex.fn.now();
 
@@ -1239,11 +1239,11 @@ router.delete('/:actorId/spells/:spellId', requireMember, async (req, res, next)
   try {
     const actor = await loadActorForInventory(req, res, { write: true });
     if (!actor) return undefined;
-    if (!validUuid(req.params.spellId)) return res.status(404).json({ error: 'spell not found' });
+    if (!validUuid(req.params.spellId)) return res.status(404).json({ error: 'Spell not found' });
 
     const n = await knex('actor_spells')
       .where({ actor_id: actor.id, spell_id: req.params.spellId }).del();
-    if (!n) return res.status(404).json({ error: 'spell not found' });
+    if (!n) return res.status(404).json({ error: 'Spell not found' });
 
     await broadcastActorOwned(req, actor.id, 'spellbook:changed');
 

@@ -469,11 +469,12 @@
     /* Right group: Save changes (when shown) just left of the bin. Log out is
        the row's first child, so nothing here can move it. */
     .idcard-actions-end { display: flex; align-items: center; gap: 0.6rem; margin-left: auto; }
-    /* Delete account: a quiet icon, not a red button; the danger colour only
-       on hover/focus. */
-    .btn.icon.idcard-bin { min-height: 36px; min-width: 36px; padding: 0.4rem; color: var(--text-muted); }
-    .btn.icon.idcard-bin svg { width: 18px; height: 18px; display: block; }
-    .btn.icon.idcard-bin:hover, .btn.icon.idcard-bin:focus-visible { color: var(--danger); }
+    /* Delete account: the app's direct-trash button (.btn.small.danger, as on
+       the game page's roster, inventory and image cards): danger border and
+       glyph, danger fill on hover. Only the size is set here (36 px square, as
+       before), so the bin keeps its place on the row. */
+    .btn.idcard-bin { min-height: 36px; min-width: 36px; padding: 0.4rem; }
+    .btn.idcard-bin svg { width: 18px; height: 18px; display: block; }
 
     @media (max-width: 520px) {
       .idcard-body { flex-direction: column; align-items: center; }

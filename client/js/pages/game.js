@@ -172,6 +172,12 @@
     railPopover('railFog', 'fog-panel');
     enhanceTokenPop();
     enhanceFogPanel();
+    // [ADDED 2026-10-07] Place arms a placement on the canvas (scene.js); the
+    // form gets out of the way so the map can be clicked. A refused Place (no
+    // scene, a player asking for several) starts nothing and leaves it open.
+    window.addEventListener('vtt:placement-start', function () {
+      if (openPop && openPop.pop === $('tokenPop')) closePop();
+    });
 
     // Modal openers.
     on('railAlign', 'click', openAlign);
@@ -193,7 +199,7 @@
       var hasChar = actor && actor.value;
       if (note) {
         note.textContent = hasChar
-          ? 'Inherits its picture and size from the character — fill a field below only to override.'
+          ? 'Inherits its picture and size from the character, fill a field below only to override.'
           : 'A plain token uses just the name and image you give below.';
       }
       if (hint) {
@@ -447,8 +453,8 @@
     function renderConnectionState() {
       var states = C.connectionStates();
       var text = '';
-      if (states.includes('blocked')) text = 'Access changed — reload the page.';
-      else if (states.includes('failed')) text = 'Could not synchronize — reload the page.';
+      if (states.includes('blocked')) text = 'Access changed. Reload the page.';
+      else if (states.includes('failed')) text = 'Could not synchronize. Reload the page.';
       else if (states.some(function (state) { return state === 'disconnected' || state === 'connecting'; })) text = 'Reconnecting…';
       else if (states.some(function (state) { return state !== 'ready'; })) text = 'Catching up…';
       setText('connState', text);

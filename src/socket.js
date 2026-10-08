@@ -210,7 +210,7 @@ function initSockets(io, workLifecycle, coordination) {
     // Reject an unauthenticated socket outright. Without this, an anonymous
     // socket sits connected and consumes a slot for no reason.
     if (!user) {
-      socket.emit('unauthorized', { error: 'authentication required' });
+      socket.emit('unauthorized', { error: 'Authentication required' });
       socket.disconnect(true);
       return;
     }
@@ -248,12 +248,12 @@ function initSockets(io, workLifecycle, coordination) {
         const tokenId = p.token_id;
 
         if (!(await isActiveMember(campaignId, user.id))) {
-          return respond({ ok: false, error: 'not a member of that campaign' });
+          return respond({ ok: false, error: 'Not a member of that campaign' });
         }
         // Must have joined the room first. Guards against a socket that never
         // ran campaign:join trying to write straight into a room.
         if (!socket.rooms.has(roomName(campaignId))) {
-          return respond({ ok: false, error: 'join the campaign room first' });
+          return respond({ ok: false, error: 'Join the campaign room first' });
         }
 
         // [FIXED 2026-08-07] Shape-check the id before it reaches a query.
@@ -277,22 +277,22 @@ function initSockets(io, workLifecycle, coordination) {
         // performs is necessary but not sufficient: 'not-a-uuid' is a string
         // and still reaches the database.
         if (!validUuid(tokenId)) {
-          return respond({ ok: false, error: 'bad token id' });
+          return respond({ ok: false, error: 'Bad token id' });
         }
 
         const scene = await loadSceneInCampaign(sceneId, campaignId);
-        if (!scene) return respond({ ok: false, error: 'scene not found' });
+        if (!scene) return respond({ ok: false, error: 'Scene not found' });
 
         const token = await knex('tokens')
           .where({ id: typeof tokenId === 'string' ? tokenId : '', scene_id: scene.id })
           .first();
-        if (!token) return respond({ ok: false, error: 'token not found' });
+        if (!token) return respond({ ok: false, error: 'Token not found' });
 
         // Load the campaign to get owner_id for the policy check. (isActiveMember
         // already proved access; this is only to distinguish GM from player.)
         const campaign = await knex('campaigns')
           .where({ id: campaignId }).whereNull('deleted_at').first();
-        if (!campaign) return respond({ ok: false, error: 'campaign not found' });
+        if (!campaign) return respond({ ok: false, error: 'Campaign not found' });
 
         // Players are pinned to the active scene on the socket path too. Without
         // this, the HTTP gate would be bypassable: a player who had a token on a
@@ -304,14 +304,14 @@ function initSockets(io, workLifecycle, coordination) {
         // should have — and M3's V2 was exactly a boundary that held in one place
         // and leaked in another. Now one function in services/sceneAccess.js.
         if (!mayUseSceneFor({ isOwner: campaign.owner_id === user.id, campaign, scene })) {
-          return respond({ ok: false, error: 'that scene is not active' });
+          return respond({ ok: false, error: 'That scene is not active' });
         }
 
         if (!tokenMovePolicy({ campaign, token, userId: user.id })) {
-          return respond({ ok: false, error: 'you can only move tokens you placed' });
+          return respond({ ok: false, error: 'You can only move tokens you placed' });
         }
 
-        if (token.locked) return respond({ ok: false, error: 'token is locked' });
+        if (token.locked) return respond({ ok: false, error: 'Token is locked' });
 
         // A move MUST carry both coordinates. Unlike placement (where an absent
         // coord legitimately defaults to origin), a move with a missing x/y is
@@ -319,7 +319,7 @@ function initSockets(io, workLifecycle, coordination) {
         // Infinity/NaN as null, and Number(null) === 0 would otherwise slip a
         // bogus "move" through as a move-to-origin.
         if (p.x === undefined || p.x === null || p.y === undefined || p.y === null) {
-          return respond({ ok: false, error: 'x and y are required' });
+          return respond({ ok: false, error: 'X and y are required' });
         }
         const x = validateGridCoord(p.x, 'x');
         if (x.error) return respond({ ok: false, error: x.error });
@@ -358,7 +358,7 @@ function initSockets(io, workLifecycle, coordination) {
         return respond({ ok: true, token: shaped });
       } catch (err) {
         console.error('token:move failed:', err.message);
-        return respond({ ok: false, error: 'move failed' });
+        return respond({ ok: false, error: 'Move failed' });
       }
     });
 
@@ -402,22 +402,22 @@ function initSockets(io, workLifecycle, coordination) {
         const sceneId = p.scene_id;
 
         if (!(await isActiveMember(campaignId, user.id))) {
-          return respond({ ok: false, error: 'not a member of that campaign' });
+          return respond({ ok: false, error: 'Not a member of that campaign' });
         }
         if (!socket.rooms.has(roomName(campaignId))) {
-          return respond({ ok: false, error: 'join the campaign room first' });
+          return respond({ ok: false, error: 'Join the campaign room first' });
         }
 
         const scene = await loadSceneInCampaign(sceneId, campaignId);
-        if (!scene) return respond({ ok: false, error: 'scene not found' });
+        if (!scene) return respond({ ok: false, error: 'Scene not found' });
 
         const campaign = await knex('campaigns')
           .where({ id: campaignId }).whereNull('deleted_at').first();
-        if (!campaign) return respond({ ok: false, error: 'campaign not found' });
+        if (!campaign) return respond({ ok: false, error: 'Campaign not found' });
 
         const isOwner = campaign.owner_id === user.id;
         if (!mayUseSceneFor({ isOwner, campaign, scene })) {
-          return respond({ ok: false, error: 'that scene is not active' });
+          return respond({ ok: false, error: 'That scene is not active' });
         }
 
         // Grid coordinates, bounded to the scene. Unbounded values would let a
@@ -427,7 +427,7 @@ function initSockets(io, workLifecycle, coordination) {
         const x = Number(p.x);
         const y = Number(p.y);
         if (!Number.isFinite(x) || !Number.isFinite(y)) {
-          return respond({ ok: false, error: 'x and y are required' });
+          return respond({ ok: false, error: 'X and y are required' });
         }
         // The scene size is a constant since the 2026-10-05 schema cleanup
         // (scenes.width/height dropped). Reading the dropped columns here would
@@ -435,7 +435,7 @@ function initSockets(io, workLifecycle, coordination) {
         const maxX = Math.max(1, Math.floor(SCENE_WIDTH_PX / GRID_PX));
         const maxY = Math.max(1, Math.floor(SCENE_HEIGHT_PX / GRID_PX));
         if (x < -1 || y < -1 || x > maxX + 1 || y > maxY + 1) {
-          return respond({ ok: false, error: 'ping is outside the scene' });
+          return respond({ ok: false, error: 'Ping is outside the scene' });
         }
 
         // Recomputed, never taken from the body.
@@ -499,7 +499,7 @@ function initSockets(io, workLifecycle, coordination) {
         return respond({ ok: true });
       } catch (err) {
         console.error('scene:ping failed:', err.message);
-        return respond({ ok: false, error: 'ping failed' });
+        return respond({ ok: false, error: 'Ping failed' });
       }
     });
 
@@ -512,24 +512,24 @@ function initSockets(io, workLifecycle, coordination) {
         const sceneId = p.scene_id;
         const moves = Array.isArray(p.moves) ? p.moves : null;
 
-        if (!moves || moves.length === 0) return respond({ ok: false, error: 'moves is empty' });
-        if (moves.length > 500) return respond({ ok: false, error: 'too many moves' });
+        if (!moves || moves.length === 0) return respond({ ok: false, error: 'Moves is empty' });
+        if (moves.length > 500) return respond({ ok: false, error: 'Too many moves' });
 
         if (!(await isActiveMember(campaignId, user.id))) {
-          return respond({ ok: false, error: 'not a member of that campaign' });
+          return respond({ ok: false, error: 'Not a member of that campaign' });
         }
         if (!socket.rooms.has(roomName(campaignId))) {
-          return respond({ ok: false, error: 'join the campaign room first' });
+          return respond({ ok: false, error: 'Join the campaign room first' });
         }
         const scene = await loadSceneInCampaign(sceneId, campaignId);
-        if (!scene) return respond({ ok: false, error: 'scene not found' });
+        if (!scene) return respond({ ok: false, error: 'Scene not found' });
         const campaign = await knex('campaigns')
           .where({ id: campaignId }).whereNull('deleted_at').first();
-        if (!campaign) return respond({ ok: false, error: 'campaign not found' });
+        if (!campaign) return respond({ ok: false, error: 'Campaign not found' });
         // Same active-scene pin as the single move above, through the same
         // single definition.
         if (!mayUseSceneFor({ isOwner: campaign.owner_id === user.id, campaign, scene })) {
-          return respond({ ok: false, error: 'that scene is not active' });
+          return respond({ ok: false, error: 'That scene is not active' });
         }
 
         const applied = [];
@@ -541,15 +541,15 @@ function initSockets(io, workLifecycle, coordination) {
             const tokenId = m && m.token_id;
             // typeof alone lets 'not-a-uuid' through to the query; the shape
             // check is what actually keeps a malformed id out of Postgres.
-            if (!validUuid(tokenId)) { rejected.push({ token_id: tokenId, error: 'bad id' }); continue; }
+            if (!validUuid(tokenId)) { rejected.push({ token_id: tokenId, error: 'Bad id' }); continue; }
             const token = await trx('tokens').where({ id: tokenId, scene_id: scene.id }).first();
-            if (!token) { rejected.push({ token_id: tokenId, error: 'not found' }); continue; }
+            if (!token) { rejected.push({ token_id: tokenId, error: 'Not found' }); continue; }
             if (!tokenMovePolicy({ campaign, token, userId: user.id })) {
-              rejected.push({ token_id: tokenId, error: 'not yours' }); continue;
+              rejected.push({ token_id: tokenId, error: 'Not yours' }); continue;
             }
             if (token.locked) { rejected.push({ token_id: tokenId, error: 'locked' }); continue; }
             if (m.x === undefined || m.x === null || m.y === undefined || m.y === null) {
-              rejected.push({ token_id: tokenId, error: 'x and y required' }); continue;
+              rejected.push({ token_id: tokenId, error: 'X and y required' }); continue;
             }
             const x = validateGridCoord(m.x, 'x');
             const y = validateGridCoord(m.y, 'y');
@@ -575,7 +575,7 @@ function initSockets(io, workLifecycle, coordination) {
         return respond({ ok: true, applied, rejected });
       } catch (err) {
         console.error('token:move-batch failed:', err.message);
-        return respond({ ok: false, error: 'batch move failed' });
+        return respond({ ok: false, error: 'Batch move failed' });
       }
     });
 

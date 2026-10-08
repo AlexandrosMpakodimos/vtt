@@ -167,7 +167,7 @@ router.get('/', requireMember, async (req, res, next) => {
 router.get('/:spellId', requireMember, async (req, res, next) => {
   try {
     const spell = await loadSpellInCampaign(req.params.spellId, req.campaign.id);
-    if (!spell) return res.status(404).json({ error: 'spell not found' });
+    if (!spell) return res.status(404).json({ error: 'Spell not found' });
     return res.json({ spell: publicSpell(spell) });
   } catch (err) {
     return next(err);
@@ -177,12 +177,12 @@ router.get('/:spellId', requireMember, async (req, res, next) => {
 router.patch('/:spellId', requireOwner, async (req, res, next) => {
   try {
     const spell = await loadSpellInCampaign(req.params.spellId, req.campaign.id);
-    if (!spell) return res.status(404).json({ error: 'spell not found' });
+    if (!spell) return res.status(404).json({ error: 'Spell not found' });
 
     const v = validateSpellBody(req.body || {}, { partial: true });
     if (v.error) return res.status(400).json({ error: v.error });
     if (!Object.keys(v.updates).length) {
-      return res.status(400).json({ error: 'nothing to update' });
+      return res.status(400).json({ error: 'Nothing to update' });
     }
     v.updates.updated_at = knex.fn.now();
 
@@ -207,7 +207,7 @@ router.patch('/:spellId', requireOwner, async (req, res, next) => {
 router.delete('/:spellId', requireOwner, async (req, res, next) => {
   try {
     const spell = await loadSpellInCampaign(req.params.spellId, req.campaign.id);
-    if (!spell) return res.status(404).json({ error: 'spell not found' });
+    if (!spell) return res.status(404).json({ error: 'Spell not found' });
 
     const known = Number((await knex('actor_spells')
       .where({ spell_id: spell.id }).count({ n: '*' }).first()).n);

@@ -170,7 +170,7 @@ router.post('/', requireOwner, async (req, res, next) => {
 
     const name = validateShortText(body.name, 'name', 100);
     if (name.error) return res.status(400).json({ error: name.error });
-    if (!name.value) return res.status(400).json({ error: 'name is required' });
+    if (!name.value) return res.status(400).json({ error: 'Name is required' });
 
     const type = validateItemType(body.type);
     if (type.error) return res.status(400).json({ error: type.error });
@@ -257,7 +257,7 @@ router.get('/', requireMember, async (req, res, next) => {
 router.get('/:itemId', requireMember, async (req, res, next) => {
   try {
     const item = await loadItemInCampaign(req.params.itemId, req.campaign.id);
-    if (!item) return res.status(404).json({ error: 'item not found' });
+    if (!item) return res.status(404).json({ error: 'Item not found' });
     return gateway.sendJson(req, res, { item: shapeItemFor(req.isOwner === true, item) });
   } catch (err) {
     return next(err);
@@ -269,7 +269,7 @@ router.get('/:itemId', requireMember, async (req, res, next) => {
 router.patch('/:itemId', requireOwner, async (req, res, next) => {
   try {
     const item = await loadItemInCampaign(req.params.itemId, req.campaign.id);
-    if (!item) return res.status(404).json({ error: 'item not found' });
+    if (!item) return res.status(404).json({ error: 'Item not found' });
 
     const body = req.body || {};
     const updates = {};
@@ -277,7 +277,7 @@ router.patch('/:itemId', requireOwner, async (req, res, next) => {
     if (body.name !== undefined) {
       const r = validateShortText(body.name, 'name', 100);
       if (r.error) return res.status(400).json({ error: r.error });
-      if (!r.value) return res.status(400).json({ error: 'name is required' });
+      if (!r.value) return res.status(400).json({ error: 'Name is required' });
       updates.name = r.value;
     }
     if (body.type !== undefined) {
@@ -317,7 +317,7 @@ router.patch('/:itemId', requireOwner, async (req, res, next) => {
     }
 
     if (Object.keys(updates).length === 0) {
-      return res.status(400).json({ error: 'nothing to update' });
+      return res.status(400).json({ error: 'Nothing to update' });
     }
     updates.updated_at = knex.fn.now();
 
@@ -337,7 +337,7 @@ router.patch('/:itemId', requireOwner, async (req, res, next) => {
 router.delete('/:itemId', requireOwner, async (req, res, next) => {
   try {
     const item = await loadItemInCampaign(req.params.itemId, req.campaign.id);
-    if (!item) return res.status(404).json({ error: 'item not found' });
+    if (!item) return res.status(404).json({ error: 'Item not found' });
 
     const held = await knex('inventory').where({ item_id: item.id }).count({ n: '*' }).first();
     const inventoryRows = Number(held.n);

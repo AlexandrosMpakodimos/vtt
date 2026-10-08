@@ -67,9 +67,9 @@
       'currentPassword is required': 'Please enter your current password.',
       'newPassword is required': 'Please enter a new password.',
       'newEmail is required': 'Please enter a new email address.',
-      'email is required': 'Please enter your email address.',
-      'password is required': 'Please enter your password.',
-      'username is required': 'Please enter a username.'
+      'Email is required': 'Please enter your email address.',
+      'Password is required': 'Please enter your password.',
+      'Username is required': 'Please enter a username.'
     };
     return map[msg] || msg;
   }
@@ -276,8 +276,8 @@
     }
     node.querySelector('.card-name').textContent = c.name || '(untitled)';
     var owner = node.querySelector('.card-owner');
-    if (isGm) owner.textContent = 'by you';
-    else if (c.owner_username) owner.textContent = 'by ' + c.owner_username;
+    if (isGm) owner.textContent = 'By you';
+    else if (c.owner_username) owner.textContent = 'By ' + c.owner_username;
     else owner.setAttribute('hidden', '');
     node.querySelector('.badge-role').textContent = isGm ? 'GM' : 'Player';
     node.querySelector('.badge-vis').textContent = c.is_public ? 'Anyone' : 'Password';
@@ -574,7 +574,7 @@
 
       // Enter / note
       if (stx.showEnter) { els.enter.setAttribute('href', '/game.html?campaign=' + c.id); els.enter.removeAttribute('hidden'); els.note.setAttribute('hidden', ''); }
-      else { els.enter.setAttribute('hidden', ''); els.note.textContent = "Closed — the GM hasn't opened the table."; els.note.removeAttribute('hidden'); }
+      else { els.enter.setAttribute('hidden', ''); els.note.textContent = "Closed. The GM hasn't opened the table."; els.note.removeAttribute('hidden'); }
 
       // GM open/close toggle; player Leave.
       if (isGm) { els.openclose.removeAttribute('hidden'); els.openclose.textContent = (c.is_open !== false) ? 'Close the table' : 'Open the table'; }
@@ -992,7 +992,7 @@
       var meta = document.createElement('div');
       meta.className = 'meta';
       var until = c.deleted_at ? new Date(new Date(c.deleted_at).getTime() + 30 * 86400000).toISOString() : null;
-      meta.textContent = 'deleted ' + fmtDate(c.deleted_at) + (until ? (' · restorable until ' + fmtDate(until)) : '');
+      meta.textContent = 'Deleted ' + fmtDate(c.deleted_at) + (until ? (' · restorable until ' + fmtDate(until)) : '');
       left.appendChild(name); left.appendChild(meta);
       var btn = document.createElement('button');
       btn.className = 'btn secondary small';
@@ -1383,7 +1383,7 @@
       if (c.owner_username) {
         var owner = document.createElement('span');
         owner.className = 'find-owner';
-        owner.textContent = 'by ' + c.owner_username;
+        owner.textContent = 'By ' + c.owner_username;
         body.appendChild(owner);
       }
       // Tags: only a password-required game shows a lock tag — open games show
@@ -1523,7 +1523,7 @@
         // step, and we get the crop back alongside the URL.
         frame: { offsetX: pfFrame.ox, offsetY: pfFrame.oy, scale: pfFrame.scale },
         frameTitle: 'Frame your avatar',
-        frameNote: 'Drag to move · scroll to zoom. This is how your avatar will be cropped.',
+        frameNote: 'Drag to move, scroll to zoom. This is how your avatar will be cropped.',
         onChoose: function (url, framing) {
           var i = $('pfAvatarInput');
           if (framing) pfFrame = { ox: framing.offsetX, oy: framing.offsetY, scale: framing.scale };
