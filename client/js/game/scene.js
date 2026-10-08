@@ -414,9 +414,8 @@ async function openScene(sceneId) {
   // Fog arrives in the same "load heavy" payload as the tokens.
   fog.clear();
   fogSelection.clear();
-  fogLayer.setAttribute('width', SCENE_SIZE.w);
-  fogLayer.setAttribute('height', SCENE_SIZE.h);
-  fogLayer.setAttribute('viewBox', `0 0 ${SCENE_SIZE.w} ${SCENE_SIZE.h}`);
+  // The layer's size and position are set by renderFog (fogArea), because they
+  // follow the map picture, which is only known once its image has loaded.
   for (const f of (r.data.fog || [])) fog.set(f.id, f);
   renderFog();
 
@@ -505,6 +504,7 @@ function applyGridAlignment() {
       stageBg.style.backgroundSize = `${probe.naturalWidth}px ${probe.naturalHeight}px`;
       stageBg.style.backgroundPosition = '0 0';
       stageBg.style.backgroundRepeat = 'no-repeat';
+      renderFog();   // the map picture grew: the fog layer follows it (fogArea)
     };
     probe.src = scene.img_url;
     return;
@@ -534,6 +534,7 @@ function applyGridAlignment() {
     stageBg.style.backgroundSize = `${w}px ${h}px`;
     stageBg.style.backgroundPosition = '0 0';
     stageBg.style.backgroundRepeat = 'no-repeat';
+    renderFog();   // the map picture moved or grew: the fog layer follows it
   };
   probe.src = scene.img_url;
 }
@@ -2384,6 +2385,34 @@ function fogShape(row, attrs) {
   return svgEl('polygon', { points: row.points.map((p) => `${px(p.x)},${px(p.y)}`).join(' '), ...attrs });
 }
 
+// [ADDED 2026-10-08] Where fog can be drawn and shown, in stage pixels: the
+// grid pad around the scene box (where tokens can also go) together with the
+// map picture, which can reach past the pad when it is large. Same source as
+// the pan clamp (mapExtent), so "the board" means one thing everywhere.
+function fogArea() {
+  const m = mapExtent();
+  return {
+    x0: Math.min(m.x0, -PAD_PX),
+    y0: Math.min(m.y0, -PAD_PX),
+    x1: Math.max(m.x1, SCENE_SIZE.w + PAD_PX),
+    y1: Math.max(m.y1, SCENE_SIZE.h + PAD_PX),
+  };
+}
+
+// The covered regions' bounding box in stage pixels, clipped to the area.
+function coveredBox(covered, area) {
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const f of covered) {
+    const b = fogBBox(f);
+    x0 = Math.min(x0, px(Math.min(b.x0, b.x1))); x1 = Math.max(x1, px(Math.max(b.x0, b.x1)));
+    y0 = Math.min(y0, px(Math.min(b.y0, b.y1))); y1 = Math.max(y1, px(Math.max(b.y0, b.y1)));
+  }
+  x0 = Math.max(x0, area.x0); y0 = Math.max(y0, area.y0);
+  x1 = Math.min(x1, area.x1); y1 = Math.min(y1, area.y1);
+  if (!(x1 > x0 && y1 > y0)) return { x0: area.x0, y0: area.y0, x1: area.x0, y1: area.y0 };
+  return { x0, y0, x1, y1 };
+}
+
 // Rebuild the whole overlay. Fog changes are rare (a GM drawing, not a token
 // being dragged), so a full rebuild is simpler and cheap enough — there is no
 // per-frame path here to optimise.
@@ -2396,6 +2425,19 @@ function renderFog() {
   fogLayer.textContent = '';
   fogNodes.clear();
   if (!scene) return;
+
+  // [ADDED 2026-10-08] The layer covers the whole board, not the scene box.
+  // It used to be a fixed 1400x1050 box at the stage origin, so on a map
+  // picture larger than that box, fog drawn outside it was created but never
+  // painted (an SVG clips to its own box) and the crosshair surface stopped
+  // at the box's edge. The viewBox keeps one unit = one stage pixel with the
+  // origin where it was, so every shape and hit test is unchanged.
+  const area = fogArea();
+  fogLayer.style.left = area.x0 + 'px';
+  fogLayer.style.top = area.y0 + 'px';
+  fogLayer.setAttribute('width', area.x1 - area.x0);
+  fogLayer.setAttribute('height', area.y1 - area.y0);
+  fogLayer.setAttribute('viewBox', `${area.x0} ${area.y0} ${area.x1 - area.x0} ${area.y1 - area.y0}`);
 
   const editing = fogMode && isGm();
   const covered = [...fog.values()].filter((f) => !f.revealed);
@@ -2415,10 +2457,16 @@ function renderFog() {
     return el;
   };
   if (covered.length) {
+    // The painted rect and its mask span only the covered regions' bounding
+    // box (clipped to the layer), not the whole board: the mask's offscreen
+    // buffer is sized to it, and keeping it small is what the 2026-10-07 Safari
+    // zoom fix relies on. Nothing outside a covered region is ever painted.
+    const paint = coveredBox(covered, area);
+    const box = { x: paint.x0, y: paint.y0, width: paint.x1 - paint.x0, height: paint.y1 - paint.y0 };
     const defs = svgEl('defs');
-    const mask = svgEl('mask', { id: 'fog-mask' });
+    const mask = svgEl('mask', { id: 'fog-mask', maskUnits: 'userSpaceOnUse', ...box });
     // Black base: nothing is painted until a covered region says otherwise.
-    mask.appendChild(svgEl('rect', { x: 0, y: 0, width: SCENE_SIZE.w, height: SCENE_SIZE.h, fill: 'black' }));
+    mask.appendChild(svgEl('rect', { ...box, fill: 'black' }));
     for (const f of covered) mask.appendChild(remember(f.id, fogShape(f, { fill: 'white' })));
     // Revealed regions punch back through, whatever order they were drawn in.
     for (const f of revealed) mask.appendChild(remember(f.id, fogShape(f, { fill: 'black' })));
@@ -2429,7 +2477,7 @@ function renderFog() {
     // choice, NOT a security boundary: the scene image reaches every member
     // regardless, so fog conceals nothing that a player could not already fetch.
     const painted = svgEl('rect', {
-      x: 0, y: 0, width: SCENE_SIZE.w, height: SCENE_SIZE.h,
+      ...box,
       fill: '#0b0b12', 'fill-opacity': isGm() ? 0.55 : 1, mask: 'url(#fog-mask)',
     });
     painted.setAttribute('pointer-events', 'none');
@@ -2444,7 +2492,8 @@ function renderFog() {
     // landed on is decided in JS by fogPick(), so overlapping regions resolve by
     // a rule we control (most recent wins) rather than by SVG document order.
     fogLayer.appendChild(svgEl('rect', {
-      x: 0, y: 0, width: SCENE_SIZE.w, height: SCENE_SIZE.h, fill: 'transparent', class: 'fog-catch',
+      x: area.x0, y: area.y0, width: area.x1 - area.x0, height: area.y1 - area.y0,
+      fill: 'transparent', class: 'fog-catch',
     }));
     for (const f of fog.values()) {
       const cls = 'fog-outline' + (f.revealed ? ' revealed' : '') + (fogSelection.has(f.id) ? ' selected' : '');
@@ -2766,8 +2815,14 @@ fogToolEl.addEventListener('change', () => {
 
 document.getElementById('fog-cover-all').addEventListener('click', async () => {
   if (!scene) return show('Open a scene first');
-  const cols = SCENE_SIZE.w / GRID_PX, rows = SCENE_SIZE.h / GRID_PX;
-  await createFog('rect', [{ x: 0, y: 0 }, { x: cols, y: rows }], false);
+  // The whole map picture (the scene box, or the image when it is larger or
+  // offset), widened to whole squares. Before 2026-10-08 this was the scene
+  // box only, which left most of a large map uncovered.
+  const m = mapExtent();
+  await createFog('rect', [
+    { x: Math.floor(m.x0 / GRID_PX), y: Math.floor(m.y0 / GRID_PX) },
+    { x: Math.ceil(m.x1 / GRID_PX), y: Math.ceil(m.y1 / GRID_PX) },
+  ], false);
 });
 
 document.getElementById('fog-clear-all').addEventListener('click', async () => {

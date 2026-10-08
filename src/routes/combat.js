@@ -359,7 +359,7 @@ async function autoAddCombatant(token) {
       table: 'combatants',
       where: { combat_id: combat.id },
       max: MAX_COMBATANTS_PER_COMBAT,
-      capMessage: `a combat may hold at most ${MAX_COMBATANTS_PER_COMBAT} combatants`,
+      capMessage: `A combat may hold at most ${MAX_COMBATANTS_PER_COMBAT} combatants`,
       insert: {
         combat_id: combat.id,
         token_id: token.id,
@@ -430,7 +430,7 @@ router.post('/', requireOwner, async (req, res, next) => {
         table: 'combat',
         where: { scene_id: scene.id, active: true },
         max: MAX_ACTIVE_COMBATS_PER_SCENE,
-        capMessage: 'that scene already has a running combat',
+        capMessage: 'That scene already has a running combat',
         insert: {
           campaign_id: req.campaign.id,
           scene_id: scene.id,
@@ -552,7 +552,7 @@ router.patch('/:combatId', requireOwner, async (req, res, next) => {
           table: 'combat',
           where: { scene_id: found.combat.scene_id, active: true },
           max: MAX_ACTIVE_COMBATS_PER_SCENE,
-          capMessage: 'that scene already has a running combat',
+          capMessage: 'That scene already has a running combat',
           update: { where: { id: found.combat.id }, patch: updates },
         });
         await broadcastRoster(req, rows[0]);
@@ -646,7 +646,7 @@ router.post('/:combatId/combatants', requireOwner, async (req, res, next) => {
         table: 'combatants',
         where: { combat_id: found.combat.id },
         max: MAX_COMBATANTS_PER_COMBAT,
-        capMessage: `a combat may hold at most ${MAX_COMBATANTS_PER_COMBAT} combatants`,
+        capMessage: `A combat may hold at most ${MAX_COMBATANTS_PER_COMBAT} combatants`,
         insert: {
           combat_id: found.combat.id,
           token_id: token.id,

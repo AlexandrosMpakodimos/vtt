@@ -128,7 +128,7 @@ router.post('/', requireOwner, async (req, res, next) => {
         table: 'spells',
         where: { campaign_id: req.campaign.id },
         max: MAX_SPELLS_PER_CAMPAIGN,
-        capMessage: `a campaign may hold at most ${MAX_SPELLS_PER_CAMPAIGN} spells`,
+        capMessage: `A campaign may hold at most ${MAX_SPELLS_PER_CAMPAIGN} spells`,
         // Explicit column list — never the raw body.
         insert: { campaign_id: req.campaign.id, ...v.updates },
       });

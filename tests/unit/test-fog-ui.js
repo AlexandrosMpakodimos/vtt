@@ -35,8 +35,9 @@ let pass=0, fail=0;
 window.__check=(name,cond,d='')=>{ if(cond){pass++;console.log('  PASS  '+name);} else {fail++;console.log('  FAIL  '+name+'  '+d);} };
 
 window.eval(fs.readFileSync(rootPath('client/js/shared/common.js'), 'utf8'));
+new Promise((resolve) => { window.__done = resolve;
 window.eval(fs.readFileSync(rootPath('client/js/game/scene.js'),'utf8') + `
-;(function(){
+;(async function(){
   scene={id:'S',img_url:null}; SCENE_SIZE.w=1000; SCENE_SIZE.h=800; currentCampaignOwnerId='GM'; me={id:'GM'};
   campaignId='C';
   const stg=document.getElementById('stage'), bg=document.getElementById('stage-bg');
@@ -367,7 +368,77 @@ window.eval(fs.readFileSync(rootPath('client/js/game/scene.js'),'utf8') + `
   key('f'); key('f');
   __check('repeated F presses never let a player in', fogMode===false);
   __check('no editing surface appears for a player after F', layer.querySelectorAll('.fog-catch').length===0);
+
+  // ---------- [2026-10-08] the fog layer covers the board, not the scene box ----------
+  // Reported: on a map picture larger than the scene box, fog and its
+  // crosshair worked only inside the box. The layer was a fixed box-sized SVG
+  // at the stage origin, which clips everything outside it.
+  me={id:'GM'}; fog.clear(); fogSelection.clear(); setMode(false);
+  const P=PAD_PX, bgS=bg.style;
+  renderFog();
+  __check('no image: the layer spans the scene box plus the grid pad',
+    layer.getAttribute('width')==String(1000+2*P) && layer.getAttribute('height')==String(800+2*P) &&
+    layer.style.left===(-P)+'px' && layer.style.top===(-P)+'px' &&
+    layer.getAttribute('viewBox')===[-P,-P,1000+2*P,800+2*P].join(' '),
+    layer.getAttribute('viewBox')+' '+layer.style.left);
+  // A large uncalibrated map, drawn past the pad (applyGridAlignment's inline sizing).
+  bgS.width='4000px'; bgS.height='3000px';
+  renderFog();
+  __check('a map picture past the pad: the layer grows to the picture',
+    layer.getAttribute('viewBox')===[-P,-P,4000+P,3000+P].join(' '), layer.getAttribute('viewBox'));
+  setMode(true);
+  const catchEl=layer.querySelector('.fog-catch');
+  __check('the crosshair surface covers the whole layer, not the scene box',
+    !!catchEl && catchEl.getAttribute('x')==String(-P) && catchEl.getAttribute('width')==String(4000+P) &&
+    catchEl.getAttribute('height')==String(3000+P), catchEl && catchEl.outerHTML);
+  // Drawing past the scene box sends that shape (it always did) and now shows it.
+  __calls.length=0;
+  fire(bg,'pointerdown',3000,2500); fire(bg,'pointermove',3200,2700); fire(bg,'pointerup',3200,2700);
+  await new Promise((r)=>setTimeout(r,0));
+  const drawn=__calls.find((c)=>c.method==='POST' && /\\/fog$/.test(c.path));
+  __check('a rect drawn outside the scene box is sent with its real squares',
+    !!drawn && JSON.stringify(drawn.body.points)===JSON.stringify([{x:60,y:50},{x:64,y:54}]),
+    JSON.stringify(drawn && drawn.body));
+  // Covered regions out there are painted: the mask and the painted rect span them.
+  addFog('FA','rect',[{x:60,y:50},{x:64,y:54}],false);
+  addFog('FB','rect',[{x:-10,y:-5},{x:-8,y:-3}],false);
+  addFog('FR','rect',[{x:61,y:51},{x:62,y:52}],true);
+  renderFog();
+  const paintedEl=layer.querySelector('rect[mask]'), maskEl=layer.querySelector('mask');
+  __check('the painted fog spans the covered regions, outside the scene box included',
+    !!paintedEl && paintedEl.getAttribute('x')==='-500' && paintedEl.getAttribute('y')==='-250' &&
+    paintedEl.getAttribute('width')===String(3200+500) && paintedEl.getAttribute('height')===String(2700+250),
+    paintedEl && paintedEl.outerHTML);
+  __check('...and only them: the mask is not board-sized (the Safari zoom cost stays bounded by the fog)',
+    !!maskEl && maskEl.getAttribute('maskUnits')==='userSpaceOnUse' && maskEl.getAttribute('width')===paintedEl.getAttribute('width') &&
+    maskEl.getAttribute('x')==='-500', maskEl && maskEl.outerHTML.slice(0,160));
+  __check('the subtractive rule still holds out there (covered white, revealed black)',
+    maskShapes().filter((e)=>e.getAttribute('fill')==='white').length===2 &&
+    maskShapes().filter((e)=>e.getAttribute('fill')==='black').length===2);
+  const coverAll=async()=>{
+    __calls.length=0;
+    document.getElementById('fog-cover-all').click();
+    await new Promise((r)=>setTimeout(r,0));
+    const c=__calls.find((x)=>x.method==='POST' && /\\/fog$/.test(x.path));
+    return c ? JSON.stringify(c.body.points) : 'none';
+  };
+  // Cover all covers the whole map picture, not the scene box.
+  let pts=await coverAll();
+  __check('cover all covers the whole map picture (80 x 60 squares here)',
+    pts===JSON.stringify([{x:0,y:0},{x:80,y:60}]), pts);
+  bgS.left='-130px'; bgS.top='-70px';   // an aligned map offset into the pad
+  pts=await coverAll();
+  __check('...widened outward to whole squares when the picture is offset',
+    pts===JSON.stringify([{x:-3,y:-2},{x:78,y:59}]), pts);
+  bgS.width=''; bgS.height=''; bgS.left=''; bgS.top='';
+  pts=await coverAll();
+  __check('no image: cover all is the scene box, as before',
+    pts===JSON.stringify([{x:0,y:0},{x:20,y:16}]), pts);
+  setMode(false); fog.clear(); renderFog();
+  window.__done();
 })();
 `);
-console.log('\n'+pass+' passed, '+fail+' failed');
-process.exit(fail===0?0:1);
+}).then(() => {
+  console.log('\n'+pass+' passed, '+fail+' failed');
+  process.exit(fail===0?0:1);
+});

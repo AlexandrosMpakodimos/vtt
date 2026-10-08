@@ -34,7 +34,7 @@ const {
 // same reason mayUseScene was collapsed into it during M5: an input rule with
 // two definitions is an input rule with two behaviours.
 const {
-  mayUseSceneFor, validUuid, SCENE_WIDTH_PX, SCENE_HEIGHT_PX, GRID_PX,
+  mayUseSceneFor, validUuid,
 } = require('./services/sceneAccess');
 
 const { createRoomLifecycle, roomName, lobbyName } = require('./socket/roomLifecycle');
@@ -420,21 +420,23 @@ function initSockets(io, workLifecycle, coordination) {
           return respond({ ok: false, error: 'That scene is not active' });
         }
 
-        // Grid coordinates, bounded to the scene. Unbounded values would let a
-        // ping be placed far outside the map — harmless to the server, and a
-        // way to scroll every other client's view to nowhere when combined with
-        // focus.
+        // Grid coordinates, bounded. Unbounded values would let a ping be
+        // placed far outside the map — harmless to the server, and a way to
+        // scroll every other client's view to nowhere when combined with focus.
         const x = Number(p.x);
         const y = Number(p.y);
         if (!Number.isFinite(x) || !Number.isFinite(y)) {
           return respond({ ok: false, error: 'X and y are required' });
         }
-        // The scene size is a constant since the 2026-10-05 schema cleanup
-        // (scenes.width/height dropped). Reading the dropped columns here would
-        // yield NaN and silently switch this bound off.
-        const maxX = Math.max(1, Math.floor(SCENE_WIDTH_PX / GRID_PX));
-        const maxY = Math.max(1, Math.floor(SCENE_HEIGHT_PX / GRID_PX));
-        if (x < -1 || y < -1 || x > maxX + 1 || y > maxY + 1) {
+        // [CHANGED 2026-10-08] The bound is the one tokens and fog already
+        // use (validateGridCoord, -10000..10000 squares), so a ping can go
+        // wherever a token can. It used to be the 1400x1050 scene box plus one
+        // square, which refused pings on every part of a larger map picture
+        // and on the grid pad. "Nowhere" is now prevented where the view is
+        // set: every client's pan clamp (scene.js clampView) keeps 15% of the
+        // map on screen, so a focus ping at the edge of this range still
+        // leaves the map in view.
+        if (validateGridCoord(x, 'x').error || validateGridCoord(y, 'y').error) {
           return respond({ ok: false, error: 'Ping is outside the scene' });
         }
 

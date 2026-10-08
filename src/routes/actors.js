@@ -496,7 +496,7 @@ router.post('/', requireMember, async (req, res, next) => {
           table: 'actors',
           where: { campaign_id: req.campaign.id },
           max: MAX_ACTORS_PER_CAMPAIGN,
-          capMessage: `a campaign may hold at most ${MAX_ACTORS_PER_CAMPAIGN} actors`,
+          capMessage: `A campaign may hold at most ${MAX_ACTORS_PER_CAMPAIGN} actors`,
           insert: insertRow,
         });
       } else {
@@ -507,12 +507,12 @@ router.post('/', requireMember, async (req, res, next) => {
           table: 'actors',
           where: { campaign_id: req.campaign.id, user_id: req.user.id },
           max: MAX_PLAYER_ACTORS_PER_CAMPAIGN,
-          capMessage: `you may hold at most ${MAX_PLAYER_ACTORS_PER_CAMPAIGN} characters in a campaign`,
+          capMessage: `You may hold at most ${MAX_PLAYER_ACTORS_PER_CAMPAIGN} characters in a campaign`,
           insert: insertRow,
           extraCaps: [{
             where: { campaign_id: req.campaign.id },
             max: MAX_ACTORS_PER_CAMPAIGN,
-            capMessage: `a campaign may hold at most ${MAX_ACTORS_PER_CAMPAIGN} actors`,
+            capMessage: `A campaign may hold at most ${MAX_ACTORS_PER_CAMPAIGN} actors`,
           }],
         });
       }
@@ -903,7 +903,7 @@ router.post('/:actorId/inventory', requireMember, async (req, res, next) => {
         table: 'inventory',
         where: { actor_id: actor.id },
         max: MAX_INVENTORY_ROWS_PER_ACTOR,
-        capMessage: `a character may carry at most ${MAX_INVENTORY_ROWS_PER_ACTOR} distinct items`,
+        capMessage: `A character may carry at most ${MAX_INVENTORY_ROWS_PER_ACTOR} distinct items`,
         insert: {
           actor_id: actor.id,
           item_id: item.id,
@@ -1005,7 +1005,7 @@ router.patch('/:actorId/inventory/:invId', requireMember, async (req, res, next)
           // The capped SET: this character's attuned items.
           where: { actor_id: actor.id, attuned: true },
           max: MAX_ATTUNED_ITEMS,
-          capMessage: `a character may attune to at most ${MAX_ATTUNED_ITEMS} items`,
+          capMessage: `A character may attune to at most ${MAX_ATTUNED_ITEMS} items`,
           update: {
             where: { id: row.id },
             patch: { attuned: true, updated_at: knex.fn.now() },
@@ -1155,7 +1155,7 @@ router.post('/:actorId/spells', requireMember, async (req, res, next) => {
         table: 'actor_spells',
         where: { actor_id: actor.id },
         max: MAX_SPELLBOOK_ROWS_PER_ACTOR,
-        capMessage: `a character may know at most ${MAX_SPELLBOOK_ROWS_PER_ACTOR} spells`,
+        capMessage: `A character may know at most ${MAX_SPELLBOOK_ROWS_PER_ACTOR} spells`,
         insert: {
           actor_id: actor.id,
           spell_id: spell.id,

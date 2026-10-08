@@ -1,6 +1,6 @@
 /* client/css/privacy.css — the static privacy notice (client/privacy.html).
  * Colour comes only from tokens.css; type and wordmark follow the landing.
- * One reading column, no motion. */
+ * One reading column. The only motion is the landing's theme crossfade. */
 
 :root {
   --maxw: 44rem;
@@ -14,6 +14,13 @@
 /* The hidden attribute must always win over .btn's display (privacy.js hides
    the account buttons that do not apply). */
 [hidden] { display: none !important; }
+
+/* The landing's theme crossfade (landing.css), on only after the first paint:
+   privacy.js adds .theme-ready two frames in, so the stored theme applies at
+   once on load and only a toggle animates. */
+.theme-ready * {
+  transition: background-color 0.7s ease, color 0.7s ease, border-color 0.7s ease;
+}
 
 body {
   margin: 0;
