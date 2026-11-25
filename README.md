@@ -1,144 +1,73 @@
-# Διαδικτυακή Εφαρμογή για Επιτραπέζιο Παιχνίδι Ρόλων (Virtual Tabletop)
+# Virtual Tabletop
 
-Πτυχιακή εργασία με τίτλο: «Ανάπτυξη Διαδικτυακής Εφαρμογής για Επιτραπέζιο Παιχνίδι» του Τμήματος Πληροφορικής του Ιονίου Πανεπιστημίου. Πρόκειται για μια απλοποιημένη πλατφόρμα για επιτραπέζια παιχνίδια ρόλων, εμπνευσμένη από το [Dungeons & Dragons](https://www.dungeonsanddragons.com). Ένας Game Master (ο αφηγητής που διευθύνει το παιχνίδι) και έως 7 παίκτες συνδέονται στο ίδιο εικονικό τραπέζι και βλέπουν κάθε αλλαγή σε πραγματικό χρόνο.
+A browser app where up to 8 people play a tabletop role-playing game together: a shared map, characters,
+dice and turn-based combat, updated live for everyone at the table.
 
-Η εφαρμογή είναι διαθέσιμη στο <https://trucksart.com>.
+<!-- Uncomment when the live instance is back online:
+**Live:** <https://trucksart.com>
+-->
 
-**Χαρακτηριστικά:** Χάρτες και πιόνια που μπορούν να προσαρμοστούν, με δυνατότητα
-απόκρυψης και εμφάνισής τους, φύλλα για τους χαρακτήρες με στατιστικά, αντικείμενα και ξόρκια, μηχανισμός παρακολούθησης της σειράς των πιονιών κατά τη διάρκεια μάχης, τρισδιάστατα ζάρια και συνομιλία (chat).
+![Two browsers side by side: the Game Master moves a token and reveals the map, and the player sees it at once](docs/media/demo.gif)
 
-## Οδηγός εγκατάστασης
+## What it does
 
-> **Windows:** πληκτρολογήστε όλες τις εντολές στη **Γραμμή εντολών**
-> (Command Prompt, `cmd`) και όχι στο PowerShell, το οποίο μπλοκάρει το `npm`.
+One player is the **Game Master** (GM), who runs the game. The others play one character each.
 
-### 1. Απαραίτητα εργαλεία
+- **Shared map** with tokens you drag, and **fog of war** that the GM reveals as the party explores
+- **Hidden information:** the server sends each player only what that player may see
+- **Character sheets** with stats, skills, items and spells
+- **Turn-based combat** with an initiative order and rounds
+- **3D dice** and **chat**
 
-Για την τοπική εγκατάσταση της εφαρμογής θα χρειαστείτε **Node.js 22** και **PostgreSQL 16 ή νεότερη**.
+| GM view | Player view |
+|---|---|
+| ![The GM sees a hidden token and the tokens under the fog of war](docs/media/gm-view.png) | ![The player sees neither: the hidden token is never sent and the fog is solid](docs/media/player-view.png) |
 
-**Με πρόγραμμα εγκατάστασης:**
+| Character sheet | Items are identified in play |
+|---|---|
+| ![A character sheet](docs/media/character-sheet.png) | ![An unidentified item shows a blurred image and no properties; once identified, its name and properties appear](docs/media/item-identification.png) |
 
-- Node.js: <https://nodejs.org> (έκδοση 22)
-- PostgreSQL:
-  - Windows: <https://www.postgresql.org/download/windows/>. Κατά την
-    εγκατάσταση θα σας ζητηθεί κωδικός για τον χρήστη `postgres`· κρατήστε τον, θα τον χρειαστείτε στο βήμα 4.
-  - macOS: [Postgres.app](https://postgresapp.com). Ανοίξτε την εφαρμογή και πατήστε **Initialize**.
+| Combat | Dice |
+|---|---|
+| ![Combat with the initiative order](docs/media/combat.png) | ![Rolling 3D dice](docs/media/dice.png) |
 
-**Από τη γραμμή εντολών:**
+<sub>Art in the screenshots: battle maps by [Czepeku](https://www.czepeku.com). Pirate portraits and the alligator token: Designed by [Magnific](https://www.magnific.com). Witch portrait from [Pixabay](https://pixabay.com/illustrations/ai-generated-witch-character-game-9461377/).</sub>
 
-- macOS ([Homebrew](https://brew.sh)):
+<!-- TODO: credit the arena map, the arena tokens (Gladiator, Minotaur, Orc, Ghost, Magos), the Flaming Longsword image and the forest map in demo.gif -->
 
-  ```sh
-  brew install node@22 postgresql@17
-  brew link --force node@22 postgresql@17
-  brew services start postgresql@17
-  ```
+## How it works
 
-- Windows (cmd). Η εγκατάσταση της PostgreSQL θα σας ζητήσει
-  κωδικό για τον χρήστη `postgres`· κρατήστε τον.
+- **The server decides.** The browser asks to move a token; the server checks the rules and permissions, saves
+  the change and sends it to everyone in that game.
+- **Load heavy, update light.** A page loads its data once over a REST API; after that, only changes travel,
+  over WebSockets (Socket.IO).
+- **Measured, not assumed.** On the production server, a moved token reached every player within
+  175–251 ms (95th percentile) with 2 to 50 connections. Before a fix that checks all recipients'
+  permissions in one database transaction instead of one each, 10 connections took 3.8 s.
 
-  ```sh
-  winget install OpenJS.NodeJS.22
-  winget install PostgreSQL.PostgreSQL.17 --interactive
-  ```
+<details>
+<summary>See it in the browser's DevTools: each move is one small WebSocket message</summary>
 
-  Στο τέλος ανοίξτε νέο παράθυρο της Γραμμής εντολών.
+![DevTools showing the WebSocket messages sent as the GM moves a token](docs/media/realtime-devtools.gif)
 
-- Linux (Ubuntu 24.04 ή νεότερο):
+</details>
 
-  ```sh
-  curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-  sudo apt install -y nodejs postgresql
-  ```
+**Stack:** Node.js 22, Express, Socket.IO, PostgreSQL (Knex migrations), vanilla JavaScript, Cloudflare R2 and
+Workers.
 
-Ελέγξτε με `node -v` (πρέπει να εμφανίσει `v22…`).
+**Security:** session-based login with Argon2id password hashing, Content Security Policy, rate limiting,
+CSRF protection, and private image storage served only to members of the game.
 
-### 2. Λήψη του κώδικα
+## How it was built
 
-[Κατεβάστε το ZIP](https://github.com/AlexandrosMpakodimos/vtt/archive/refs/heads/main.zip)
-και αποσυμπιέστε το, ή χρησιμοποιήστε το Git:
+Built as my undergraduate thesis in Informatics at the Ionian University (2026), through **agentic
+development**: I wrote the specifications and the project's design decisions, directed AI coding agents
+(Claude, ChatGPT), reviewed every change, and released only after the automated tests passed against a real
+PostgreSQL database and a check in the browser.
 
-```sh
-git clone https://github.com/AlexandrosMpakodimos/vtt.git
-```
+## Documentation
 
-Το ZIP δημιουργεί τον φάκελο `vtt-main`, ενώ το Git τον φάκελο `vtt`.
-Ανοίξτε τερματικό **μέσα στον φάκελο που έχετε κατεβάσει**:
-
-- Windows: ανοίξτε τον φάκελο στην Εξερεύνηση αρχείων, πατήστε στη γραμμή
-  διευθύνσεων, γράψτε `cmd` και πατήστε Enter.
-- macOS / Linux: μεταβείτε με `cd`, π.χ. `cd ~/Downloads/vtt-main`. Αν η
-  διαδρομή περιέχει κενά, βάλτε τη σε εισαγωγικά.
-
-### 3. Εγκατάσταση των εξαρτήσεων
-
-```sh
-npm ci
-```
-
-Ενδέχεται να εμφανιστούν προειδοποιήσεις για ευπάθειες ασφαλείας ή για νεότερη έκδοση του npm. Δεν επηρεάζουν την τοπική λειτουργία της εφαρμογής. **Μην εκτελέσετε `npm audit fix`**, γιατί αλλάζει τις δοκιμασμένες εκδόσεις.
-
-### 4. Δημιουργία της βάσης δεδομένων
-
-Ανοίξτε την κονσόλα της PostgreSQL (`psql`):
-
-- **Windows:** αναζητήστε «SQL Shell (psql)» στο μενού Έναρξης (Start Menu) και ανοίξτε το.
-  Πατήστε Enter σε κάθε ερώτηση, εκτός από το `Password for user postgres`, όπου πληκτρολογήστε τον κωδικό του βήματος 1. Εναλλακτικά, στη Γραμμή εντολών (αλλάξτε το `17` αν εγκαταστήσατε άλλη έκδοση):
-  `"C:\Program Files\PostgreSQL\17\bin\psql.exe" -U postgres`
-- **macOS:** στο Postgres.app κάντε διπλό κλικ στη βάση `postgres`. Εναλλακτικά με
-  Homebrew: `psql postgres`
-- **Linux:** `sudo -u postgres psql`
-
-Στη συνέχεια εισάγετε τις παρακάτω δύο γραμμές:
-
-```sql
-CREATE ROLE vtt LOGIN PASSWORD 'vtt-local';
-CREATE DATABASE vtt OWNER vtt;
-```
-
-Έτσι δημιουργείται ένας ξεχωριστός χρήστης μόνο για την εφαρμογή. `vtt` είναι το όνομα χρήστη και `vtt-local` ο κωδικός του. Δεν είναι ο κωδικός του διαχειριστή `postgres` από το βήμα 1. Αν αλλάξετε κάποιο από τα δύο, αλλάξτε το και στο `DATABASE_URL` του αρχείου `.env` (βήμα 5).
-
-Τέλος πληκτρολογήστε `\q` για έξοδο από την κονσόλα της PostgreSQL.
-
-### 5. Δημιουργία του αρχείου ρυθμίσεων
-
-Windows:
-
-```sh
-copy .env.example .env
-```
-
-macOS / Linux:
-
-```sh
-cp .env.example .env
-```
-
-Προαιρετικά, ανοίξτε το αρχείο `.env` σε έναν επεξεργαστή κειμένου (π.χ.
-`notepad .env` στα Windows) και αλλάξτε την τιμή του `SESSION_SECRET` σε
-τουλάχιστον 32 χαρακτήρες: λατινικά γράμματα, αριθμούς, `-` ή `_`.
-
-### 6. Δημιουργία των πινάκων της βάσης και εκκίνηση
-
-```sh
-npm run migrate
-npm start
-```
-
-Μόλις εμφανιστεί `STARTUP_READY` στο τερματικό, ανοίξτε το
-<http://localhost:3000> στον browser σας.
-
-### 7. Εγγραφή
-
-Δημιουργήστε λογαριασμό. Επειδή η εφαρμογή τρέχει τοπικά, δεν αποστέλλεται email. Το τερματικό εμφανίζει μια γραμμή που ξεκινά με `Verification link`.
-Αντιγράψτε τη διεύθυνση που ακολουθεί, ανοίξτε τη στον browser και, στη
-συνέχεια, συνδεθείτε.
-
-Για να δοκιμάσετε την ενημέρωση σε πραγματικό χρόνο, δημιουργήστε δεύτερο λογαριασμό σε παράθυρο ιδιωτικής περιήγησης του browser (εναλλακτικά σε διαφορετικό browser) και συνδεθείτε στο ίδιο παιχνίδι.
-
-> Η μεταφόρτωση αρχείων εικόνας απαιτεί περαιτέρω σύνδεση με υπηρεσία αποθήκευσης αρχείων σε cloud (π.χ. Cloudflare R2)
-> και δεν είναι διαθέσιμη τοπικά. Μπορείτε όμως να προσθέσετε εικόνες μέσω συνδέσμου
-> (URL).
-
-Για να σταματήσετε την εφαρμογή, πατήστε `Ctrl + C` στο τερματικό που τρέχει (στο
-macOS `control + C`).
+- [Local setup](docs/setup.md) ([Ελληνικά](docs/setup.el.md))
+- [Architecture](docs/architecture.md)
+- [Testing](docs/testing.md)
+- [Deployment](docs/deployment.md)
